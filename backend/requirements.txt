@@ -1,0 +1,39 @@
+# ApiAnything backend dependencies
+# Install: pip install -r requirements.txt
+# For PostgreSQL add: pip install psycopg2-binary
+
+# Web framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.12
+
+# Database
+sqlalchemy>=2.0.0
+alembic>=1.13.0
+
+# PostgreSQL driver (comment out if using SQLite only)
+psycopg2-binary>=2.9.0
+
+# Configuration
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+eval_type_backport>=0.3.0  # Python 3.9 compatibility for X | Y union syntax
+
+# Security
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# File handling
+aiofiles>=24.0.0
+
+# HTTP client (file URL fetching)
+httpx>=0.27.0
+
+# AI processors (uncomment as needed)
+# google-generativeai>=0.8.0
+# openai>=1.50.0
+
+# Dev / test
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+ruff>=0.6.0

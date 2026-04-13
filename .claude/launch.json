@@ -1,0 +1,47 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "apianything-frontend",
+      "runtimeExecutable": "/Users/kingdee/.local/nodeenv/bin/node",
+      "runtimeArgs": ["node_modules/.bin/vite", "--host", "0.0.0.0"],
+      "port": 5173,
+      "cwd": "frontend"
+    },
+    {
+      "name": "label-studio-backend",
+      "runtimeExecutable": "make",
+      "runtimeArgs": ["run-dev"],
+      "port": 8080,
+      "cwd": "label-studio"
+    },
+    {
+      "name": "label-studio-frontend",
+      "runtimeExecutable": "yarn",
+      "runtimeArgs": ["run", "dev"],
+      "port": 8010,
+      "cwd": "label-studio/web"
+    },
+    {
+      "name": "ml-backend-invoice",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["invoice_extractor/start_with_custom_endpoints.py", "--port", "9090", "--debug"],
+      "port": 9090,
+      "cwd": "label-studio-ml-backend"
+    },
+    {
+      "name": "label-studio-foreman",
+      "runtimeExecutable": "yarn",
+      "runtimeArgs": ["lsf:serve"],
+      "port": 3000,
+      "cwd": "label-studio/web"
+    },
+    {
+      "name": "storybook-ui",
+      "runtimeExecutable": "yarn",
+      "runtimeArgs": ["storybook:serve"],
+      "port": 6006,
+      "cwd": "label-studio/web"
+    }
+  ]
+}

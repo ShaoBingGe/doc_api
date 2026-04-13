@@ -1,0 +1,754 @@
+import { useState, useRef, useEffect, useCallback } from "react";
+
+// --- Mock Data ---
+const MOCK_RECOGNITION_RESULTS = [
+  { id: 1, keyName: "Invoice Number", value: "INV-2026-00421", bbox: { x: 58, y: 8, w: 20, h: 3.5 }, confidence: 0.98 },
+  { id: 2, keyName: "Invoice Date", value: "2026-03-28", bbox: { x: 58, y: 13, w: 16, h: 3.5 }, confidence: 0.96 },
+  { id: 3, keyName: "Due Date", value: "2026-04-28", bbox: { x: 58, y: 18, w: 16, h: 3.5 }, confidence: 0.95 },
+  { id: 4, keyName: "Vendor Name", value: "Acme Technology Co., Ltd.", bbox: { x: 5, y: 8, w: 35, h: 3.5 }, confidence: 0.99 },
+  { id: 5, keyName: "Vendor Address", value: "1234 Innovation Blvd, Shenzhen, China", bbox: { x: 5, y: 13, w: 40, h: 3.5 }, confidence: 0.92 },
+  { id: 6, keyName: "Total Amount", value: "¥128,450.00", bbox: { x: 58, y: 72, w: 20, h: 4 }, confidence: 0.97 },
+  { id: 7, keyName: "Tax Amount", value: "¥16,698.50", bbox: { x: 58, y: 78, w: 20, h: 4 }, confidence: 0.94 },
+  { id: 8, keyName: "Currency", value: "CNY", bbox: { x: 82, y: 72, w: 8, h: 4 }, confidence: 0.99 },
+  { id: 9, keyName: "Payment Method", value: "Bank Transfer", bbox: { x: 5, y: 85, w: 25, h: 3.5 }, confidence: 0.88 },
+  { id: 10, keyName: "Bank Account", value: "6222 **** **** 8901", bbox: { x: 5, y: 90, w: 30, h: 3.5 }, confidence: 0.91 },
+];
+
+const TEMPLATES = [
+  { id: "cn-vat", name: "中国增值税发票", lang: "zh-CN", fields: 12, icon: "🇨🇳" },
+  { id: "us-invoice", name: "US Standard Invoice", lang: "en-US", fields: 10, icon: "🇺🇸" },
+  { id: "jp-receipt", name: "日本領収書", lang: "ja-JP", fields: 8, icon: "🇯🇵" },
+  { id: "de-rechnung", name: "Deutsche Rechnung", lang: "de-DE", fields: 11, icon: "🇩🇪" },
+  { id: "kr-receipt", name: "한국 영수증", lang: "ko-KR", fields: 9, icon: "🇰🇷" },
+  { id: "custom", name: "自定义模板", lang: "any", fields: 0, icon: "✨" },
+];
+
+// --- Styles ---
+const colors = {
+  bg: "#0f1117",
+  surface: "#1a1d27",
+  surfaceHover: "#232736",
+  border: "#2a2e3d",
+  borderActive: "#6366f1",
+  text: "#e2e8f0",
+  textMuted: "#94a3b8",
+  textDim: "#64748b",
+  primary: "#6366f1",
+  primaryHover: "#818cf8",
+  primaryBg: "rgba(99,102,241,0.12)",
+  success: "#22c55e",
+  successBg: "rgba(34,197,94,0.12)",
+  warning: "#f59e0b",
+  warningBg: "rgba(245,158,11,0.12)",
+  danger: "#ef4444",
+  dangerBg: "rgba(239,68,68,0.12)",
+  accent: "#06b6d4",
+};
+
+// --- Step Indicator ---
+function StepIndicator({ steps, currentStep }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 0, padding: "16px 24px", background: colors.surface, borderBottom: `1px solid ${colors.border}` }}>
+      {steps.map((step, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{
+              width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 13, fontWeight: 600,
+              background: i < currentStep ? colors.success : i === currentStep ? colors.primary : "transparent",
+              color: i <= currentStep ? "#fff" : colors.textDim,
+              border: i > currentStep ? `2px solid ${colors.border}` : "none",
+            }}>
+              {i < currentStep ? "✓" : i + 1}
+            </div>
+            <span style={{ fontSize: 13, fontWeight: i === currentStep ? 600 : 400, color: i <= currentStep ? colors.text : colors.textDim, whiteSpace: "nowrap" }}>
+              {step}
+            </span>
+          </div>
+          {i < steps.length - 1 && (
+            <div style={{ flex: 1, height: 2, margin: "0 12px", background: i < currentStep ? colors.success : colors.border, minWidth: 20 }} />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// --- Document Canvas with BBox overlay ---
+function DocumentCanvas({ results, selectedId, onSelect, onBboxUpdate }) {
+  const canvasRef = useRef(null);
+  const [dragging, setDragging] = useState(null);
+  const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    if (canvasRef.current) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      setCanvasSize({ w: rect.width, h: rect.height });
+    }
+  }, []);
+
+  const handleMouseDown = (e, item, corner) => {
+    e.stopPropagation();
+    const rect = canvasRef.current.getBoundingClientRect();
+    setDragging({ id: item.id, corner, startX: e.clientX, startY: e.clientY, origBbox: { ...item.bbox }, rectLeft: rect.left, rectTop: rect.top, rectW: rect.width, rectH: rect.height });
+  };
+
+  const handleMouseMove = useCallback((e) => {
+    if (!dragging) return;
+    const dx = ((e.clientX - dragging.startX) / dragging.rectW) * 100;
+    const dy = ((e.clientY - dragging.startY) / dragging.rectH) * 100;
+    const orig = dragging.origBbox;
+    let newBbox;
+    if (dragging.corner === "move") {
+      newBbox = { ...orig, x: Math.max(0, orig.x + dx), y: Math.max(0, orig.y + dy) };
+    } else if (dragging.corner === "br") {
+      newBbox = { ...orig, w: Math.max(5, orig.w + dx), h: Math.max(2, orig.h + dy) };
+    }
+    if (newBbox) onBboxUpdate(dragging.id, newBbox);
+  }, [dragging, onBboxUpdate]);
+
+  const handleMouseUp = useCallback(() => setDragging(null), []);
+
+  useEffect(() => {
+    if (dragging) {
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+      return () => { window.removeEventListener("mousemove", handleMouseMove); window.removeEventListener("mouseup", handleMouseUp); };
+    }
+  }, [dragging, handleMouseMove, handleMouseUp]);
+
+  // Mock document lines
+  const docLines = [
+    { y: 3, x: 5, text: "INVOICE", size: 20, weight: 700 },
+    { y: 8, x: 5, text: "Vendor: Acme Technology Co., Ltd.", size: 11 },
+    { y: 13, x: 5, text: "Address: 1234 Innovation Blvd, Shenzhen, China", size: 10 },
+    { y: 8, x: 55, text: "Invoice #: INV-2026-00421", size: 11 },
+    { y: 13, x: 55, text: "Date: 2026-03-28", size: 11 },
+    { y: 18, x: 55, text: "Due: 2026-04-28", size: 11 },
+    { y: 28, x: 5, w: 90, text: "─".repeat(60), size: 10, color: colors.border },
+    { y: 32, x: 5, text: "Item", size: 10, weight: 600 },
+    { y: 32, x: 40, text: "Qty", size: 10, weight: 600 },
+    { y: 32, x: 55, text: "Unit Price", size: 10, weight: 600 },
+    { y: 32, x: 75, text: "Amount", size: 10, weight: 600 },
+    { y: 37, x: 5, text: "Cloud Server (Annual)", size: 10 },
+    { y: 37, x: 40, text: "5", size: 10 },
+    { y: 37, x: 55, text: "¥18,000.00", size: 10 },
+    { y: 37, x: 75, text: "¥90,000.00", size: 10 },
+    { y: 42, x: 5, text: "API Gateway License", size: 10 },
+    { y: 42, x: 40, text: "10", size: 10 },
+    { y: 42, x: 55, text: "¥2,500.00", size: 10 },
+    { y: 42, x: 75, text: "¥25,000.00", size: 10 },
+    { y: 47, x: 5, text: "Technical Support", size: 10 },
+    { y: 47, x: 40, text: "1", size: 10 },
+    { y: 47, x: 55, text: "¥13,450.00", size: 10 },
+    { y: 47, x: 75, text: "¥13,450.00", size: 10 },
+    { y: 55, x: 5, w: 90, text: "─".repeat(60), size: 10, color: colors.border },
+    { y: 72, x: 55, text: "Subtotal: ¥128,450.00", size: 11, weight: 600 },
+    { y: 78, x: 55, text: "Tax (13%): ¥16,698.50", size: 11 },
+    { y: 85, x: 5, text: "Payment: Bank Transfer", size: 10 },
+    { y: 90, x: 5, text: "Account: 6222 **** **** 8901", size: 10 },
+  ];
+
+  return (
+    <div
+      ref={canvasRef}
+      onClick={() => onSelect(null)}
+      style={{
+        position: "relative", width: "100%", height: "100%", background: "#fff", borderRadius: 8,
+        overflow: "hidden", cursor: dragging ? (dragging.corner === "move" ? "grabbing" : "nwse-resize") : "default",
+        boxShadow: "0 2px 12px rgba(0,0,0,0.3)",
+      }}
+    >
+      {/* Document text */}
+      {docLines.map((line, i) => (
+        <div key={i} style={{
+          position: "absolute", left: `${line.x}%`, top: `${line.y}%`,
+          fontSize: line.size || 10, fontWeight: line.weight || 400, color: line.color || "#1e293b",
+          fontFamily: "'Courier New', monospace", whiteSpace: "nowrap", userSelect: "none",
+        }}>
+          {line.text}
+        </div>
+      ))}
+      {/* BBox overlays */}
+      {results.map((item) => {
+        const isSelected = item.id === selectedId;
+        const borderColor = isSelected ? "#6366f1" : item.confidence >= 0.95 ? "#22c55e" : item.confidence >= 0.9 ? "#f59e0b" : "#ef4444";
+        return (
+          <div
+            key={item.id}
+            onClick={(e) => { e.stopPropagation(); onSelect(item.id); }}
+            onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, item, "move"); }}
+            style={{
+              position: "absolute",
+              left: `${item.bbox.x}%`, top: `${item.bbox.y}%`,
+              width: `${item.bbox.w}%`, height: `${item.bbox.h}%`,
+              border: `2px solid ${borderColor}`,
+              background: isSelected ? "rgba(99,102,241,0.15)" : `${borderColor}11`,
+              borderRadius: 3, cursor: "grab",
+              transition: dragging?.id === item.id ? "none" : "all 0.15s ease",
+            }}
+          >
+            {/* Label tag */}
+            <div style={{
+              position: "absolute", top: -20, left: -1, background: borderColor, color: "#fff",
+              fontSize: 9, padding: "1px 5px", borderRadius: "3px 3px 0 0", whiteSpace: "nowrap",
+              fontWeight: 600, opacity: isSelected ? 1 : 0.8,
+            }}>
+              {item.keyName}
+            </div>
+            {/* Resize handle */}
+            {isSelected && (
+              <div
+                onMouseDown={(e) => handleMouseDown(e, item, "br")}
+                style={{
+                  position: "absolute", bottom: -4, right: -4, width: 8, height: 8,
+                  background: "#6366f1", borderRadius: 2, cursor: "nwse-resize",
+                }}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// --- Field Editor Panel ---
+function FieldEditorPanel({ results, selectedId, onSelect, onValueChange, onCorrection }) {
+  const [nlInput, setNlInput] = useState("");
+  const [corrections, setCorrections] = useState([]);
+
+  const handleNlCorrection = () => {
+    if (!nlInput.trim()) return;
+    const newCorrection = { text: nlInput, time: new Date().toLocaleTimeString() };
+    setCorrections([newCorrection, ...corrections]);
+
+    // Simulate NL correction
+    if (nlInput.includes("Payment") || nlInput.includes("支付")) {
+      onValueChange(9, "Wire Transfer");
+    } else if (nlInput.includes("vendor") || nlInput.includes("供应商")) {
+      onValueChange(4, "Acme Technologies Inc.");
+    }
+    if (onCorrection) onCorrection(nlInput);
+    setNlInput("");
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      {/* NL Correction input */}
+      <div style={{ padding: 12, borderBottom: `1px solid ${colors.border}` }}>
+        <div style={{ fontSize: 11, color: colors.textMuted, marginBottom: 6, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>
+          自然语言矫正
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input
+            value={nlInput}
+            onChange={(e) => setNlInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleNlCorrection()}
+            placeholder='例如: "Payment Method 应该是 Wire Transfer"'
+            style={{
+              flex: 1, padding: "8px 10px", borderRadius: 6, border: `1px solid ${colors.border}`,
+              background: colors.bg, color: colors.text, fontSize: 12, outline: "none",
+            }}
+          />
+          <button
+            onClick={handleNlCorrection}
+            style={{
+              padding: "8px 14px", borderRadius: 6, border: "none",
+              background: colors.primary, color: "#fff", fontSize: 12, fontWeight: 600,
+              cursor: "pointer", whiteSpace: "nowrap",
+            }}
+          >
+            矫正
+          </button>
+        </div>
+        {corrections.length > 0 && (
+          <div style={{ marginTop: 6, maxHeight: 50, overflow: "auto" }}>
+            {corrections.map((c, i) => (
+              <div key={i} style={{ fontSize: 10, color: colors.success, padding: "2px 0" }}>
+                ✓ {c.time} — {c.text}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Field list */}
+      <div style={{ flex: 1, overflow: "auto", padding: 8 }}>
+        <div style={{ fontSize: 11, color: colors.textMuted, padding: "4px 8px", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>
+          识别字段 ({results.length})
+        </div>
+        {results.map((item) => {
+          const isSelected = item.id === selectedId;
+          const confColor = item.confidence >= 0.95 ? colors.success : item.confidence >= 0.9 ? colors.warning : colors.danger;
+          return (
+            <div
+              key={item.id}
+              onClick={() => onSelect(item.id)}
+              style={{
+                padding: "8px 10px", margin: "3px 0", borderRadius: 6, cursor: "pointer",
+                background: isSelected ? colors.primaryBg : "transparent",
+                border: `1px solid ${isSelected ? colors.borderActive : "transparent"}`,
+                transition: "all 0.15s ease",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: colors.text }}>{item.keyName}</span>
+                <span style={{ fontSize: 9, color: confColor, background: `${confColor}20`, padding: "1px 5px", borderRadius: 8 }}>
+                  {Math.round(item.confidence * 100)}%
+                </span>
+              </div>
+              <input
+                value={item.value}
+                onChange={(e) => onValueChange(item.id, e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  width: "100%", padding: "4px 6px", borderRadius: 4,
+                  border: `1px solid ${isSelected ? colors.borderActive : colors.border}`,
+                  background: colors.bg, color: colors.text, fontSize: 12, outline: "none",
+                  boxSizing: "border-box",
+                }}
+              />
+              <div style={{ fontSize: 9, color: colors.textDim, marginTop: 2 }}>
+                位置: ({item.bbox.x.toFixed(1)}%, {item.bbox.y.toFixed(1)}%) | {item.bbox.w.toFixed(1)}×{item.bbox.h.toFixed(1)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// --- API Preview Panel ---
+function ApiPreviewPanel({ results, apiFormat, onFormatChange, nlFormatInput, setNlFormatInput, onNlFormatApply }) {
+  const generateApiResponse = () => {
+    if (apiFormat === "flat") {
+      const obj = {};
+      results.forEach((r) => {
+        const key = r.keyName.toLowerCase().replace(/\s+/g, "_");
+        obj[key] = r.value;
+      });
+      return JSON.stringify({ success: true, data: obj }, null, 2);
+    } else if (apiFormat === "detailed") {
+      const fields = results.map((r) => ({
+        key: r.keyName.toLowerCase().replace(/\s+/g, "_"),
+        label: r.keyName,
+        value: r.value,
+        confidence: r.confidence,
+        position: { x: r.bbox.x, y: r.bbox.y, width: r.bbox.w, height: r.bbox.h },
+      }));
+      return JSON.stringify({ success: true, fields, meta: { total_fields: fields.length, doc_type: "invoice" } }, null, 2);
+    } else {
+      const grouped = { vendor: {}, financial: {}, payment: {} };
+      results.forEach((r) => {
+        const key = r.keyName.toLowerCase().replace(/\s+/g, "_");
+        if (["vendor_name", "vendor_address"].includes(key)) grouped.vendor[key] = r.value;
+        else if (["total_amount", "tax_amount", "currency"].includes(key)) grouped.financial[key] = r.value;
+        else if (["payment_method", "bank_account"].includes(key)) grouped.payment[key] = r.value;
+        else grouped.financial[key] = r.value;
+      });
+      return JSON.stringify({ success: true, data: grouped }, null, 2);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      {/* Format selector */}
+      <div style={{ padding: 12, borderBottom: `1px solid ${colors.border}` }}>
+        <div style={{ fontSize: 11, color: colors.textMuted, marginBottom: 6, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>
+          API 返回格式
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {[
+            { id: "flat", label: "扁平" },
+            { id: "detailed", label: "详细" },
+            { id: "grouped", label: "分组" },
+          ].map((f) => (
+            <button
+              key={f.id}
+              onClick={() => onFormatChange(f.id)}
+              style={{
+                flex: 1, padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                border: `1px solid ${apiFormat === f.id ? colors.primary : colors.border}`,
+                background: apiFormat === f.id ? colors.primaryBg : "transparent",
+                color: apiFormat === f.id ? colors.primaryHover : colors.textMuted,
+              }}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        {/* NL format adjustment */}
+        <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
+          <input
+            value={nlFormatInput}
+            onChange={(e) => setNlFormatInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && onNlFormatApply()}
+            placeholder='例如: "按供应商信息和财务信息分组"'
+            style={{
+              flex: 1, padding: "6px 8px", borderRadius: 6, border: `1px solid ${colors.border}`,
+              background: colors.bg, color: colors.text, fontSize: 11, outline: "none",
+            }}
+          />
+          <button
+            onClick={onNlFormatApply}
+            style={{
+              padding: "6px 12px", borderRadius: 6, border: "none",
+              background: colors.accent, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            调整
+          </button>
+        </div>
+      </div>
+
+      {/* JSON preview */}
+      <div style={{ flex: 1, overflow: "auto", padding: 12 }}>
+        <pre style={{
+          margin: 0, padding: 12, borderRadius: 8, background: colors.bg,
+          border: `1px solid ${colors.border}`, fontSize: 11, lineHeight: 1.5,
+          color: "#a5f3fc", fontFamily: "'Fira Code', 'Courier New', monospace", whiteSpace: "pre-wrap",
+        }}>
+          {generateApiResponse()}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+// --- Step 1: Upload ---
+function UploadStep({ onUpload, onTemplateSelect }) {
+  const [dragOver, setDragOver] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: 24, gap: 20, overflow: "auto" }}>
+      {/* Upload area */}
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => { e.preventDefault(); setDragOver(false); onUpload(); }}
+        onClick={onUpload}
+        style={{
+          flex: 1, minHeight: 200, borderRadius: 12, cursor: "pointer",
+          border: `2px dashed ${dragOver ? colors.primary : colors.border}`,
+          background: dragOver ? colors.primaryBg : colors.surface,
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          transition: "all 0.2s ease",
+        }}
+      >
+        <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.6 }}>📄</div>
+        <div style={{ fontSize: 16, fontWeight: 600, color: colors.text, marginBottom: 4 }}>
+          拖拽文档到此处，或点击上传
+        </div>
+        <div style={{ fontSize: 12, color: colors.textMuted }}>
+          支持 PDF、图片、Word、Excel 等常见格式
+        </div>
+        <div style={{ fontSize: 11, color: colors.textDim, marginTop: 8 }}>
+          支持任意语言的文字型文档
+        </div>
+      </div>
+
+      {/* Template selection */}
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: colors.text, marginBottom: 10 }}>
+          或选择预置模板快速开始
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+          {TEMPLATES.map((t) => (
+            <div
+              key={t.id}
+              onClick={() => { setSelectedTemplate(t.id); onTemplateSelect(t); }}
+              style={{
+                padding: 12, borderRadius: 8, cursor: "pointer",
+                border: `1px solid ${selectedTemplate === t.id ? colors.primary : colors.border}`,
+                background: selectedTemplate === t.id ? colors.primaryBg : colors.surface,
+                transition: "all 0.15s ease",
+              }}
+            >
+              <div style={{ fontSize: 20, marginBottom: 4 }}>{t.icon}</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: colors.text }}>{t.name}</div>
+              <div style={{ fontSize: 10, color: colors.textDim, marginTop: 2 }}>
+                {t.fields > 0 ? `${t.fields} 个预置字段` : "自由定义字段"}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Step 5: API Config ---
+function ApiConfigStep({ apiCode, onGenerate }) {
+  const [copied, setCopied] = useState(null);
+
+  const handleCopy = (text, label) => {
+    navigator.clipboard?.writeText?.(text);
+    setCopied(label);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  const endpoint = `https://api.apianything.com/v1/extract/${apiCode}`;
+  const curlExample = `curl -X POST "${endpoint}" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: multipart/form-data" \\
+  -F "file=@invoice.pdf"`;
+  const pythonExample = `import requests
+
+response = requests.post(
+    "${endpoint}",
+    headers={"Authorization": "Bearer YOUR_API_KEY"},
+    files={"file": open("invoice.pdf", "rb")}
+)
+data = response.json()
+print(data)`;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: 24, gap: 16, overflow: "auto" }}>
+      <div style={{ textAlign: "center", padding: "20px 0" }}>
+        <div style={{ fontSize: 48, marginBottom: 8 }}>🎉</div>
+        <div style={{ fontSize: 20, fontWeight: 700, color: colors.text }}>API 已就绪</div>
+        <div style={{ fontSize: 13, color: colors.textMuted, marginTop: 4 }}>
+          您的自定义文档提取 API 已生成，可以开始集成了
+        </div>
+      </div>
+
+      {/* API Code */}
+      <div style={{ padding: 16, borderRadius: 8, background: colors.surface, border: `1px solid ${colors.border}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <span style={{ fontSize: 11, color: colors.textMuted, fontWeight: 600, textTransform: "uppercase" }}>API 编码</span>
+          <button onClick={() => handleCopy(apiCode, "code")} style={{ padding: "3px 8px", borderRadius: 4, border: `1px solid ${colors.border}`, background: "transparent", color: colors.textMuted, fontSize: 10, cursor: "pointer" }}>
+            {copied === "code" ? "✓ 已复制" : "复制"}
+          </button>
+        </div>
+        <div style={{ fontFamily: "monospace", fontSize: 16, fontWeight: 700, color: colors.primary, letterSpacing: 1 }}>{apiCode}</div>
+      </div>
+
+      {/* Endpoint */}
+      <div style={{ padding: 16, borderRadius: 8, background: colors.surface, border: `1px solid ${colors.border}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <span style={{ fontSize: 11, color: colors.textMuted, fontWeight: 600, textTransform: "uppercase" }}>Endpoint</span>
+          <button onClick={() => handleCopy(endpoint, "endpoint")} style={{ padding: "3px 8px", borderRadius: 4, border: `1px solid ${colors.border}`, background: "transparent", color: colors.textMuted, fontSize: 10, cursor: "pointer" }}>
+            {copied === "endpoint" ? "✓ 已复制" : "复制"}
+          </button>
+        </div>
+        <div style={{ fontFamily: "monospace", fontSize: 12, color: colors.accent, wordBreak: "break-all" }}>{endpoint}</div>
+      </div>
+
+      {/* Code examples */}
+      <div style={{ padding: 16, borderRadius: 8, background: colors.surface, border: `1px solid ${colors.border}` }}>
+        <div style={{ fontSize: 11, color: colors.textMuted, fontWeight: 600, textTransform: "uppercase", marginBottom: 8 }}>cURL 示例</div>
+        <pre style={{ margin: 0, padding: 10, background: colors.bg, borderRadius: 6, fontSize: 11, color: "#a5f3fc", lineHeight: 1.5, whiteSpace: "pre-wrap", fontFamily: "'Fira Code', monospace" }}>
+          {curlExample}
+        </pre>
+      </div>
+
+      <div style={{ padding: 16, borderRadius: 8, background: colors.surface, border: `1px solid ${colors.border}` }}>
+        <div style={{ fontSize: 11, color: colors.textMuted, fontWeight: 600, textTransform: "uppercase", marginBottom: 8 }}>Python 示例</div>
+        <pre style={{ margin: 0, padding: 10, background: colors.bg, borderRadius: 6, fontSize: 11, color: "#a5f3fc", lineHeight: 1.5, whiteSpace: "pre-wrap", fontFamily: "'Fira Code', monospace" }}>
+          {pythonExample}
+        </pre>
+      </div>
+
+      <button
+        onClick={onGenerate}
+        style={{
+          padding: "12px 24px", borderRadius: 8, border: "none",
+          background: `linear-gradient(135deg, ${colors.primary}, ${colors.accent})`,
+          color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer",
+          boxShadow: "0 4px 12px rgba(99,102,241,0.3)",
+        }}
+      >
+        下载 SDK 配置文件
+      </button>
+    </div>
+  );
+}
+
+// --- Main App ---
+export default function ApiAnythingPrototype() {
+  const [step, setStep] = useState(0);
+  const [results, setResults] = useState(MOCK_RECOGNITION_RESULTS);
+  const [selectedId, setSelectedId] = useState(null);
+  const [apiFormat, setApiFormat] = useState("detailed");
+  const [nlFormatInput, setNlFormatInput] = useState("");
+  const [processing, setProcessing] = useState(false);
+  const [apiCode] = useState("EXT-INV-" + Math.random().toString(36).substring(2, 8).toUpperCase());
+  const [uploadCount, setUploadCount] = useState(0);
+
+  const steps = ["上传文档", "AI识别预览", "矫正结果", "调整API格式", "调试优化", "生成API"];
+
+  const handleUpload = () => {
+    setProcessing(true);
+    setTimeout(() => {
+      setProcessing(false);
+      setStep(1);
+    }, 1500);
+  };
+
+  const handleValueChange = (id, newValue) => {
+    setResults(results.map((r) => (r.id === id ? { ...r, value: newValue } : r)));
+  };
+
+  const handleBboxUpdate = useCallback((id, newBbox) => {
+    setResults((prev) => prev.map((r) => (r.id === id ? { ...r, bbox: newBbox } : r)));
+  }, []);
+
+  const handleNlFormatApply = () => {
+    if (nlFormatInput.includes("分组") || nlFormatInput.includes("group")) {
+      setApiFormat("grouped");
+    } else if (nlFormatInput.includes("简单") || nlFormatInput.includes("flat")) {
+      setApiFormat("flat");
+    } else if (nlFormatInput.includes("详细") || nlFormatInput.includes("detail")) {
+      setApiFormat("detailed");
+    }
+    setNlFormatInput("");
+  };
+
+  const handleReupload = () => {
+    setUploadCount(uploadCount + 1);
+    setProcessing(true);
+    setTimeout(() => {
+      // Simulate improved results
+      setResults((prev) =>
+        prev.map((r) => ({
+          ...r,
+          confidence: Math.min(1, r.confidence + 0.02),
+        }))
+      );
+      setProcessing(false);
+    }, 1200);
+  };
+
+  // Processing overlay
+  if (processing) {
+    return (
+      <div style={{ width: "100%", height: "100vh", background: colors.bg, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
+        <div style={{ fontSize: 40, marginBottom: 16, animation: "spin 1s linear infinite" }}>⚙️</div>
+        <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+        <div style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>AI 正在识别文档...</div>
+        <div style={{ fontSize: 12, color: colors.textMuted, marginTop: 6 }}>使用多模态大模型提取结构化数据</div>
+        <div style={{ width: 200, height: 3, background: colors.border, borderRadius: 2, marginTop: 16, overflow: "hidden" }}>
+          <div style={{ width: "60%", height: "100%", background: colors.primary, borderRadius: 2, animation: "loading 1.5s ease-in-out infinite" }} />
+        </div>
+        <style>{`@keyframes loading { 0% { width: 0%; margin-left: 0; } 50% { width: 60%; margin-left: 20%; } 100% { width: 0%; margin-left: 100%; } }`}</style>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ width: "100%", height: "100vh", background: colors.bg, color: colors.text, display: "flex", flexDirection: "column", fontFamily: "-apple-system, 'Segoe UI', sans-serif", overflow: "hidden" }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 20px", borderBottom: `1px solid ${colors.border}`, background: colors.surface }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 20 }}>⚡</span>
+          <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: -0.5 }}>ApiAnything</span>
+          <span style={{ fontSize: 10, color: colors.textDim, background: colors.primaryBg, padding: "2px 6px", borderRadius: 4 }}>Prototype</span>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {step > 0 && step < 5 && (
+            <button onClick={() => setStep(Math.max(0, step - 1))} style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${colors.border}`, background: "transparent", color: colors.textMuted, fontSize: 12, cursor: "pointer" }}>
+              ← 上一步
+            </button>
+          )}
+          {step > 0 && step < 5 && (
+            <button onClick={() => setStep(Math.min(5, step + 1))} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: colors.primary, color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+              {step === 4 ? "确认生成 API" : "下一步 →"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Step indicator */}
+      <StepIndicator steps={steps} currentStep={step} />
+
+      {/* Main content */}
+      <div style={{ flex: 1, overflow: "hidden" }}>
+        {/* Step 0: Upload */}
+        {step === 0 && (
+          <UploadStep onUpload={handleUpload} onTemplateSelect={() => handleUpload()} />
+        )}
+
+        {/* Steps 1-4: Recognition + Edit + API Format + Debug */}
+        {step >= 1 && step <= 4 && (
+          <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+            {/* Left: Document Canvas */}
+            <div style={{ flex: 1, padding: 12, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+              <div style={{ fontSize: 11, color: colors.textMuted, marginBottom: 6, fontWeight: 600, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>📄 文档预览 — 点击/拖动调整识别区域</span>
+                {step === 4 && (
+                  <button onClick={handleReupload} style={{ padding: "4px 10px", borderRadius: 4, border: `1px solid ${colors.border}`, background: colors.surface, color: colors.accent, fontSize: 10, fontWeight: 600, cursor: "pointer" }}>
+                    🔄 重新上传同类文档 ({uploadCount} 次调试)
+                  </button>
+                )}
+              </div>
+              <div style={{ flex: 1, overflow: "hidden" }}>
+                <DocumentCanvas
+                  results={results}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                  onBboxUpdate={handleBboxUpdate}
+                />
+              </div>
+            </div>
+
+            {/* Right panel */}
+            <div style={{ width: 340, borderLeft: `1px solid ${colors.border}`, background: colors.surface, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+              {/* Tab headers for steps 1-4 */}
+              <div style={{ display: "flex", borderBottom: `1px solid ${colors.border}` }}>
+                {["字段", "API"].map((tab, i) => {
+                  const tabIndex = i === 0 ? "fields" : "api";
+                  const isActive = (step <= 2 && tabIndex === "fields") || (step >= 3 && tabIndex === "api");
+                  return (
+                    <button
+                      key={tab}
+                      onClick={() => setStep(i === 0 ? 2 : 3)}
+                      style={{
+                        flex: 1, padding: "8px 0", border: "none", cursor: "pointer",
+                        fontSize: 12, fontWeight: 600,
+                        background: isActive ? colors.surface : colors.bg,
+                        color: isActive ? colors.primary : colors.textDim,
+                        borderBottom: isActive ? `2px solid ${colors.primary}` : "2px solid transparent",
+                      }}
+                    >
+                      {tab}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div style={{ flex: 1, overflow: "hidden" }}>
+                {(step <= 2 || step === 4) && (
+                  <FieldEditorPanel
+                    results={results}
+                    selectedId={selectedId}
+                    onSelect={setSelectedId}
+                    onValueChange={handleValueChange}
+                  />
+                )}
+                {step === 3 && (
+                  <ApiPreviewPanel
+                    results={results}
+                    apiFormat={apiFormat}
+                    onFormatChange={setApiFormat}
+                    nlFormatInput={nlFormatInput}
+                    setNlFormatInput={setNlFormatInput}
+                    onNlFormatApply={handleNlFormatApply}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Step 5: API Generated */}
+        {step === 5 && (
+          <ApiConfigStep apiCode={apiCode} onGenerate={() => {}} />
+        )}
+      </div>
+    </div>
+  );
+}

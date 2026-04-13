@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ApiAnything — 工作台</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d0d14;--surface:#141420;--surface2:#1a1a28;--surface3:#222232;
+  --card:#181824;--card-border:#2a2a3c;
+  --border:#252538;--border-light:#35354a;
+  --text:#e8e8f0;--text-secondary:#9898b0;--text-muted:#606078;--text-dim:#484860;
+  --accent:#7c5bf5;--accent-light:#9b7ffa;--accent-bg:rgba(124,91,245,.12);
+  --accent-border:rgba(124,91,245,.3);
+  --green:#3ecf8e;--green-bg:rgba(62,207,142,.1);--green-border:rgba(62,207,142,.25);
+  --yellow:#f5a623;--red:#ef4444;
+  --tag-string:#3ecf8e;--tag-date:#a78bfa;--tag-number:#f5a623;
+  --json-key:#e06c75;--json-string:#98c379;--json-number:#d19a66;
+  --radius:10px;--radius-sm:6px;--radius-xs:4px;
+}
+html,body{height:100%;overflow:hidden}
+body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','PingFang SC','Noto Sans SC',sans-serif;
+  background:var(--bg);color:var(--text);font-size:13px;line-height:1.5;display:flex;flex-direction:column}
+button{cursor:pointer;font-family:inherit;border:none;outline:none;background:none}
+input,textarea{font-family:inherit;outline:none}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--border-light)}
+
+/* ===== Top Bar ===== */
+.topbar{height:48px;display:flex;align-items:center;padding:0 16px;
+  background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;gap:12px;z-index:20}
+.topbar-left{display:flex;align-items:center;gap:10px;min-width:0}
+.logo-icon{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#7c5bf5,#a78bfa);
+  display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.logo-icon svg{width:16px;height:16px;fill:white}
+.doc-name{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.status-badge{padding:2px 10px;border-radius:10px;font-size:11px;font-weight:600;flex-shrink:0}
+.status-badge.done{background:var(--green-bg);color:var(--green);border:1px solid var(--green-border)}
+.topbar-center{display:flex;align-items:center;gap:6px;margin:0 auto}
+.topbar-btn{padding:6px 14px;border-radius:var(--radius-sm);font-size:12px;font-weight:500;
+  color:var(--text-secondary);transition:all .2s ease;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.topbar-btn:hover{color:var(--text);background:var(--surface2)}
+.view-tabs{display:flex;align-items:center;background:var(--surface2);border-radius:var(--radius-sm);padding:2px;gap:2px}
+.view-tab{padding:5px 14px;border-radius:var(--radius-xs);font-size:12px;font-weight:500;
+  color:var(--text-muted);transition:all .2s ease;white-space:nowrap;display:flex;align-items:center;gap:5px}
+.view-tab:hover{color:var(--text-secondary)}
+.view-tab.active{background:var(--accent);color:white}
+.field-count{font-size:12px;color:var(--text-muted);margin-left:8px;white-space:nowrap}
+.topbar-right{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.topbar-action{padding:6px 14px;border-radius:var(--radius-sm);font-size:12px;font-weight:500;
+  color:var(--text-secondary);border:1px solid var(--border);transition:all .2s ease;
+  display:flex;align-items:center;gap:6px;white-space:nowrap}
+.topbar-action:hover{border-color:var(--border-light);color:var(--text)}
+.topbar-action.primary{background:var(--accent);color:white;border-color:var(--accent)}
+.topbar-action.primary:hover{background:var(--accent-light)}
+.user-avatar{width:30px;height:30px;border-radius:50%;background:var(--accent);color:white;
+  display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;flex-shrink:0}
+
+/* ===== Main Content ===== */
+.main-content{flex:1;display:flex;overflow:hidden;min-height:0}
+
+/* ===== Left: Document Panel ===== */
+.doc-panel{flex:0 0 35%;max-width:520px;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg)}
+.doc-toolbar{height:38px;display:flex;align-items:center;padding:0 12px;gap:6px;
+  border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface);font-size:12px}
+.doc-tool-group{display:flex;align-items:center;gap:2px}
+.doc-tool-btn{width:28px;height:28px;border-radius:var(--radius-xs);display:flex;align-items:center;justify-content:center;
+  color:var(--text-muted);transition:all .15s ease;font-size:12px}
+.doc-tool-btn:hover{background:var(--surface2);color:var(--text)}
+.zoom-label{font-size:12px;color:var(--text-secondary);padding:0 4px;min-width:36px;text-align:center}
+.page-nav{display:flex;align-items:center;gap:4px;color:var(--text-secondary);margin-left:8px}
+.page-nav button{color:var(--text-muted);font-size:14px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:4px}
+.page-nav button:hover{color:var(--text);background:var(--surface2)}
+.doc-toolbar-right{margin-left:auto}
+.upload-new-btn{padding:5px 12px;border-radius:var(--radius-sm);font-size:11px;font-weight:500;
+  color:var(--text-secondary);border:1px solid var(--border);display:flex;align-items:center;gap:5px;transition:all .2s ease}
+.upload-new-btn:hover{border-color:var(--accent-border);color:var(--accent-light)}
+.doc-body{flex:1;overflow:auto;padding:20px;display:flex;justify-content:center;background:#0a0a10;position:relative}
+.doc-canvas{width:480px;max-width:100%;background:#fff;box-shadow:0 2px 20px rgba(0,0,0,.5);
+  color:#1a1a1a;padding:36px 32px;font-size:12px;line-height:1.8;position:relative}
+
+/* Document Highlight Overlays */
+.doc-hl{position:absolute;border-radius:3px;pointer-events:auto;cursor:pointer;
+  transition:all .25s ease;opacity:0;z-index:5}
+.doc-hl.visible{opacity:1}
+.doc-hl.active{opacity:1;z-index:6}
+.doc-hl.editable{cursor:move}
+.doc-hl .hl-tag{position:absolute;top:-18px;left:0;font-size:9px;padding:1px 6px;border-radius:3px;
+  color:white;white-space:nowrap;opacity:0;transition:opacity .15s ease;font-family:inherit;pointer-events:none}
+.doc-hl.active .hl-tag{opacity:1}
+/* Resize handles on editable highlight */
+.doc-hl .resize-handle{position:absolute;width:8px;height:8px;background:white;border:2px solid var(--accent);
+  border-radius:2px;display:none;z-index:10}
+.doc-hl.editable .resize-handle{display:block}
+.doc-hl .resize-handle.nw{top:-4px;left:-4px;cursor:nw-resize}
+.doc-hl .resize-handle.ne{top:-4px;right:-4px;cursor:ne-resize}
+.doc-hl .resize-handle.sw{bottom:-4px;left:-4px;cursor:sw-resize}
+.doc-hl .resize-handle.se{bottom:-4px;right:-4px;cursor:se-resize}
+
+.hl-purple{background:rgba(124,91,245,.2);border:2px solid rgba(124,91,245,.6)}
+.hl-purple .hl-tag{background:rgba(124,91,245,.9)}
+.hl-green{background:rgba(62,207,142,.2);border:2px solid rgba(62,207,142,.6)}
+.hl-green .hl-tag{background:rgba(62,207,142,.9)}
+.hl-yellow{background:rgba(245,166,35,.2);border:2px solid rgba(245,166,35,.6)}
+.hl-yellow .hl-tag{background:rgba(245,166,35,.85)}
+.hl-pink{background:rgba(236,72,153,.2);border:2px solid rgba(236,72,153,.6)}
+.hl-pink .hl-tag{background:rgba(236,72,153,.9)}
+
+/* ===== Middle: Field Panel ===== */
+.field-panel{flex:1;display:flex;flex-direction:column;border-right:1px solid var(--border);min-width:0;overflow:hidden}
+
+/* Add Field Bar */
+.add-field-bar{display:flex;align-items:center;padding:8px 16px;border-bottom:1px solid var(--border);
+  flex-shrink:0;background:var(--surface);gap:8px}
+.add-field-btn{display:flex;align-items:center;gap:6px;padding:5px 14px;border-radius:var(--radius-sm);
+  font-size:12px;font-weight:500;color:var(--accent-light);border:1px dashed var(--accent-border);
+  background:var(--accent-bg);transition:all .2s ease}
+.add-field-btn:hover{background:rgba(124,91,245,.2);border-style:solid}
+.add-field-btn .plus{font-size:16px;font-weight:300}
+.add-field-hint{font-size:11px;color:var(--text-dim)}
+
+/* New Field Form (inline) */
+.new-field-form{display:none;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--accent-bg);
+  gap:8px;flex-wrap:wrap;align-items:center}
+.new-field-form.active{display:flex}
+.nf-input{padding:5px 10px;border-radius:var(--radius-xs);background:var(--bg);border:1px solid var(--border);
+  color:var(--text);font-size:12px;transition:border-color .2s ease}
+.nf-input:focus{border-color:var(--accent)}
+.nf-input.name{width:110px}
+.nf-input.value{width:180px}
+.nf-select{padding:5px 8px;border-radius:var(--radius-xs);background:var(--bg);border:1px solid var(--border);
+  color:var(--text);font-size:12px;-webkit-appearance:none}
+.nf-save{padding:5px 12px;border-radius:var(--radius-xs);background:var(--green);color:white;
+  font-size:11px;font-weight:600;transition:all .15s ease}
+.nf-save:hover{background:#35b87e}
+.nf-cancel{padding:5px 12px;border-radius:var(--radius-xs);font-size:11px;color:var(--text-muted);
+  border:1px solid var(--border);transition:all .15s ease}
+.nf-cancel:hover{color:var(--text);border-color:var(--border-light)}
+
+.field-scroll{flex:1;overflow-y:auto;padding:12px}
+
+/* Field Section */
+.field-section{background:var(--card);border:1px solid var(--card-border);border-radius:var(--radius);margin-bottom:12px;overflow:hidden}
+.field-section-header{display:flex;align-items:center;padding:12px 16px;cursor:pointer;user-select:none;gap:10px}
+.field-section-header:hover{background:rgba(255,255,255,.02)}
+.section-icon{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0}
+.section-icon.info{background:rgba(124,91,245,.15);color:var(--accent-light)}
+.section-icon.table{background:rgba(245,166,35,.15);color:var(--yellow)}
+.section-icon.summary{background:rgba(245,166,35,.15);color:var(--yellow)}
+.section-title{font-size:14px;font-weight:600;flex:1}
+.section-badge{font-size:11px;color:var(--text-muted);background:var(--surface2);padding:2px 10px;border-radius:10px}
+.section-toggle{color:var(--text-muted);font-size:11px;transition:transform .25s ease;padding:4px}
+.field-section.collapsed .section-toggle{transform:rotate(180deg)}
+.field-section-body{transition:max-height .3s ease;overflow:hidden}
+.field-section.collapsed .field-section-body{max-height:0 !important}
+
+/* Field Row */
+.field-row{
+  display:grid;grid-template-columns:120px 1fr auto auto auto;align-items:center;
+  padding:10px 16px;border-top:1px solid var(--border);gap:10px;
+  transition:background .15s ease;cursor:pointer;position:relative;
+}
+.field-row:first-child{border-top:none}
+.field-row:hover{background:rgba(255,255,255,.02)}
+.field-row.selected{background:rgba(124,91,245,.08);box-shadow:inset 3px 0 0 var(--accent)}
+.field-label{font-size:12px;color:var(--text-muted);font-weight:500}
+.field-value{font-size:14px;font-weight:600;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.field-type{font-size:11px;padding:2px 8px;border-radius:4px;font-weight:500;white-space:nowrap}
+.field-type.string{background:rgba(62,207,142,.1);color:var(--tag-string)}
+.field-type.date{background:rgba(167,139,250,.1);color:var(--tag-date)}
+.field-type.number{background:rgba(245,166,35,.1);color:var(--tag-number)}
+.confidence{display:flex;align-items:center;gap:6px;min-width:72px;justify-content:flex-end}
+.confidence-bar{width:36px;height:4px;background:var(--surface2);border-radius:2px;overflow:hidden}
+.confidence-fill{height:100%;border-radius:2px}
+.confidence-fill.high{background:var(--green)}
+.confidence-fill.mid{background:var(--yellow)}
+.confidence-text{font-size:11px;color:var(--green);font-weight:500;min-width:28px;text-align:right}
+
+/* Save icon on row */
+.row-save{display:none;align-items:center;justify-content:center;width:24px;height:24px;border-radius:4px;
+  background:var(--green);color:white;font-size:13px;cursor:pointer;transition:all .15s ease;
+  position:absolute;right:16px;top:50%;transform:translateY(-50%);z-index:5}
+.row-save:hover{background:#35b87e;transform:translateY(-50%) scale(1.1)}
+.field-row.editing .row-save{display:flex}
+
+/* Inline editing */
+.field-label.editing,.field-value.editing{
+  background:var(--bg);border:1px solid var(--accent);border-radius:4px;padding:2px 8px;
+  outline:none;cursor:text;min-width:60px}
+.field-label.editing{color:var(--text-secondary)}
+
+/* Items Table */
+.items-table{border-top:1px solid var(--border)}
+.items-table table{width:100%;border-collapse:collapse}
+.items-table th{padding:8px 14px;text-align:left;font-size:11px;font-weight:500;color:var(--text-muted);
+  border-bottom:1px solid var(--border);background:rgba(255,255,255,.02)}
+.items-table th:nth-child(n+3){text-align:right}
+.items-table td{padding:8px 14px;font-size:13px;color:var(--text);border-bottom:1px solid var(--border)}
+.items-table td:nth-child(n+3){text-align:right;font-variant-numeric:tabular-nums}
+.items-table td:first-child{color:var(--text-muted);width:30px}
+.items-table td:nth-child(2){max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.items-table tr:hover td{background:rgba(124,91,245,.04)}
+.items-table tr.selected td{background:rgba(124,91,245,.08)}
+.items-table .sum-row td{font-weight:700;border-top:2px solid var(--border-light);border-bottom:none;color:var(--text)}
+
+/* Validation Rules */
+.validation-rules{display:flex;flex-wrap:wrap;gap:8px;padding:12px 16px;border-top:1px solid var(--border)}
+.rule-tag{font-size:11px;padding:4px 12px;border-radius:14px;font-weight:500;
+  background:var(--green-bg);color:var(--green);border:1px solid var(--green-border);display:flex;align-items:center;gap:4px}
+
+/* Tax Summary Rows */
+.summary-row{display:grid;grid-template-columns:90px 1fr auto;align-items:center;
+  padding:12px 16px;border-top:1px solid var(--border);gap:12px;cursor:pointer;transition:background .15s ease}
+.summary-row:first-child{border-top:none}
+.summary-row:hover{background:rgba(255,255,255,.02)}
+.summary-row.selected{background:rgba(124,91,245,.08)}
+.summary-label{font-size:12px;color:var(--text-muted);font-weight:500}
+.summary-value{font-size:16px;font-weight:700;color:var(--text)}
+.summary-formula{font-size:11px;color:var(--accent-light);display:flex;align-items:center;gap:4px;white-space:nowrap}
+
+/* ===== Right: JSON Panel ===== */
+.json-panel{flex:0 0 30%;min-width:280px;display:flex;flex-direction:column;background:var(--surface)}
+.json-tabs{display:flex;align-items:center;padding:0 12px;height:38px;border-bottom:1px solid var(--border);flex-shrink:0;gap:2px}
+.json-tab{padding:5px 14px;border-radius:var(--radius-xs);font-size:12px;font-weight:600;
+  color:var(--text-muted);transition:all .2s ease}
+.json-tab:hover{color:var(--text-secondary)}
+.json-tab.active{background:var(--text);color:var(--bg)}
+.json-tabs-right{margin-left:auto;display:flex;gap:4px}
+.json-icon-btn{width:28px;height:28px;border-radius:var(--radius-xs);display:flex;align-items:center;
+  justify-content:center;color:var(--text-muted);transition:all .15s ease;font-size:13px}
+.json-icon-btn:hover{background:var(--surface2);color:var(--text)}
+.json-body{flex:1;overflow-y:auto;padding:0;font-family:'SF Mono','Fira Code','Cascadia Code',monospace}
+.json-lines{display:table;width:100%;font-size:12.5px;line-height:1.75}
+.json-line{display:table-row;transition:background .15s ease}
+.json-line:hover .json-line-content{background:rgba(255,255,255,.03)}
+.json-line.highlighted .json-line-content{background:rgba(124,91,245,.12)}
+.json-line.highlighted .json-line-num{color:var(--accent-light)}
+.json-line-num{display:table-cell;padding:1px 12px 1px 16px;text-align:right;color:var(--text-dim);
+  user-select:none;width:40px;font-size:12px}
+.json-line-content{display:table-cell;padding:1px 16px 1px 8px;white-space:pre;transition:background .15s ease}
+.jk{color:var(--json-key)}
+.js{color:var(--json-string)}
+.jn{color:var(--json-number)}
+
+/* JSON inline edit indicator */
+.json-line.editable-line{cursor:pointer}
+.json-line.editable-line .json-line-content{position:relative}
+.json-edit-icon{display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);
+  width:18px;height:18px;border-radius:3px;background:var(--accent-bg);color:var(--accent-light);
+  font-size:10px;align-items:center;justify-content:center}
+.json-line.highlighted .json-edit-icon{display:flex}
+
+/* API Endpoint Footer */
+.api-footer{flex-shrink:0;border-top:1px solid var(--border);padding:12px 16px}
+.api-endpoint{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.api-method{font-size:11px;font-weight:700;padding:3px 8px;border-radius:4px;background:rgba(62,207,142,.15);color:var(--green)}
+.api-url{font-size:12px;color:var(--text-secondary);font-family:'SF Mono',monospace;flex:1;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.api-url .highlight{color:var(--yellow)}
+.api-copy{width:24px;height:24px;border-radius:4px;display:flex;align-items:center;justify-content:center;
+  color:var(--text-muted);font-size:12px;transition:all .15s ease}
+.api-copy:hover{background:var(--surface2);color:var(--text)}
+.api-meta{display:flex;align-items:center;gap:8px}
+.api-code-label{font-size:11px;color:var(--text-muted)}
+.api-code{font-size:11px;padding:2px 8px;border-radius:4px;background:rgba(124,91,245,.1);
+  color:var(--accent-light);font-family:'SF Mono',monospace;font-weight:600}
+.api-doc-link{margin-left:auto;font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:4px;transition:color .15s ease}
+.api-doc-link:hover{color:var(--accent-light)}
+
+/* ===== Bottom Bar ===== */
+.bottom-bar{flex-shrink:0;background:var(--surface);border-top:1px solid var(--border);display:flex;flex-direction:column;z-index:20}
+.bottom-bar-top{display:flex;align-items:center;padding:8px 16px;gap:12px;min-height:40px}
+.upload-test-btn{padding:6px 14px;border-radius:var(--radius-sm);font-size:12px;font-weight:500;
+  color:var(--text-muted);border:1px dashed var(--border-light);display:flex;align-items:center;gap:6px;transition:all .2s ease}
+.upload-test-btn:hover{border-color:var(--accent-border);color:var(--accent-light)}
+.doc-pill{display:flex;align-items:center;gap:8px;padding:5px 14px;border-radius:16px;
+  background:var(--surface2);border:1px solid var(--border);font-size:12px;font-weight:500}
+.doc-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--green)}
+.doc-pill .status-text{color:var(--green);font-size:11px}
+
+/* AI Chat Section */
+.ai-chat-toggle{display:flex;align-items:center;gap:8px;padding:8px 16px;cursor:pointer;
+  border-top:1px solid var(--border);transition:background .15s ease;user-select:none}
+.ai-chat-toggle:hover{background:rgba(255,255,255,.02)}
+.ai-chat-icon{width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,#7c5bf5,#a78bfa);
+  display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+.ai-chat-label{font-size:13px;font-weight:600;flex:1}
+.ai-chat-count{font-size:11px;color:var(--text-muted);background:var(--surface2);padding:2px 8px;border-radius:8px}
+.ai-chat-expand{color:var(--text-muted);font-size:11px;transition:transform .25s ease;padding:4px}
+.bottom-bar.expanded .ai-chat-expand{transform:rotate(180deg)}
+.ai-chat-body{max-height:0;overflow:hidden;transition:max-height .35s cubic-bezier(.4,0,.2,1)}
+.bottom-bar.expanded .ai-chat-body{max-height:300px}
+.ai-chat-messages{padding:8px 16px}
+.ai-msg{margin-bottom:6px}
+.ai-msg-content{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:2px}
+.diff-tag{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:3px 12px;border-radius:14px;font-weight:500}
+.diff-tag.modified{background:rgba(62,207,142,.1);color:var(--green);border:1px solid var(--green-border)}
+.diff-tag.added{background:rgba(62,207,142,.1);color:var(--green);border:1px solid var(--green-border)}
+.ai-msg-time{font-size:11px;color:var(--text-dim);padding-left:4px}
+.quick-actions{display:flex;gap:6px;padding:8px 16px;flex-wrap:wrap}
+.quick-action{font-size:12px;padding:5px 14px;border-radius:16px;color:var(--text-muted);border:1px solid var(--border);transition:all .2s ease;white-space:nowrap}
+.quick-action:hover{border-color:var(--accent-border);color:var(--accent-light)}
+.chat-input-area{padding:8px 16px 12px;display:flex;gap:8px;align-items:flex-end}
+.chat-input-wrapper{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:20px;
+  padding:8px 16px;transition:border-color .2s ease;display:flex;align-items:center}
+.chat-input-wrapper:focus-within{border-color:var(--accent-border)}
+.chat-input{flex:1;background:none;border:none;color:var(--text);font-size:13px;line-height:1.4}
+.chat-input::placeholder{color:var(--text-dim)}
+.chat-send{width:32px;height:32px;border-radius:50%;background:var(--accent);color:white;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s ease;font-size:14px}
+.chat-send:hover{background:var(--accent-light)}
+
+/* Toast */
+.toast{position:fixed;bottom:60px;left:50%;transform:translateX(-50%) translateY(20px);
+  padding:8px 20px;border-radius:var(--radius);background:var(--surface2);border:1px solid var(--border);
+  font-size:12px;color:var(--text);z-index:200;opacity:0;transition:all .3s ease;pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* Floating action buttons */
+.float-actions{position:fixed;right:16px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:10px;z-index:15}
+.float-btn{width:40px;height:40px;border-radius:50%;border:1px solid var(--border);background:var(--surface);
+  display:flex;align-items:center;justify-content:center;color:var(--text-secondary);font-size:16px;
+  box-shadow:0 2px 12px rgba(0,0,0,.3);transition:all .2s ease}
+.float-btn:hover{border-color:var(--accent-border);color:var(--accent-light);transform:scale(1.05)}
+
+@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse-border{0%,100%{border-color:rgba(124,91,245,.6)}50%{border-color:rgba(124,91,245,.2)}}
+.animate-in{animation:fadeUp .4s ease both}
+</style>
+</head>
+<body>
+
+<!-- ===== Top Bar ===== -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo-icon"><svg viewBox="0 0 24 24"><path d="M13 3L4 14h7l-2 7 9-11h-7l2-7z"/></svg></div>
+    <span class="doc-name">invoice_sample.pdf</span>
+    <span class="status-badge done">已完成</span>
+  </div>
+  <div class="topbar-center">
+    <button class="topbar-btn"><span class="icon">☁</span> 上传新文档</button>
+    <div class="view-tabs">
+      <button class="view-tab active">⊞ 字段视图</button>
+      <button class="view-tab">☑ 校验规则</button>
+      <button class="view-tab">📊 统计分析</button>
+    </div>
+    <span class="field-count" id="fieldCount">12 字段</span>
+  </div>
+  <div class="topbar-right">
+    <button class="topbar-action">⊞ 模板库</button>
+    <button class="topbar-action">△ 沙箱调试</button>
+    <button class="topbar-action primary">✦ 保存并生成 API</button>
+    <div class="user-avatar">U</div>
+  </div>
+</div>
+
+<!-- ===== Main Content ===== -->
+<div class="main-content">
+
+  <!-- Left: Document Preview -->
+  <div class="doc-panel">
+    <div class="doc-toolbar">
+      <div class="doc-tool-group">
+        <button class="doc-tool-btn">−</button>
+        <span class="zoom-label">100%</span>
+        <button class="doc-tool-btn">+</button>
+      </div>
+      <div class="page-nav"><button>‹</button><span>第 1 页</span><button>›</button></div>
+      <div class="doc-toolbar-right"><button class="upload-new-btn">☁ 上传新文档</button></div>
+    </div>
+    <div class="doc-body">
+      <div class="doc-canvas" id="docCanvas">
+        <!-- Invoice content -->
+        <div style="text-align:center;margin-bottom:20px">
+          <div style="font-size:18px;font-weight:700;color:#c00;letter-spacing:3px;border-bottom:2px solid #c00;display:inline-block;padding-bottom:4px">增值税专用发票</div>
+          <div style="font-size:11px;color:#555;margin-top:6px">No.04172872 &nbsp; 开票日期：2024年03月15日</div>
+        </div>
+        <div style="display:flex;gap:16px;margin-bottom:16px">
+          <div style="flex:1;border:1px solid #ccc;padding:10px;font-size:11px;line-height:1.9">
+            <div style="color:#666">购买方：</div>
+            <div style="font-weight:600">深圳市星辰科技有限公司</div>
+            <div style="color:#666">纳税人识别号：</div><div>91440300MA5G1234AB</div>
+            <div style="color:#666">地址电话：深圳市南山区科技园南区</div><div>0755-86001234</div>
+          </div>
+          <div style="flex:1;border:1px solid #ccc;padding:10px;font-size:11px;line-height:1.9">
+            <div style="color:#666">销售方：</div>
+            <div style="font-weight:600">杭州云新网络科技有限公司</div>
+            <div style="color:#666">纳税人识别号：</div><div>91330100MA27ABC356</div>
+            <div style="color:#666">地址电话：杭州市余杭区未来科技城</div><div>0571-88001234</div>
+          </div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;border:1px solid #999;margin-bottom:14px;font-size:11.5px">
+          <thead><tr style="background:#f2f2f2">
+            <th style="padding:6px 8px;border:1px solid #999;text-align:left">货物名称</th>
+            <th style="padding:6px 8px;border:1px solid #999;text-align:center;width:40px">数量</th>
+            <th style="padding:6px 8px;border:1px solid #999;text-align:right">单价</th>
+            <th style="padding:6px 8px;border:1px solid #999;text-align:right">金额</th>
+            <th style="padding:6px 8px;border:1px solid #999;text-align:right">税额</th>
+          </tr></thead>
+          <tbody>
+            <tr><td style="padding:6px 8px;border:1px solid #999">*信息技术服务*云计算基础费用</td><td style="padding:6px 8px;border:1px solid #999;text-align:center">12</td><td style="padding:6px 8px;border:1px solid #999;text-align:right">¥8,500.00</td><td style="padding:6px 8px;border:1px solid #999;text-align:right">¥102,000.00</td><td style="padding:6px 8px;border:1px solid #999;text-align:right">¥6,120.00</td></tr>
+            <tr><td style="padding:6px 8px;border:1px solid #999">*信息技术服务*数据存储服务</td><td style="padding:6px 8px;border:1px solid #999;text-align:center">1</td><td style="padding:6px 8px;border:1px solid #999;text-align:right">¥36,000.00</td><td style="padding:6px 8px;border:1px solid #999;text-align:right">¥36,000.00</td><td style="padding:6px 8px;border:1px solid #999;text-align:right">¥2,160.00</td></tr>
+            <tr style="font-weight:600"><td style="padding:6px 8px;border:1px solid #999">合 计</td><td style="padding:6px 8px;border:1px solid #999"></td><td style="padding:6px 8px;border:1px solid #999"></td><td style="padding:6px 8px;border:1px solid #999;text-align:right">¥138,000.00</td><td style="padding:6px 8px;border:1px solid #999;text-align:right">¥8,280.00</td></tr>
+          </tbody>
+        </table>
+        <div style="margin-bottom:16px;font-size:12px">
+          <span style="color:#666">价税合计（大写）：</span><strong>壹拾肆万陆仟贰佰捌拾元整</strong>
+          <span style="float:right;font-size:18px;font-weight:700">¥146,280.00</span>
+        </div>
+        <div style="display:flex;gap:40px;font-size:11px;color:#444;margin-top:20px;padding-top:12px;border-top:1px solid #ddd">
+          <div><div>销售方：杭州云新网络科技有限公司</div><div>纳税人识别号：91330100MA27ABC356</div></div>
+          <div><div>收款人：李明</div><div>复核：王芳</div><div>开票人：张伟</div></div>
+        </div>
+
+        <!-- Highlight overlays (positioned over invoice content) -->
+        <div class="doc-hl hl-purple" id="hl_invoice_no"   data-field="invoice_no"   style="top:50px;left:100px;width:120px;height:20px"><span class="hl-tag">发票号码</span><div class="resize-handle nw"></div><div class="resize-handle ne"></div><div class="resize-handle sw"></div><div class="resize-handle se"></div></div>
+        <div class="doc-hl hl-purple" id="hl_issue_date"   data-field="issue_date"   style="top:50px;left:270px;width:150px;height:20px"><span class="hl-tag">开票日期</span><div class="resize-handle nw"></div><div class="resize-handle ne"></div><div class="resize-handle sw"></div><div class="resize-handle se"></div></div>
+        <div class="doc-hl hl-green"  id="hl_buyer_name"   data-field="buyer_name"   style="top:106px;left:14px;width:210px;height:42px"><span class="hl-tag">购买方名称</span><div class="resize-handle nw"></div><div class="resize-handle ne"></div><div class="resize-handle sw"></div><div class="resize-handle se"></div></div>
+        <div class="doc-hl hl-green"  id="hl_buyer_tax_id" data-field="buyer_tax_id" style="top:152px;left:14px;width:210px;height:22px"><span class="hl-tag">购买方识别号</span><div class="resize-handle nw"></div><div class="resize-handle ne"></div><div class="resize-handle sw"></div><div class="resize-handle se"></div></div>
+        <div class="doc-hl hl-green"  id="hl_seller_name"  data-field="seller_name"  style="top:106px;left:248px;width:210px;height:42px"><span class="hl-tag">销售方名称</span><div class="resize-handle nw"></div><div class="resize-handle ne"></div><div class="resize-handle sw"></div><div class="resize-handle se"></div></div>
+        <div class="doc-hl hl-green"  id="hl_seller_tax_id"data-field="seller_tax_id"style="top:152px;left:248px;width:210px;height:22px"><span class="hl-tag">销售方识别号</span><div class="resize-handle nw"></div><div class="resize-handle ne"></div><div class="resize-handle sw"></div><div class="resize-handle se"></div></div>
+        <div class="doc-hl hl-yellow" id="hl_items"        data-field="items"        style="top:250px;left:0;width:416px;height:80px"><span class="hl-tag">货物明细</span><div class="resize-handle nw"></div><div class="resize-handle ne"></div><div class="resize-handle sw"></div><div class="resize-handle se"></div></div>
+        <div class="doc-hl hl-pink"   id="hl_amount_total" data-field="amount_total" style="top:370px;left:240px;width:176px;height:28px"><span class="hl-tag">价税合计</span><div class="resize-handle nw"></div><div class="resize-handle ne"></div><div class="resize-handle sw"></div><div class="resize-handle se"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Middle: Field Panel -->
+  <div class="field-panel">
+    <!-- Add Field Bar -->
+    <div class="add-field-bar">
+      <button class="add-field-btn" onclick="showNewFieldForm()"><span class="plus">+</span> 添加识别字段</button>
+      <span class="add-field-hint">手动添加字段并标注，用于后续训练优化</span>
+    </div>
+    <div class="new-field-form" id="newFieldForm">
+      <input class="nf-input name" placeholder="字段名称" id="nfName">
+      <input class="nf-input value" placeholder="识别结果值" id="nfValue">
+      <select class="nf-select" id="nfType"><option>string</option><option>number</option><option>date</option><option>array</option></select>
+      <button class="nf-save" onclick="saveNewField()">✓ 保存</button>
+      <button class="nf-cancel" onclick="cancelNewField()">取消</button>
+    </div>
+    <div class="field-scroll">
+      <!-- 基本信息 -->
+      <div class="field-section" id="sectionBasic">
+        <div class="field-section-header" onclick="toggleSection('sectionBasic')">
+          <div class="section-icon info">ⓘ</div>
+          <span class="section-title">基本信息</span>
+          <span class="section-badge" id="basicCount">7 字段</span>
+          <span class="section-toggle">∧</span>
+        </div>
+        <div class="field-section-body" id="basicFields">
+          <div class="field-row" data-field="invoice_no" data-json-key="invoice_no" onclick="selectField(this)" ondblclick="startEdit(this)">
+            <span class="field-label">发票号码</span>
+            <span class="field-value">04172872</span>
+            <span class="field-type string">string</span>
+            <div class="confidence"><div class="confidence-bar"><div class="confidence-fill high" style="width:99%"></div></div><span class="confidence-text">99%</span></div>
+            <button class="row-save" onclick="saveEdit(event,this)" title="保存标注">✓</button>
+          </div>
+          <div class="field-row" data-field="issue_date" data-json-key="issue_date" onclick="selectField(this)" ondblclick="startEdit(this)">
+            <span class="field-label">开票日期</span>
+            <span class="field-value">2024-03-15</span>
+            <span class="field-type date">date</span>
+            <div class="confidence"><div class="confidence-bar"><div class="confidence-fill high" style="width:98%"></div></div><span class="confidence-text">98%</span></div>
+            <button class="row-save" onclick="saveEdit(event,this)" title="保存标注">✓</button>
+          </div>
+          <div class="field-row" data-field="buyer_name" data-json-key="buyer_name" onclick="selectField(this)" ondblclick="startEdit(this)">
+            <span class="field-label">购买方名称</span>
+            <span class="field-value">深圳市星辰科技有限公司</span>
+            <span class="field-type string">string</span>
+            <div class="confidence"><div class="confidence-bar"><div class="confidence-fill high" style="width:97%"></div></div><span class="confidence-text">97%</span></div>
+            <button class="row-save" onclick="saveEdit(event,this)" title="保存标注">✓</button>
+          </div>
+          <div class="field-row" data-field="buyer_tax_id" data-json-key="buyer_tax_id" onclick="selectField(this)" ondblclick="startEdit(this)">
+            <span class="field-label">购买方识别号</span>
+            <span class="field-value">91440300MA5G1234AB</span>
+            <span class="field-type string">string</span>
+            <div class="confidence"><div class="confidence-bar"><div class="confidence-fill high" style="width:96%"></div></div><span class="confidence-text">96%</span></div>
+            <button class="row-save" onclick="saveEdit(event,this)" title="保存标注">✓</button>
+          </div>
+          <div class="field-row" data-field="seller_name" data-json-key="seller_name" onclick="selectField(this)" ondblclick="startEdit(this)">
+            <span class="field-label">销售方名称</span>
+            <span class="field-value">杭州云新网络科技有限公司</span>
+            <span class="field-type string">string</span>
+            <div class="confidence"><div class="confidence-bar"><div class="confidence-fill high" style="width:99%"></div></div><span class="confidence-text">99%</span></div>
+            <button class="row-save" onclick="saveEdit(event,this)" title="保存标注">✓</button>
+          </div>
+          <div class="field-row" data-field="seller_tax_id" data-json-key="seller_tax_id" onclick="selectField(this)" ondblclick="startEdit(this)">
+            <span class="field-label">销售方识别号</span>
+            <span class="field-value">91330100MA27ABC356</span>
+            <span class="field-type string">string</span>
+            <div class="confidence"><div class="confidence-bar"><div class="confidence-fill high" style="width:95%"></div></div><span class="confidence-text">95%</span></div>
+            <button class="row-save" onclick="saveEdit(event,this)" title="保存标注">✓</button>
+          </div>
+          <div class="field-row" data-field="amount_total" data-json-key="amount_total" onclick="selectField(this)" ondblclick="startEdit(this)">
+            <span class="field-label">价税合计</span>
+            <span class="field-value">146280</span>
+            <span class="field-type number">number</span>
+            <div class="confidence"><div class="confidence-bar"><div class="confidence-fill high" style="width:99%"></div></div><span class="confidence-text">99%</span></div>
+            <button class="row-save" onclick="saveEdit(event,this)" title="保存标注">✓</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 货物明细 -->
+      <div class="field-section" id="sectionItems">
+        <div class="field-section-header" onclick="toggleSection('sectionItems')">
+          <div class="section-icon table">☰</div>
+          <span class="section-title">货物明细</span>
+          <span class="section-badge">2 行 × 6 列</span>
+          <span class="section-toggle">∧</span>
+        </div>
+        <div class="field-section-body">
+          <div class="items-table">
+            <table><thead><tr><th>#</th><th>品名</th><th>数量</th><th>单价</th><th>金额</th><th>税额</th></tr></thead>
+            <tbody>
+              <tr data-field="items" onclick="selectField(this)"><td>1</td><td>信息技术服务*云计算…</td><td>12</td><td>8,500</td><td>102,000</td><td>6,120</td></tr>
+              <tr data-field="items" onclick="selectField(this)"><td>2</td><td>信息技术服务*数据存…</td><td>1</td><td>36,000</td><td>36,000</td><td>2,160</td></tr>
+              <tr class="sum-row"><td colspan="2">合 计</td><td></td><td></td><td>138,000.00</td><td>8,280.00</td></tr>
+            </tbody></table>
+          </div>
+          <div class="validation-rules">
+            <span class="rule-tag">✓ 金额 = 数量×单价</span>
+            <span class="rule-tag">✓ 合计 = 金额合计</span>
+            <span class="rule-tag">✓ 税率 = 金额×6%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 税额汇总 -->
+      <div class="field-section" id="sectionTax">
+        <div class="field-section-header" onclick="toggleSection('sectionTax')">
+          <div class="section-icon summary">☰</div>
+          <span class="section-title">税额汇总</span>
+          <span class="section-toggle">∧</span>
+        </div>
+        <div class="field-section-body">
+          <div class="summary-row" data-field="tax_subtotal" data-json-key="tax_subtotal" onclick="selectField(this)">
+            <span class="summary-label">税额小计</span>
+            <span class="summary-value">8,280</span>
+            <span class="summary-formula">🔗 SUM（货物明细．税额）</span>
+          </div>
+          <div class="summary-row" data-field="amount_subtotal" data-json-key="amount_subtotal" onclick="selectField(this)">
+            <span class="summary-label">金额小计</span>
+            <span class="summary-value">138,000</span>
+            <span class="summary-formula">🔗 SUM（货物明细．金额）</span>
+          </div>
+          <div class="summary-row" data-field="total_with_tax" data-json-key="total_with_tax" onclick="selectField(this)">
+            <span class="summary-label">价税合计</span>
+            <span class="summary-value">146,280</span>
+            <span class="summary-formula">🔗 金额小计 + 税额小计</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: JSON Panel -->
+  <div class="json-panel">
+    <div class="json-tabs">
+      <button class="json-tab active" onclick="switchJsonTab(this)">JSON</button>
+      <button class="json-tab" onclick="switchJsonTab(this)">XML</button>
+      <button class="json-tab" onclick="switchJsonTab(this)">CSV</button>
+      <div class="json-tabs-right">
+        <button class="json-icon-btn" title="全屏">⛶</button>
+        <button class="json-icon-btn" title="复制">📋</button>
+        <button class="json-icon-btn" title="折叠">◇</button>
+      </div>
+    </div>
+    <div class="json-body" id="jsonBody"></div>
+    <div class="api-footer">
+      <div class="api-endpoint">
+        <span class="api-method">POST</span>
+        <span class="api-url">https://api.apianything.io/v1/extract/<span class="highlight">INV-7F3K9P</span></span>
+        <button class="api-copy" title="复制">📋</button>
+      </div>
+      <div class="api-meta">
+        <span class="api-code-label">API Code:</span>
+        <span class="api-code">INV-7F3K9P</span>
+        <button class="api-doc-link">⊞ 查看文档</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Bottom Bar ===== -->
+<div class="bottom-bar expanded" id="bottomBar">
+  <div class="bottom-bar-top">
+    <button class="upload-test-btn">+ &nbsp;上传同类文档调试</button>
+    <div class="doc-pill"><span>📄</span><span>invoice_sample.pdf</span><span class="dot"></span><span class="status-text">已识别</span></div>
+  </div>
+  <div class="ai-chat-toggle" onclick="toggleChat()">
+    <div class="ai-chat-icon">✦</div>
+    <span class="ai-chat-label">AI 矫正对话</span>
+    <span class="ai-chat-count">3 条消息</span>
+    <span class="ai-chat-expand">∧</span>
+  </div>
+  <div class="ai-chat-body">
+    <div class="ai-chat-messages" id="chatMessages">
+      <div class="ai-msg">
+        <div class="ai-msg-content">
+          <span class="diff-tag modified">✏ 已修改 购买方 → 买方名称</span>
+          <span class="diff-tag added">+ 已新增 备注 (string)</span>
+        </div>
+        <div class="ai-msg-time">14:33</div>
+      </div>
+    </div>
+    <div class="quick-actions">
+      <button class="quick-action">修正发票号码为…</button>
+      <button class="quick-action">添加新字段…</button>
+      <button class="quick-action">调整API返回格式…</button>
+      <button class="quick-action">把日期格式改为 YYYY/MM/DD</button>
+    </div>
+    <div class="chat-input-area">
+      <div class="chat-input-wrapper">
+        <input class="chat-input" placeholder="输入指令，例如：把日期格式改为 YYYY/MM/DD…" onkeydown="if(event.key==='Enter')sendMsg()">
+      </div>
+      <button class="chat-send" onclick="sendMsg()">↑</button>
+    </div>
+  </div>
+</div>
+
+<!-- Floating Action Buttons -->
+<div class="float-actions">
+  <button class="float-btn" title="Schema 编辑器">⊞</button>
+  <button class="float-btn" title="OCR 矫正">文</button>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== Data Model =====
+const jsonData = {
+  invoice_no: "04172872", issue_date: "2024-03-15",
+  buyer_name: "深圳市星辰科技有限公司", buyer_tax_id: "91440300MA5G1234AB",
+  seller_name: "杭州云新网络科技有限公司", seller_tax_id: "91330100MA27ABC356",
+  amount_total: 146280,
+  items: [
+    { row:1, name:"信息技术服务*云计算基础费用", spec:"-", qty:12, unit_price:8500, amount:102000, tax:6120 },
+    { row:2, name:"信息技术服务*数据存储服务", spec:"-", qty:1, unit_price:36000, amount:36000, tax:2160 }
+  ],
+  tax_summary: { tax_subtotal:8280, amount_subtotal:138000, total_with_tax:146280 }
+};
+
+// JSON key → line number mapping (built during render)
+let jsonKeyLineMap = {};
+
+// ===== JSON Rendering =====
+function renderJson() {
+  const raw = JSON.stringify(jsonData, null, 2);
+  const lines = raw.split('\n');
+  const container = document.getElementById('jsonBody');
+  jsonKeyLineMap = {};
+  let html = '<div class="json-lines">';
+  lines.forEach((line, i) => {
+    const num = i + 1;
+    // Extract key name from this line for mapping
+    const keyMatch = line.match(/"(\w+)"\s*:/);
+    if (keyMatch) {
+      const key = keyMatch[1];
+      if (!jsonKeyLineMap[key]) jsonKeyLineMap[key] = [];
+      jsonKeyLineMap[key].push(num);
+    }
+    let colored = line
+      .replace(/"([^"]+)"(?=\s*:)/g, '<span class="jk">"$1"</span>')
+      .replace(/:\s*"([^"]*)"/g, ': <span class="js">"$1"</span>')
+      .replace(/:\s*(\d+\.?\d*)/g, ': <span class="jn">$1</span>');
+    html += `<div class="json-line" data-line="${num}"><span class="json-line-num">${num}</span><span class="json-line-content">${colored}</span></div>`;
+  });
+  html += '</div>';
+  container.innerHTML = html;
+}
+renderJson();
+
+// ===== FEATURE 1: Click field → highlight left + right =====
+let activeField = null;
+
+function selectField(el) {
+  // If double-click triggers edit, single-click only does select
+  const fieldName = el.dataset.field;
+  if (!fieldName) return;
+
+  // Deselect previous
+  document.querySelectorAll('.field-row.selected, tr.selected, .summary-row.selected').forEach(r => r.classList.remove('selected'));
+  document.querySelectorAll('.doc-hl.visible').forEach(h => { h.classList.remove('visible','active','editable'); });
+  document.querySelectorAll('.json-line.highlighted').forEach(l => l.classList.remove('highlighted'));
+
+  // Select this row
+  el.classList.add('selected');
+  activeField = fieldName;
+
+  // Highlight document overlay
+  const hl = document.getElementById('hl_' + fieldName);
+  if (hl) {
+    hl.classList.add('visible', 'active');
+  }
+
+  // Highlight JSON lines
+  const jsonKey = el.dataset.jsonKey || fieldName;
+  highlightJsonKey(jsonKey);
+}
+
+function highlightJsonKey(key) {
+  document.querySelectorAll('.json-line.highlighted').forEach(l => l.classList.remove('highlighted'));
+  // For nested keys like tax_summary subfields, highlight the parent block
+  const lineNums = jsonKeyLineMap[key];
+  if (lineNums) {
+    lineNums.forEach(num => {
+      const line = document.querySelector(`.json-line[data-line="${num}"]`);
+      if (line) {
+        line.classList.add('highlighted');
+        line.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    });
+  }
+  // For "items" field, highlight a range
+  if (key === 'items') {
+    const itemsLines = jsonKeyLineMap['items'];
+    if (itemsLines) {
+      const startLine = itemsLines[0];
+      // Highlight from "items" to closing bracket (approximately)
+      for (let i = startLine; i <= startLine + 20 && i <= 34; i++) {
+        const line = document.querySelector(`.json-line[data-line="${i}"]`);
+        if (line) line.classList.add('highlighted');
+      }
+    }
+  }
+}
+
+// Click document highlight → select corresponding field row
+document.querySelectorAll('.doc-hl').forEach(hl => {
+  hl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const fieldName = hl.dataset.field;
+    const row = document.querySelector(`.field-row[data-field="${fieldName}"], .summary-row[data-field="${fieldName}"], tr[data-field="${fieldName}"]`);
+    if (row) {
+      row.scrollIntoView({ behavior:'smooth', block:'center' });
+      selectField(row);
+    }
+  });
+});
+
+// Click empty area to deselect
+document.querySelector('.doc-body').addEventListener('click', (e) => {
+  if (e.target.closest('.doc-hl')) return;
+  deselectAll();
+});
+
+function deselectAll() {
+  document.querySelectorAll('.field-row.selected, tr.selected, .summary-row.selected').forEach(r => r.classList.remove('selected'));
+  document.querySelectorAll('.doc-hl.visible').forEach(h => { h.classList.remove('visible','active','editable'); });
+  document.querySelectorAll('.json-line.highlighted').forEach(l => l.classList.remove('highlighted'));
+  activeField = null;
+  exitEdit();
+}
+
+// ===== FEATURE 2: Double-click → inline edit with save icon =====
+let editingRow = null;
+
+function startEdit(el) {
+  // Prevent triggering if already editing
+  if (editingRow === el) return;
+  exitEdit();
+
+  el.classList.add('editing');
+  editingRow = el;
+
+  const label = el.querySelector('.field-label');
+  const value = el.querySelector('.field-value');
+
+  // Make label editable
+  label.contentEditable = true;
+  label.classList.add('editing');
+
+  // Make value editable
+  value.contentEditable = true;
+  value.classList.add('editing');
+  value.focus();
+
+  // Select all text in value
+  const range = document.createRange();
+  range.selectNodeContents(value);
+  window.getSelection().removeAllRanges();
+  window.getSelection().addRange(range);
+
+  // Also make the document highlight editable (draggable/resizable)
+  const fieldName = el.dataset.field;
+  const hl = document.getElementById('hl_' + fieldName);
+  if (hl) {
+    hl.classList.add('visible', 'active', 'editable');
+    enableDragResize(hl);
+  }
+
+  // Also highlight JSON and indicate editable
+  highlightJsonKey(el.dataset.jsonKey || fieldName);
+}
+
+function saveEdit(e, saveBtn) {
+  e.stopPropagation();
+  const row = saveBtn.closest('.field-row');
+  if (!row) return;
+
+  const label = row.querySelector('.field-label');
+  const value = row.querySelector('.field-value');
+  const fieldName = row.dataset.field;
+
+  // Exit editing mode
+  label.contentEditable = false;
+  label.classList.remove('editing');
+  value.contentEditable = false;
+  value.classList.remove('editing');
+  row.classList.remove('editing');
+
+  // Update JSON data
+  const jsonKey = row.dataset.jsonKey || fieldName;
+  const newLabel = label.textContent.trim();
+  const newValue = value.textContent.trim();
+
+  // If the JSON key was renamed
+  if (jsonKey !== newLabel.replace(/\s/g, '_').toLowerCase()) {
+    // For demo: just update the data attribute
+    row.dataset.jsonKey = newLabel.replace(/\s/g, '_').toLowerCase();
+  }
+
+  // Update jsonData
+  if (jsonData.hasOwnProperty(jsonKey)) {
+    const numVal = Number(newValue);
+    jsonData[jsonKey] = isNaN(numVal) ? newValue : numVal;
+  }
+
+  // Re-render JSON
+  renderJson();
+  showToast('✓ 标注已保存 — ' + newLabel + ': ' + newValue);
+
+  // Disable highlight editing
+  const hl = document.getElementById('hl_' + fieldName);
+  if (hl) hl.classList.remove('editable');
+
+  editingRow = null;
+}
+
+function exitEdit() {
+  if (!editingRow) return;
+  const row = editingRow;
+  const label = row.querySelector('.field-label');
+  const value = row.querySelector('.field-value');
+  if (label) { label.contentEditable = false; label.classList.remove('editing'); }
+  if (value) { value.contentEditable = false; value.classList.remove('editing'); }
+  row.classList.remove('editing');
+  document.querySelectorAll('.doc-hl.editable').forEach(h => h.classList.remove('editable'));
+  editingRow = null;
+}
+
+// Press Escape to cancel edit
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    exitEdit();
+    deselectAll();
+  }
+});
+
+// ===== FEATURE 3: Drag/resize highlight region =====
+function enableDragResize(hl) {
+  let isDragging = false, isResizing = false, resizeDir = '';
+  let startX, startY, startLeft, startTop, startW, startH;
+
+  // Drag the highlight box
+  const onMouseDown = (e) => {
+    if (e.target.classList.contains('resize-handle')) return;
+    if (!hl.classList.contains('editable')) return;
+    isDragging = true;
+    startX = e.clientX; startY = e.clientY;
+    startLeft = parseInt(hl.style.left); startTop = parseInt(hl.style.top);
+    e.preventDefault();
+  };
+
+  const onMouseMove = (e) => {
+    if (isDragging) {
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+      hl.style.left = (startLeft + dx) + 'px';
+      hl.style.top = (startTop + dy) + 'px';
+    }
+    if (isResizing) {
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+      if (resizeDir.includes('e')) hl.style.width = Math.max(30, startW + dx) + 'px';
+      if (resizeDir.includes('s')) hl.style.height = Math.max(15, startH + dy) + 'px';
+      if (resizeDir.includes('w')) { hl.style.left = (startLeft + dx) + 'px'; hl.style.width = Math.max(30, startW - dx) + 'px'; }
+      if (resizeDir.includes('n')) { hl.style.top = (startTop + dy) + 'px'; hl.style.height = Math.max(15, startH - dy) + 'px'; }
+    }
+  };
+
+  const onMouseUp = () => {
+    if (isDragging || isResizing) {
+      isDragging = false; isResizing = false;
+    }
+  };
+
+  hl.addEventListener('mousedown', onMouseDown);
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
+
+  // Resize handles
+  hl.querySelectorAll('.resize-handle').forEach(handle => {
+    handle.addEventListener('mousedown', (e) => {
+      if (!hl.classList.contains('editable')) return;
+      e.stopPropagation();
+      isResizing = true;
+      resizeDir = handle.className.split(' ').pop(); // nw, ne, sw, se
+      startX = e.clientX; startY = e.clientY;
+      startLeft = parseInt(hl.style.left); startTop = parseInt(hl.style.top);
+      startW = parseInt(hl.style.width); startH = parseInt(hl.style.height);
+      e.preventDefault();
+    });
+  });
+}
+
+// ===== FEATURE 4: Add new field =====
+function showNewFieldForm() {
+  document.getElementById('newFieldForm').classList.add('active');
+  document.getElementById('nfName').focus();
+}
+
+function cancelNewField() {
+  document.getElementById('newFieldForm').classList.remove('active');
+  document.getElementById('nfName').value = '';
+  document.getElementById('nfValue').value = '';
+}
+
+function saveNewField() {
+  const name = document.getElementById('nfName').value.trim();
+  const value = document.getElementById('nfValue').value.trim();
+  const type = document.getElementById('nfType').value;
+  if (!name) { document.getElementById('nfName').focus(); return; }
+
+  const jsonKey = name.replace(/\s/g, '_').toLowerCase();
+
+  // Add to JSON data
+  const numVal = Number(value);
+  jsonData[jsonKey] = (type === 'number' && !isNaN(numVal)) ? numVal : value;
+
+  // Create new field row
+  const row = document.createElement('div');
+  row.className = 'field-row animate-in';
+  row.dataset.field = jsonKey;
+  row.dataset.jsonKey = jsonKey;
+  row.setAttribute('onclick', 'selectField(this)');
+  row.setAttribute('ondblclick', 'startEdit(this)');
+  row.innerHTML = `
+    <span class="field-label">${name}</span>
+    <span class="field-value">${value || '（空）'}</span>
+    <span class="field-type ${type}">${type}</span>
+    <div class="confidence"><div class="confidence-bar"><div class="confidence-fill mid" style="width:0%"></div></div><span class="confidence-text" style="color:var(--text-muted)">手动</span></div>
+    <button class="row-save" onclick="saveEdit(event,this)" title="保存标注">✓</button>
+  `;
+  document.getElementById('basicFields').appendChild(row);
+
+  // Update count
+  const count = document.querySelectorAll('#basicFields .field-row').length;
+  document.getElementById('basicCount').textContent = count + ' 字段';
+  const totalCount = document.querySelectorAll('.field-row').length;
+  document.getElementById('fieldCount').textContent = totalCount + ' 字段';
+
+  // Re-render JSON
+  renderJson();
+
+  // Reset form
+  cancelNewField();
+  showToast('✓ 已添加新字段：' + name);
+}
+
+// ===== Section Toggle =====
+function toggleSection(id) { document.getElementById(id).classList.toggle('collapsed'); }
+
+// ===== JSON Tab Switch =====
+function switchJsonTab(btn) {
+  document.querySelectorAll('.json-tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+// ===== View Tab Switch =====
+document.querySelectorAll('.view-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+  });
+});
+
+// ===== Chat =====
+function toggleChat() { document.getElementById('bottomBar').classList.toggle('expanded'); }
+
+function sendMsg() {
+  const input = document.querySelector('.chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  const msgs = document.getElementById('chatMessages');
+  const msg = document.createElement('div');
+  msg.className = 'ai-msg animate-in';
+  msg.innerHTML = `<div class="ai-msg-content"><span class="diff-tag modified">⏳ ${text.substring(0,24)}…</span></div>
+    <div class="ai-msg-time">${new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})}</div>`;
+  msgs.appendChild(msg);
+  setTimeout(() => {
+    msg.querySelector('.diff-tag').textContent = '✓ ' + text.substring(0,24) + '…';
+    msg.querySelector('.diff-tag').className = 'diff-tag added';
+  }, 1200);
+}
+
+// ===== Toast =====
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+</script>
+</body>
+</html>

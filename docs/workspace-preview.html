@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ApiAnything — 工作台 UI 预览</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --primary: #2563EB;
+    --primary-light: #DBEAFE;
+    --success: #16A34A;
+    --success-bg: #DCFCE7;
+    --warning: #CA8A04;
+    --warning-bg: #FEF9C3;
+    --error: #DC2626;
+    --error-bg: #FEE2E2;
+    --bg: #F8FAFC;
+    --surface: #FFFFFF;
+    --border: #E2E8F0;
+    --text: #0F172A;
+    --text2: #64748B;
+    --text3: #94A3B8;
+    --hl-basic: #3B82F6;
+    --hl-items: #22C55E;
+    --hl-tax: #F97316;
+    --hl-basic-bg: rgba(59,130,246,0.12);
+    --hl-items-bg: rgba(34,197,94,0.12);
+    --hl-tax-bg: rgba(249,115,22,0.12);
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* === Top Nav === */
+  .topnav { display: flex; align-items: center; height: 52px; background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 20px; flex-shrink: 0; }
+  .logo { font-weight: 700; font-size: 16px; color: var(--primary); margin-right: 32px; display: flex; align-items: center; gap: 8px; }
+  .logo svg { width: 24px; height: 24px; }
+  .nav-links { display: flex; gap: 4px; }
+  .nav-links a { padding: 8px 16px; border-radius: 6px; text-decoration: none; color: var(--text2); font-size: 13px; font-weight: 500; transition: all .15s; }
+  .nav-links a.active { background: var(--primary-light); color: var(--primary); }
+  .nav-links a:hover { background: #F1F5F9; color: var(--text); }
+  .nav-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .badge { background: var(--primary-light); color: var(--primary); font-size: 11px; padding: 3px 10px; border-radius: 99px; font-weight: 600; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, var(--primary), #6366F1); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; }
+
+  /* === Toolbar === */
+  .toolbar { display: flex; align-items: center; height: 44px; background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 16px; gap: 8px; flex-shrink: 0; }
+  .toolbar-title { font-weight: 600; font-size: 14px; margin-right: 16px; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text); transition: all .15s; white-space: nowrap; }
+  .btn:hover { background: #F1F5F9; border-color: #CBD5E1; }
+  .btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .btn-primary:hover { background: #1D4ED8; }
+  .btn-success { background: var(--success); color: #fff; border-color: var(--success); }
+  .btn-success:hover { background: #15803D; }
+  .toolbar-sep { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+  .version-pills { display: flex; gap: 4px; margin-left: auto; }
+  .version-pill { padding: 3px 10px; border-radius: 99px; font-size: 11px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text2); }
+  .version-pill.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+  /* === Main 3-col === */
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* --- Panel A: Document Preview (55%) --- */
+  .panel-a { width: 55%; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: #F1F5F9; position: relative; }
+  .panel-a .doc-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .panel-a .doc-toolbar .tool-btn { width: 28px; height: 28px; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; transition: all .15s; }
+  .panel-a .doc-toolbar .tool-btn:hover { background: var(--primary-light); border-color: var(--primary); }
+  .panel-a .doc-toolbar .tool-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .doc-viewport { flex: 1; overflow: auto; display: flex; align-items: flex-start; justify-content: center; padding: 24px; }
+  .doc-page { width: 480px; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,.12); border-radius: 2px; position: relative; padding: 0; }
+  .doc-page img { display: none; }
+  .doc-faux { padding: 40px 36px; font-size: 12px; line-height: 2.2; color: var(--text); position: relative; }
+  .doc-faux .header { text-align: center; font-size: 18px; font-weight: 700; color: var(--error); margin-bottom: 16px; letter-spacing: 6px; }
+  .doc-faux .sub { text-align: center; font-size: 11px; color: var(--text2); margin-bottom: 20px; }
+  .doc-faux table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 11px; }
+  .doc-faux table th, .doc-faux table td { border: 1px solid #CBD5E1; padding: 4px 8px; text-align: left; }
+  .doc-faux table th { background: #F8FAFC; font-weight: 600; }
+  .doc-faux .row-label { font-size: 11px; color: var(--text2); }
+
+  /* Highlights */
+  .hl-box { position: absolute; border: 2px solid transparent; border-radius: 3px; pointer-events: none; transition: all .2s; opacity: 0; }
+  .hl-box.visible { opacity: 1; }
+  .hl-box .hl-label { position: absolute; top: -18px; left: 0; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
+  .hl-basic { border-color: var(--hl-basic); background: var(--hl-basic-bg); }
+  .hl-basic .hl-label { background: var(--hl-basic); color: #fff; }
+  .hl-items { border-color: var(--hl-items); background: var(--hl-items-bg); }
+  .hl-items .hl-label { background: var(--hl-items); color: #fff; }
+  .hl-tax { border-color: var(--hl-tax); background: var(--hl-tax-bg); }
+  .hl-tax .hl-label { background: var(--hl-tax); color: #fff; }
+
+  /* --- Panel B: Fields + Chat (30%) --- */
+  .panel-b { width: 30%; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--surface); }
+  .panel-b-scroll { flex: 1; overflow-y: auto; padding: 12px; }
+  .field-group { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
+  .field-group-header { display: flex; align-items: center; padding: 8px 12px; background: #F8FAFC; font-weight: 600; font-size: 12px; cursor: pointer; user-select: none; gap: 6px; border-bottom: 1px solid var(--border); }
+  .field-group-header .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .field-group-header .badge-count { margin-left: auto; font-size: 10px; font-weight: 600; background: var(--border); color: var(--text2); padding: 1px 8px; border-radius: 99px; }
+  .field-group-header .actions { margin-left: 8px; display: flex; gap: 4px; }
+  .field-group-header .actions button { font-size: 10px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border); background: #fff; cursor: pointer; color: var(--text2); }
+  .field-group-body { padding: 8px 12px; }
+  .field-row { display: flex; align-items: center; padding: 5px 0; border-radius: 4px; transition: background .15s; cursor: default; }
+  .field-row:hover, .field-row.hovered { background: #F1F5F9; }
+  .field-row .f-name { width: 72px; font-size: 11px; color: var(--text2); flex-shrink: 0; }
+  .field-row .f-value { flex: 1; font-size: 12px; font-weight: 500; padding: 3px 8px; background: #F8FAFC; border: 1px solid var(--border); border-radius: 4px; margin: 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .field-row .f-type { font-size: 10px; color: var(--text3); flex-shrink: 0; width: 42px; text-align: right; }
+  .field-row .f-edit { font-size: 12px; cursor: pointer; margin-left: 4px; opacity: 0; transition: opacity .15s; }
+  .field-row:hover .f-edit { opacity: 1; }
+
+  /* array sub-rows */
+  .array-header { display: flex; align-items: center; padding: 4px 0; font-size: 11px; font-weight: 600; color: var(--text2); cursor: pointer; user-select: none; gap: 4px; }
+  .array-header .arr-toggle { font-size: 10px; transition: transform .2s; }
+  .array-header .arr-toggle.open { transform: rotate(90deg); }
+  .array-body { padding-left: 12px; border-left: 2px solid var(--border); margin-left: 6px; margin-bottom: 6px; }
+  .array-body.collapsed { display: none; }
+
+  /* summary row */
+  .summary-row { display: flex; align-items: center; padding: 5px 0; border-top: 1px dashed var(--border); margin-top: 4px; }
+  .summary-row .f-name { color: var(--warning); font-weight: 600; }
+  .summary-row .f-link { font-size: 10px; color: var(--primary); margin-left: 4px; }
+
+  /* validation rules */
+  .rules-card { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
+  .rules-header { display: flex; align-items: center; padding: 8px 12px; background: #F8FAFC; font-weight: 600; font-size: 12px; border-bottom: 1px solid var(--border); gap: 6px; }
+  .rules-body { padding: 8px 12px; }
+  .rule-item { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 11px; }
+  .rule-icon { font-size: 12px; }
+
+  /* Chat */
+  .chat-area { border-top: 1px solid var(--border); flex-shrink: 0; display: flex; flex-direction: column; max-height: 220px; }
+  .chat-header { padding: 8px 12px; font-weight: 600; font-size: 12px; background: #F8FAFC; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; }
+  .chat-messages { flex: 1; overflow-y: auto; padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; min-height: 100px; }
+  .chat-msg { max-width: 90%; font-size: 12px; line-height: 1.5; padding: 6px 10px; border-radius: 8px; }
+  .chat-msg.ai { background: #F1F5F9; color: var(--text); align-self: flex-start; border-bottom-left-radius: 2px; }
+  .chat-msg.user { background: var(--primary); color: #fff; align-self: flex-end; border-bottom-right-radius: 2px; }
+  .chat-input { display: flex; align-items: center; padding: 8px 12px; gap: 8px; border-top: 1px solid var(--border); }
+  .chat-input input { flex: 1; padding: 7px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; outline: none; }
+  .chat-input input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(37,99,235,.15); }
+
+  /* --- Panel C: API Result (15%) --- */
+  .panel-c { width: 15%; display: flex; flex-direction: column; background: var(--surface); min-width: 180px; }
+  .panel-c-section { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .panel-c-section .sec-title { font-size: 10px; font-weight: 700; color: var(--text3); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+  .endpoint-box { background: #0F172A; color: #A5F3FC; font-size: 10px; padding: 6px 8px; border-radius: 4px; font-family: 'JetBrains Mono', 'Fira Code', monospace; word-break: break-all; line-height: 1.4; }
+  .endpoint-box .method { color: #34D399; font-weight: 700; }
+  .json-box { background: #0F172A; color: #E2E8F0; font-size: 10px; padding: 8px; border-radius: 4px; font-family: 'JetBrains Mono', 'Fira Code', monospace; line-height: 1.6; overflow-x: auto; max-height: 320px; overflow-y: auto; }
+  .json-box .jk { color: #93C5FD; }
+  .json-box .js { color: #86EFAC; }
+  .json-box .jn { color: #FDE68A; }
+  .json-box .jp { color: #A5F3FC; }
+  .json-box .json-line { transition: background .15s; padding: 0 4px; margin: 0 -4px; border-radius: 2px; }
+  .json-box .json-line.hovered { background: rgba(59,130,246,0.2); }
+
+  .validate-list { display: flex; flex-direction: column; gap: 3px; }
+  .validate-item { display: flex; align-items: center; gap: 4px; font-size: 11px; }
+  .validate-item .vi-icon { font-size: 12px; }
+
+  .code-tabs { display: flex; gap: 2px; margin-bottom: 6px; }
+  .code-tab { padding: 2px 8px; font-size: 10px; border-radius: 3px; cursor: pointer; background: #1E293B; color: var(--text3); }
+  .code-tab.active { background: var(--primary); color: #fff; }
+  .code-box { background: #0F172A; color: #CBD5E1; font-size: 10px; padding: 8px; border-radius: 4px; font-family: monospace; line-height: 1.5; white-space: pre-wrap; }
+
+  /* === Bottom Session Bar === */
+  .session-bar { display: flex; align-items: center; height: 36px; background: var(--surface); border-top: 1px solid var(--border); padding: 0 16px; gap: 8px; flex-shrink: 0; overflow-x: auto; }
+  .session-tab { display: flex; align-items: center; gap: 4px; padding: 4px 12px; border-radius: 6px; font-size: 11px; font-weight: 500; cursor: pointer; white-space: nowrap; border: 1px solid transparent; color: var(--text2); }
+  .session-tab.active { background: var(--primary-light); color: var(--primary); border-color: rgba(37,99,235,.2); }
+  .session-tab:hover { background: #F1F5F9; }
+  .session-add { font-size: 16px; color: var(--text3); cursor: pointer; margin-left: auto; }
+
+  /* === Modals === */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 1000; }
+  .modal-overlay.show { display: flex; }
+  .modal { background: var(--surface); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.2); max-width: 640px; width: 90%; max-height: 80vh; overflow-y: auto; }
+  .modal-header { display: flex; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .modal-header h3 { font-size: 15px; font-weight: 600; }
+  .modal-header .close { margin-left: auto; cursor: pointer; font-size: 18px; color: var(--text3); background: none; border: none; }
+  .modal-body { padding: 20px; }
+  .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); }
+
+  /* Template grid */
+  .tpl-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .tpl-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px; text-align: center; cursor: pointer; transition: all .15s; }
+  .tpl-card:hover { border-color: var(--primary); box-shadow: 0 2px 8px rgba(37,99,235,.12); }
+  .tpl-card .tpl-icon { font-size: 28px; margin-bottom: 6px; }
+  .tpl-card .tpl-name { font-weight: 600; font-size: 12px; margin-bottom: 2px; }
+  .tpl-card .tpl-meta { font-size: 10px; color: var(--text3); }
+
+  /* Generate API steps */
+  .step-indicator { display: flex; gap: 8px; margin-bottom: 16px; }
+  .step-dot { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: var(--text3); }
+  .step-dot.active { border-color: var(--primary); background: var(--primary); color: #fff; }
+  .step-dot.done { border-color: var(--success); background: var(--success); color: #fff; }
+  .step-line { width: 32px; height: 2px; background: var(--border); align-self: center; }
+
+  .form-group { margin-bottom: 12px; }
+  .form-group label { display: block; font-size: 11px; font-weight: 600; color: var(--text2); margin-bottom: 4px; }
+  .form-group input, .form-group select { width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+
+  /* Drawing overlay hint */
+  .drawing-hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); background: rgba(37,99,235,.9); color: #fff; padding: 8px 16px; border-radius: 8px; font-size: 12px; font-weight: 600; pointer-events: none; display: none; z-index: 10; }
+  .drawing-hint.show { display: block; }
+
+  /* OCR float */
+  .ocr-float { position: absolute; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.12); padding: 12px; width: 220px; font-size: 11px; display: none; z-index: 20; }
+  .ocr-float.show { display: block; }
+  .ocr-float .ocr-text { background: #F8FAFC; border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; margin-bottom: 8px; font-family: monospace; font-size: 10px; color: var(--text); }
+  .ocr-float .ocr-options label { display: flex; align-items: center; gap: 6px; padding: 4px 0; cursor: pointer; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<!-- Top Nav -->
+<div class="topnav">
+  <div class="logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 9h6M9 12h6M9 15h4"/></svg>
+    ApiAnything
+  </div>
+  <div class="nav-links">
+    <a href="#" class="active">工作台</a>
+    <a href="#">API 管理</a>
+    <a href="#">设置</a>
+  </div>
+  <div class="nav-right">
+    <span class="badge">本月 1,234 / 10,000</span>
+    <div class="avatar">S</div>
+  </div>
+</div>
+
+<!-- Toolbar -->
+<div class="toolbar">
+  <span class="toolbar-title">工作台</span>
+  <button class="btn" onclick="document.getElementById('uploadInput').click()">📂 上传文档</button>
+  <input type="file" id="uploadInput" style="display:none">
+  <button class="btn" id="btnTemplate" onclick="showModal('templateModal')">📋 模板库</button>
+  <div class="toolbar-sep"></div>
+  <button class="btn btn-success" onclick="showModal('generateModal')">💾 保存并生成API</button>
+  <button class="btn" onclick="showModal('playgroundModal')">🔬 沙箱调试</button>
+  <div class="version-pills">
+    <span class="version-pill">v1</span>
+    <span class="version-pill">v2</span>
+    <span class="version-pill active">v3</span>
+  </div>
+</div>
+
+<!-- Main 3-column -->
+<div class="main">
+
+  <!-- Panel A: Document Preview 55% -->
+  <div class="panel-a">
+    <div class="doc-toolbar">
+      <div class="tool-btn" title="放大">🔍+</div>
+      <div class="tool-btn" title="缩小">🔍−</div>
+      <div class="tool-btn" title="拖拽">✋</div>
+      <div class="tool-btn" id="drawTool" title="画框工具" onclick="toggleDraw()">📐</div>
+      <span style="margin-left:auto;font-size:11px;color:var(--text3)">第 1 / 1 页 · 100%</span>
+    </div>
+    <div class="doc-viewport">
+      <div class="doc-page" id="docPage">
+        <div class="doc-faux">
+          <div class="header">增 值 税 专 用 发 票</div>
+          <div class="sub">发票代码：3200231130 &nbsp; 发票号码：<span id="docInvNo">04727583</span> &nbsp; 开票日期：<span id="docDate">2024年01月15日</span></div>
+
+          <div style="display:flex;gap:20px;margin-bottom:10px;font-size:11px;">
+            <div style="flex:1">
+              <div class="row-label">购买方</div>
+              <div id="docBuyer"><b>YY贸易有限公司</b></div>
+              <div style="color:var(--text2);font-size:10px">纳税人识别号：91320000MA1XXXXX</div>
+            </div>
+            <div style="flex:1">
+              <div class="row-label">销售方</div>
+              <div id="docSeller"><b>XX科技有限公司</b></div>
+              <div style="color:var(--text2);font-size:10px">纳税人识别号：91320000MA2XXXXX</div>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr><th>货物名称</th><th>规格型号</th><th>数量</th><th>单价</th><th>金额</th><th>税率</th><th>税额</th></tr>
+            </thead>
+            <tbody id="docItems">
+              <tr id="docItem1"><td>A零件</td><td>M10×50</td><td>10</td><td>100.00</td><td>1,000.00</td><td>13%</td><td>130.00</td></tr>
+              <tr id="docItem2"><td>B零件</td><td>M12×60</td><td>5</td><td>160.00</td><td>800.00</td><td>13%</td><td>104.00</td></tr>
+            </tbody>
+          </table>
+
+          <div style="display:flex;justify-content:flex-end;gap:24px;font-size:11px;margin-top:6px;">
+            <div>合计金额: <b id="docAmount">¥1,800.00</b></div>
+            <div>合计税额: <b id="docTax">¥234.00</b></div>
+          </div>
+          <div style="text-align:right;font-size:13px;font-weight:700;color:var(--error);margin-top:6px;" id="docTotal">
+            价税合计（大写）: 贰仟零叁拾肆圆整 &nbsp; ¥2,034.00
+          </div>
+        </div>
+
+        <!-- Highlight overlays -->
+        <div class="hl-box hl-basic" id="hl-inv_no" style="top:62px;left:230px;width:80px;height:16px;"><span class="hl-label">发票号码</span></div>
+        <div class="hl-box hl-basic" id="hl-date" style="top:62px;left:340px;width:110px;height:16px;"><span class="hl-label">开票日期</span></div>
+        <div class="hl-box hl-basic" id="hl-buyer" style="top:100px;left:40px;width:130px;height:18px;"><span class="hl-label">购方名称</span></div>
+        <div class="hl-box hl-basic" id="hl-seller" style="top:100px;left:260px;width:130px;height:18px;"><span class="hl-label">销方名称</span></div>
+        <div class="hl-box hl-items" id="hl-item1" style="top:178px;left:36px;width:410px;height:22px;"><span class="hl-label">行1: A零件</span></div>
+        <div class="hl-box hl-items" id="hl-item2" style="top:200px;left:36px;width:410px;height:22px;"><span class="hl-label">行2: B零件</span></div>
+        <div class="hl-box hl-tax" id="hl-amount" style="top:232px;left:246px;width:90px;height:16px;"><span class="hl-label">合计金额</span></div>
+        <div class="hl-box hl-tax" id="hl-tax" style="top:232px;left:370px;width:80px;height:16px;"><span class="hl-label">合计税额</span></div>
+        <div class="hl-box hl-tax" id="hl-total" style="top:254px;left:150px;width:300px;height:20px;"><span class="hl-label">价税合计</span></div>
+
+        <div class="drawing-hint" id="drawHint">🖱️ 拖拽画框选择区域</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel B: Fields + Chat 30% -->
+  <div class="panel-b">
+    <div class="panel-b-scroll" id="fieldsScroll">
+
+      <!-- Group: 基本信息 -->
+      <div class="field-group">
+        <div class="field-group-header">
+          <span class="dot" style="background:var(--hl-basic)"></span>
+          📦 基本信息
+          <span class="badge-count">5 字段</span>
+          <div class="actions"><button>编辑</button><button>+字段</button></div>
+        </div>
+        <div class="field-group-body">
+          <div class="field-row" data-hl="hl-inv_no" data-json="invoice_no">
+            <span class="f-name">发票号码</span>
+            <span class="f-value">04727583</span>
+            <span class="f-type">string</span>
+            <span class="f-edit">✏️</span>
+          </div>
+          <div class="field-row" data-hl="hl-date" data-json="date">
+            <span class="f-name">开票日期</span>
+            <span class="f-value">2024-01-15</span>
+            <span class="f-type">date</span>
+            <span class="f-edit">✏️</span>
+          </div>
+          <div class="field-row" data-hl="hl-seller" data-json="seller">
+            <span class="f-name">销方名称</span>
+            <span class="f-value">XX科技有限公司</span>
+            <span class="f-type">string</span>
+            <span class="f-edit">✏️</span>
+          </div>
+          <div class="field-row" data-hl="hl-buyer" data-json="buyer">
+            <span class="f-name">购方名称</span>
+            <span class="f-value">YY贸易有限公司</span>
+            <span class="f-type">string</span>
+            <span class="f-edit">✏️</span>
+          </div>
+          <div class="field-row" data-hl="hl-total" data-json="grand_total">
+            <span class="f-name">价税合计</span>
+            <span class="f-value">2034.00</span>
+            <span class="f-type">number</span>
+            <span class="f-edit">✏️</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Group: 货物明细 -->
+      <div class="field-group">
+        <div class="field-group-header">
+          <span class="dot" style="background:var(--hl-items)"></span>
+          📦 货物明细
+          <span class="badge-count">数组 · 2 行</span>
+          <div class="actions"><button>编辑</button><button>+行</button></div>
+        </div>
+        <div class="field-group-body">
+          <!-- Row 1 -->
+          <div class="array-header" onclick="toggleArray(this)">
+            <span class="arr-toggle open">▶</span>
+            <span>行 1</span>
+            <span style="color:var(--text3);font-weight:400;margin-left:6px">A零件 · 10×100 = 1,000</span>
+          </div>
+          <div class="array-body" id="arr1">
+            <div class="field-row" data-hl="hl-item1" data-json="items_0_name">
+              <span class="f-name">货物名称</span><span class="f-value">A零件</span><span class="f-type">string</span><span class="f-edit">✏️</span>
+            </div>
+            <div class="field-row" data-hl="hl-item1" data-json="items_0_spec">
+              <span class="f-name">规格型号</span><span class="f-value">M10×50</span><span class="f-type">string</span><span class="f-edit">✏️</span>
+            </div>
+            <div class="field-row" data-hl="hl-item1" data-json="items_0_qty">
+              <span class="f-name">数量</span><span class="f-value">10</span><span class="f-type">number</span><span class="f-edit">✏️</span>
+            </div>
+            <div class="field-row" data-hl="hl-item1" data-json="items_0_price">
+              <span class="f-name">单价</span><span class="f-value">100.00</span><span class="f-type">number</span><span class="f-edit">✏️</span>
+            </div>
+            <div class="field-row" data-hl="hl-item1" data-json="items_0_amount">
+              <span class="f-name">金额</span><span class="f-value">1000.00</span><span class="f-type">number</span><span class="f-edit">✏️</span>
+            </div>
+            <div class="field-row" data-hl="hl-item1" data-json="items_0_tax">
+              <span class="f-name">税额</span><span class="f-value">130.00</span><span class="f-type">number</span><span class="f-edit">✏️</span>
+            </div>
+          </div>
+          <!-- Row 2 -->
+          <div class="array-header" onclick="toggleArray(this)">
+            <span class="arr-toggle">▶</span>
+            <span>行 2</span>
+            <span style="color:var(--text3);font-weight:400;margin-left:6px">B零件 · 5×160 = 800</span>
+          </div>
+          <div class="array-body collapsed" id="arr2">
+            <div class="field-row" data-hl="hl-item2" data-json="items_1_name">
+              <span class="f-name">货物名称</span><span class="f-value">B零件</span><span class="f-type">string</span><span class="f-edit">✏️</span>
+            </div>
+            <div class="field-row" data-hl="hl-item2" data-json="items_1_qty">
+              <span class="f-name">数量</span><span class="f-value">5</span><span class="f-type">number</span><span class="f-edit">✏️</span>
+            </div>
+            <div class="field-row" data-hl="hl-item2" data-json="items_1_price">
+              <span class="f-name">单价</span><span class="f-value">160.00</span><span class="f-type">number</span><span class="f-edit">✏️</span>
+            </div>
+            <div class="field-row" data-hl="hl-item2" data-json="items_1_amount">
+              <span class="f-name">金额</span><span class="f-value">800.00</span><span class="f-type">number</span><span class="f-edit">✏️</span>
+            </div>
+            <div class="field-row" data-hl="hl-item2" data-json="items_1_tax">
+              <span class="f-name">税额</span><span class="f-value">104.00</span><span class="f-type">number</span><span class="f-edit">✏️</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Group: 税额汇总 -->
+      <div class="field-group">
+        <div class="field-group-header">
+          <span class="dot" style="background:var(--hl-tax)"></span>
+          📦 税额汇总
+          <span class="badge-count">数组 · 1 行</span>
+          <div class="actions"><button>编辑</button><button>+行</button></div>
+        </div>
+        <div class="field-group-body">
+          <div class="array-header" onclick="toggleArray(this)">
+            <span class="arr-toggle open">▶</span><span>行 1</span>
+          </div>
+          <div class="array-body">
+            <div class="field-row" data-hl="hl-tax" data-json="tax_type">
+              <span class="f-name">税种</span><span class="f-value">增值税</span><span class="f-type">string</span><span class="f-edit">✏️</span>
+            </div>
+            <div class="field-row" data-hl="hl-tax" data-json="tax_rate">
+              <span class="f-name">税率</span><span class="f-value">13%</span><span class="f-type">string</span><span class="f-edit">✏️</span>
+            </div>
+            <div class="field-row" data-hl="hl-tax" data-json="tax_amount">
+              <span class="f-name">税额</span><span class="f-value">234.00</span><span class="f-type">number</span><span class="f-edit">✏️</span>
+            </div>
+          </div>
+          <div class="summary-row">
+            <span class="f-name">税额合计</span>
+            <span class="f-value">234.00</span>
+            <span class="f-type">number</span>
+            <span class="f-link">🔗 SUM</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Validation Rules -->
+      <div class="rules-card">
+        <div class="rules-header">📐 数据校验规则</div>
+        <div class="rules-body">
+          <div class="rule-item"><span class="rule-icon">✅</span> 金额 = 数量 × 单价</div>
+          <div class="rule-item"><span class="rule-icon">✅</span> 税额合计 = SUM(税额汇总.税额)</div>
+          <div class="rule-item"><span class="rule-icon">✅</span> 价税合计 = 合计金额 + 税额合计</div>
+          <div class="rule-item"><span class="rule-icon">⚠️</span> 容差: ±0.01 (浮点精度)</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chat Area -->
+    <div class="chat-area">
+      <div class="chat-header">🤖 AI 对话矫正</div>
+      <div class="chat-messages" id="chatMessages">
+        <div class="chat-msg ai">已从增值税发票中识别 12 个字段，含 2 行货物明细和 1 条税额汇总。价税合计校验通过 ✅</div>
+        <div class="chat-msg user">把税额按明细行拆分，每行显示各自的税额</div>
+        <div class="chat-msg ai">已更新。货物明细每行新增"税额"字段，行1: ¥130.00，行2: ¥104.00。税额汇总合计 = ¥234.00，校验通过 ✅</div>
+      </div>
+      <div class="chat-input">
+        <input type="text" id="chatInput" placeholder="输入矫正指令..." onkeydown="if(event.key==='Enter')sendChat()">
+        <button class="btn btn-primary" onclick="sendChat()">发送</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel C: API Result 15% -->
+  <div class="panel-c">
+    <div class="panel-c-section">
+      <div class="sec-title">Endpoint</div>
+      <div class="endpoint-box"><span class="method">POST</span> /v1/extract/<br>inv-cn-vat-v1</div>
+    </div>
+    <div class="panel-c-section" style="flex:1;overflow-y:auto;">
+      <div class="sec-title">JSON 输出</div>
+      <div class="json-box" id="jsonBox">
+<div class="json-line" data-field="root">{</div>
+<div class="json-line" data-field="invoice_no">  <span class="jk">"invoice_no"</span>: <span class="js">"04727583"</span>,</div>
+<div class="json-line" data-field="date">  <span class="jk">"date"</span>: <span class="js">"2024-01-15"</span>,</div>
+<div class="json-line" data-field="seller">  <span class="jk">"seller"</span>: <span class="js">"XX科技有限公司"</span>,</div>
+<div class="json-line" data-field="buyer">  <span class="jk">"buyer"</span>: <span class="js">"YY贸易有限公司"</span>,</div>
+<div class="json-line" data-field="items">  <span class="jk">"items"</span>: [</div>
+<div class="json-line" data-field="items_0_name">    { <span class="jk">"name"</span>: <span class="js">"A零件"</span>,</div>
+<div class="json-line" data-field="items_0_qty">      <span class="jk">"qty"</span>: <span class="jn">10</span>,</div>
+<div class="json-line" data-field="items_0_price">      <span class="jk">"price"</span>: <span class="jn">100</span>,</div>
+<div class="json-line" data-field="items_0_amount">      <span class="jk">"amount"</span>: <span class="jn">1000</span>,</div>
+<div class="json-line" data-field="items_0_tax">      <span class="jk">"tax"</span>: <span class="jn">130</span> },</div>
+<div class="json-line" data-field="items_1_name">    { <span class="jk">"name"</span>: <span class="js">"B零件"</span>,</div>
+<div class="json-line" data-field="items_1_qty">      <span class="jk">"qty"</span>: <span class="jn">5</span>,</div>
+<div class="json-line" data-field="items_1_price">      <span class="jk">"price"</span>: <span class="jn">160</span>,</div>
+<div class="json-line" data-field="items_1_amount">      <span class="jk">"amount"</span>: <span class="jn">800</span>,</div>
+<div class="json-line" data-field="items_1_tax">      <span class="jk">"tax"</span>: <span class="jn">104</span> }</div>
+<div class="json-line">  ],</div>
+<div class="json-line" data-field="tax_type">  <span class="jk">"tax_summary"</span>: [</div>
+<div class="json-line" data-field="tax_rate">    { <span class="jk">"type"</span>: <span class="js">"增值税"</span>,</div>
+<div class="json-line" data-field="tax_rate">      <span class="jk">"rate"</span>: <span class="js">"13%"</span>,</div>
+<div class="json-line" data-field="tax_amount">      <span class="jk">"amount"</span>: <span class="jn">234</span> }</div>
+<div class="json-line">  ],</div>
+<div class="json-line" data-field="grand_total">  <span class="jk">"grand_total"</span>: <span class="jn">2034</span></div>
+<div class="json-line" data-field="root">}</div>
+      </div>
+    </div>
+    <div class="panel-c-section">
+      <div class="sec-title">校验状态</div>
+      <div class="validate-list">
+        <div class="validate-item"><span class="vi-icon">✅</span> Schema 匹配</div>
+        <div class="validate-item"><span class="vi-icon">✅</span> 金额校验通过</div>
+        <div class="validate-item"><span class="vi-icon">✅</span> 税额校验通过</div>
+      </div>
+    </div>
+    <div class="panel-c-section">
+      <div class="sec-title">代码示例</div>
+      <div class="code-tabs">
+        <span class="code-tab active">Python</span>
+        <span class="code-tab">cURL</span>
+        <span class="code-tab">Node</span>
+      </div>
+      <div class="code-box">import requests
+
+r = requests.post(
+  url + "/extract/"
+  "inv-cn-vat-v1",
+  headers={"X-API-Key":
+    "sk-xxx"},
+  files={"file":
+    open("inv.pdf","rb")}
+)
+print(r.json())</div>
+    </div>
+  </div>
+</div>
+
+<!-- Bottom Session Bar -->
+<div class="session-bar">
+  <div class="session-tab">📄 合同B v1</div>
+  <div class="session-tab">📄 收据C v2</div>
+  <div class="session-tab active">📄 发票A v3</div>
+  <div class="session-add" title="新建会话">＋</div>
+</div>
+
+<!-- Modal: Template Library -->
+<div class="modal-overlay" id="templateModal">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header">
+      <h3>📋 模板库</h3>
+      <button class="close" onclick="hideModal('templateModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+        <button class="btn btn-primary" style="font-size:11px">全部</button>
+        <button class="btn" style="font-size:11px">发票</button>
+        <button class="btn" style="font-size:11px">收据</button>
+        <button class="btn" style="font-size:11px">合同</button>
+        <button class="btn" style="font-size:11px">报关单</button>
+        <button class="btn" style="font-size:11px">银行流水</button>
+      </div>
+      <div class="tpl-grid">
+        <div class="tpl-card"><div class="tpl-icon">🧾</div><div class="tpl-name">中国增值税发票</div><div class="tpl-meta">12字段 · ⭐4.8 · 中文</div></div>
+        <div class="tpl-card"><div class="tpl-icon">🧾</div><div class="tpl-name">日本領収書</div><div class="tpl-meta">8字段 · ⭐4.6 · 日本語</div></div>
+        <div class="tpl-card"><div class="tpl-icon">📋</div><div class="tpl-name">商业合同条款</div><div class="tpl-meta">15字段 · ⭐4.5 · 中文</div></div>
+        <div class="tpl-card"><div class="tpl-icon">🏦</div><div class="tpl-name">银行对账单</div><div class="tpl-meta">10字段 · ⭐4.3 · 中文</div></div>
+        <div class="tpl-card"><div class="tpl-icon">🚢</div><div class="tpl-name">海关报关单</div><div class="tpl-meta">20字段 · ⭐4.7 · 中文</div></div>
+        <div class="tpl-card"><div class="tpl-icon">➕</div><div class="tpl-name">创建自定义</div><div class="tpl-meta">从零开始</div></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="hideModal('templateModal')">取消</button>
+      <button class="btn btn-primary">使用选中模板</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Generate API -->
+<div class="modal-overlay" id="generateModal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <h3>💾 保存并生成 API</h3>
+      <button class="close" onclick="hideModal('generateModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="step-indicator">
+        <div class="step-dot active">1</div><div class="step-line"></div>
+        <div class="step-dot">2</div><div class="step-line"></div>
+        <div class="step-dot">3</div>
+      </div>
+      <div class="form-group">
+        <label>API 名称</label>
+        <input type="text" value="中国增值税发票提取">
+      </div>
+      <div class="form-group">
+        <label>API 编码</label>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <input type="text" value="inv-cn-vat" style="flex:1">
+          <span style="color:var(--text3);font-size:12px;white-space:nowrap">.v1</span>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>描述</label>
+        <input type="text" value="提取中国增值税专用发票的全部字段，含货物明细和税额汇总">
+      </div>
+      <div style="display:flex;gap:12px;">
+        <div class="form-group" style="flex:1">
+          <label>处理器</label>
+          <select><option>gemini</option><option>openai</option></select>
+        </div>
+        <div class="form-group" style="flex:1">
+          <label>模型</label>
+          <select><option>gemini-2.5-flash</option><option>gemini-2.5-pro</option></select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="hideModal('generateModal')">取消</button>
+      <button class="btn btn-success">确认生成 →</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Playground -->
+<div class="modal-overlay" id="playgroundModal">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-header">
+      <h3>🔬 沙箱调试</h3>
+      <button class="close" onclick="hideModal('playgroundModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;gap:16px;">
+        <div style="flex:1;">
+          <div class="form-group">
+            <label>当前 API</label>
+            <select><option>inv-cn-vat-v1 (中国增值税发票)</option></select>
+          </div>
+          <div style="border:2px dashed var(--border);border-radius:8px;padding:24px;text-align:center;color:var(--text3);font-size:12px;margin-bottom:12px;cursor:pointer;">
+            📂 拖拽上传测试文件<br><span style="font-size:11px">或点击选择文件</span>
+          </div>
+          <button class="btn btn-primary" style="width:100%">发送请求</button>
+        </div>
+        <div style="flex:1;">
+          <div class="sec-title" style="margin-bottom:6px;">响应结果</div>
+          <div style="background:#F1F5F9;border-radius:6px;padding:12px;font-size:11px;color:var(--text3);text-align:center;min-height:160px;display:flex;align-items:center;justify-content:center;">
+            上传文件后查看响应
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="hideModal('playgroundModal')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// === Three-column linkage ===
+const fieldRows = document.querySelectorAll('.field-row');
+const jsonLines = document.querySelectorAll('.json-line');
+const hlBoxes = document.querySelectorAll('.hl-box');
+
+function clearAll() {
+  hlBoxes.forEach(b => b.classList.remove('visible'));
+  fieldRows.forEach(r => r.classList.remove('hovered'));
+  jsonLines.forEach(l => l.classList.remove('hovered'));
+}
+
+// B → A + C linkage
+fieldRows.forEach(row => {
+  row.addEventListener('mouseenter', () => {
+    clearAll();
+    row.classList.add('hovered');
+    const hlId = row.dataset.hl;
+    const jsonField = row.dataset.json;
+    if (hlId) { const el = document.getElementById(hlId); if(el) el.classList.add('visible'); }
+    if (jsonField) { jsonLines.forEach(l => { if(l.dataset.field === jsonField) l.classList.add('hovered'); }); }
+  });
+  row.addEventListener('mouseleave', clearAll);
+});
+
+// C → A + B linkage
+jsonLines.forEach(line => {
+  line.addEventListener('mouseenter', () => {
+    clearAll();
+    line.classList.add('hovered');
+    const f = line.dataset.field;
+    if (!f || f === 'root') return;
+    fieldRows.forEach(r => { if(r.dataset.json === f) { r.classList.add('hovered'); const hl = r.dataset.hl; if(hl) document.getElementById(hl)?.classList.add('visible'); } });
+  });
+  line.addEventListener('mouseleave', clearAll);
+});
+
+// === Array toggle ===
+function toggleArray(header) {
+  const toggle = header.querySelector('.arr-toggle');
+  const body = header.nextElementSibling;
+  toggle.classList.toggle('open');
+  body.classList.toggle('collapsed');
+}
+
+// === Drawing tool ===
+let drawMode = false;
+function toggleDraw() {
+  drawMode = !drawMode;
+  document.getElementById('drawTool').classList.toggle('active', drawMode);
+  document.getElementById('drawHint').classList.toggle('show', drawMode);
+}
+
+// === Modal ===
+function showModal(id) { document.getElementById(id).classList.add('show'); }
+function hideModal(id) { document.getElementById(id).classList.remove('show'); }
+document.querySelectorAll('.modal-overlay').forEach(o => {
+  o.addEventListener('click', e => { if(e.target === o) o.classList.remove('show'); });
+});
+
+// === Chat ===
+function sendChat() {
+  const input = document.getElementById('chatInput');
+  const val = input.value.trim();
+  if (!val) return;
+  const msgs = document.getElementById('chatMessages');
+  msgs.innerHTML += `<div class="chat-msg user">${val}</div>`;
+  input.value = '';
+  setTimeout(() => {
+    msgs.innerHTML += `<div class="chat-msg ai">收到指令，正在处理「${val}」... Schema 已更新，版本 v4 ✅</div>`;
+    msgs.scrollTop = msgs.scrollHeight;
+  }, 600);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+</script>
+</body>
+</html>
