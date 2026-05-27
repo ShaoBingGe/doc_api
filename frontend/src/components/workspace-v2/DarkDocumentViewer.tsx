@@ -162,6 +162,93 @@ function BboxLayer({ annotations, results, selectedFieldId, hoveredFieldId, onSe
 
 // ─── Main component ──────────────────────────────────────────────────────────
 
+// ─── Drawing overlay (active when drawingFieldId is set) ─────────────────────
+
+interface DrawingOverlayProps {
+  fieldLabel: string
+  onCommit: (bbox: { x: number; y: number; width: number; height: number }) => void
+  onCancel: () => void
+}
+
+function DrawingOverlay({ fieldLabel, onCommit, onCancel }: DrawingOverlayProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [rect, setRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const startRef = useRef<{ x: number; y: number } | null>(null)
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    if (!containerRef.current) return
+    const r = containerRef.current.getBoundingClientRect()
+    const x = ((e.clientX - r.left) / r.width) * 100
+    const y = ((e.clientY - r.top) / r.height) * 100
+    startRef.current = { x, y }
+    setRect({ x, y, w: 0, h: 0 })
+  }
+
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (!startRef.current || !containerRef.current) return
+    const r = containerRef.current.getBoundingClientRect()
+    const x2 = ((e.clientX - r.left) / r.width) * 100
+    const y2 = ((e.clientY - r.top) / r.height) * 100
+    const { x: x1, y: y1 } = startRef.current
+    setRect({
+      x: Math.min(x1, x2),
+      y: Math.min(y1, y2),
+      w: Math.abs(x2 - x1),
+      h: Math.abs(y2 - y1),
+    })
+  }
+
+  const onMouseUp = () => {
+    if (rect && rect.w > 1 && rect.h > 1) {
+      onCommit({
+        x: Math.max(0, Math.min(100, rect.x)),
+        y: Math.max(0, Math.min(100, rect.y)),
+        width: Math.max(1, Math.min(100 - rect.x, rect.w)),
+        height: Math.max(1, Math.min(100 - rect.y, rect.h)),
+      })
+    }
+    startRef.current = null
+    setRect(null)
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      className="absolute inset-0 cursor-crosshair"
+      style={{ zIndex: 30 }}
+      onMouseDown={onMouseDown}
+      onMouseMove={onMouseMove}
+      onMouseUp={onMouseUp}
+      onMouseLeave={() => { startRef.current = null; setRect(null) }}
+    >
+      {/* Hint banner */}
+      <div className="absolute top-2 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-purple-600 text-white text-xs font-medium shadow-lg pointer-events-none z-10 whitespace-nowrap">
+        正在为 "{fieldLabel}" 画框 · 拖拽选择区域，Esc 取消
+      </div>
+      {/* Live preview rectangle */}
+      {rect && (
+        <div
+          className="absolute border-2 border-purple-400 bg-purple-500/20 pointer-events-none"
+          style={{
+            left: `${rect.x}%`,
+            top: `${rect.y}%`,
+            width: `${rect.w}%`,
+            height: `${rect.h}%`,
+          }}
+        />
+      )}
+      {/* Hidden cancel hotkey hint trigger */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onCancel() }}
+        onMouseDown={(e) => e.stopPropagation()}
+        className="absolute top-2 right-2 px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-white text-xs"
+      >
+        取消
+      </button>
+    </div>
+  )
+}
+
 export default function DarkDocumentViewer() {
   const {
     documentInfo,
@@ -172,6 +259,9 @@ export default function DarkDocumentViewer() {
     setSelectedFieldId,
     setHoveredFieldId,
     updateFieldBbox,
+    drawingFieldId,
+    setDrawingFieldId,
+    commitDrawingBbox,
   } = useWorkspaceStore()
 
   const [numPages, setNumPages] = useState<number>(0)
@@ -186,19 +276,34 @@ export default function DarkDocumentViewer() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSelectedFieldId(null)
+      if (e.key === 'Escape') {
+        if (drawingFieldId) setDrawingFieldId(null)
+        else setSelectedFieldId(null)
+      }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [setSelectedFieldId])
+  }, [setSelectedFieldId, drawingFieldId, setDrawingFieldId])
 
   const visibleAnnotations = annotations.filter((a) => a.page === page)
   const pageWidth = Math.round(680 * (zoom / 100))
+  const drawingAnn = drawingFieldId ? annotations.find((a) => a.id === drawingFieldId) : null
+  const isDrawing = !!drawingAnn
 
   return (
-    <div className="flex flex-col h-full bg-[#18181c] border-r border-white/10">
+    <div className={cn(
+      'flex flex-col h-full bg-[#18181c] border-r border-white/10 relative transition-all duration-200',
+      isDrawing && 'ring-2 ring-purple-500/60 brightness-110',
+    )}>
+      {/* Dim-rest-of-app overlay when drawing (covers viewport outside this panel via fixed positioning) */}
+      {isDrawing && (
+        <div
+          className="fixed inset-0 bg-black/60 pointer-events-none"
+          style={{ zIndex: 20 }}
+        />
+      )}
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-white/10 text-gray-400 text-sm">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-white/10 text-gray-400 text-sm relative z-30">
         <div className="flex items-center gap-4">
           <Search className="w-4 h-4 cursor-pointer hover:text-white transition-colors" />
           <div className="flex items-center gap-2">
@@ -234,8 +339,11 @@ export default function DarkDocumentViewer() {
 
       {/* Document area */}
       <div
-        className="flex-1 overflow-auto p-8 flex justify-center bg-[#1e1e24]"
-        onClick={() => setSelectedFieldId(null)}
+        className={cn(
+          'flex-1 overflow-auto p-8 flex justify-center bg-[#1e1e24] relative',
+          isDrawing && 'z-30',
+        )}
+        onClick={() => { if (!isDrawing) setSelectedFieldId(null) }}
       >
         {!documentInfo ? (
           <div className="flex flex-col items-center justify-center gap-3">
@@ -260,6 +368,13 @@ export default function DarkDocumentViewer() {
               onHover={setHoveredFieldId}
               onUpdateBbox={updateFieldBbox}
             />
+            {drawingAnn && (
+              <DrawingOverlay
+                fieldLabel={drawingAnn.label}
+                onCommit={(bbox) => commitDrawingBbox(drawingAnn.id, { ...bbox, })}
+                onCancel={() => setDrawingFieldId(null)}
+              />
+            )}
           </div>
         ) : pdfError ? (
           <div className="flex flex-col items-center justify-center w-[680px] h-[900px] gap-3 bg-[#2a2a32] rounded-lg">
@@ -292,6 +407,13 @@ export default function DarkDocumentViewer() {
                   onHover={setHoveredFieldId}
                   onUpdateBbox={updateFieldBbox}
                 />
+                {drawingAnn && (
+                  <DrawingOverlay
+                    fieldLabel={drawingAnn.label}
+                    onCommit={(bbox) => commitDrawingBbox(drawingAnn.id, bbox)}
+                    onCancel={() => setDrawingFieldId(null)}
+                  />
+                )}
               </div>
             </Document>
           </div>

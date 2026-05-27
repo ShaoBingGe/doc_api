@@ -24,11 +24,8 @@ export default function ApiList() {
   }, [fetchApiDefinitions])
 
   function handleRowClick(api: typeof apiDefinitions[0]) {
-    if (api.sample_document_id) {
-      navigate(`/workspace/${api.sample_document_id}`)
-    } else {
-      toast.info('暂无关联文档')
-    }
+    // v3: navigate by API definition (batch sample set is loaded inside Workspace)
+    navigate(`/workspace/api/${api.id}`)
   }
 
   async function handleDelete(e: React.MouseEvent, id: string) {

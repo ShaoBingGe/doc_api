@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_db
@@ -19,6 +19,7 @@ from app.schemas.api_definition import (
     UpdateApiStatusRequest,
 )
 from app.schemas.common import PaginatedResponse
+from app.schemas.document import DocumentResponse, DocumentUploadResponse
 from app.services import api_definition_service as svc
 
 router = APIRouter(prefix="/api-definitions", tags=["API Definitions"])
@@ -140,3 +141,55 @@ def delete_api_definition(
     db: Session = Depends(get_db),
 ) -> None:
     svc.delete_api_definition(db, api_def_id)
+
+
+# ── Sample documents (batch optimization sample set) ─────────────────────────
+
+@router.get(
+    "/{api_def_id}/documents",
+    response_model=list[DocumentResponse],
+    summary="列出该 API 的样本文档（优化器 GT 来源）",
+)
+def list_sample_documents(
+    api_def_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> list[DocumentResponse]:
+    docs = svc.list_sample_documents(db, api_def_id)
+    return [DocumentResponse.model_validate(d) for d in docs]
+
+
+@router.post(
+    "/{api_def_id}/documents",
+    response_model=DocumentUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="上传一个样本文档并追加到该 API 的样本集",
+)
+async def add_sample_document(
+    api_def_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> DocumentUploadResponse:
+    file_data = await file.read()
+    doc = svc.add_sample_document(
+        db,
+        api_def_id=api_def_id,
+        filename=file.filename or "upload",
+        file_data=file_data,
+        content_type=file.content_type,
+    )
+    return DocumentUploadResponse.model_validate(doc)
+
+
+@router.delete(
+    "/{api_def_id}/documents/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="从样本集移除文档（不删除 Document 本体）",
+)
+def remove_sample_document(
+    api_def_id: uuid.UUID,
+    document_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> None:
+    svc.remove_sample_document(
+        db, api_def_id=api_def_id, document_id=document_id
+    )

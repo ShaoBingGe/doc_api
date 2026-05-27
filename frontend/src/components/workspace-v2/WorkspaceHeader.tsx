@@ -1,42 +1,87 @@
 import { useState } from 'react'
-import { ArrowLeft, List, ShieldCheck, BarChart2, Save, User, Sparkles, Loader2 } from 'lucide-react'
+import {
+  ArrowLeft,
+  List,
+  ShieldCheck,
+  BarChart2,
+  Save,
+  User,
+  Sparkles,
+  Loader2,
+  GitBranch,
+} from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useNavigate } from 'react-router-dom'
 import { triggerOptimization } from '../../lib/api-client'
 import { toast } from '../../lib/toast'
 
-type HeaderTab = 'fields' | 'rules' | 'stats'
+export type HeaderTab = 'fields' | 'rules' | 'stats' | 'optimize'
 
 interface WorkspaceHeaderProps {
   activeTab: HeaderTab
   onTabChange: (tab: HeaderTab) => void
   onOpenModal: () => void
   isNewMode: boolean
+  onOptimizationTriggered?: () => void
 }
 
-export default function WorkspaceHeader({ activeTab, onTabChange, onOpenModal, isNewMode }: WorkspaceHeaderProps) {
-  const { documentInfo, annotations, processingResults, apiDefinition } = useWorkspaceStore()
+const MIN_SAMPLES = 3
+
+export default function WorkspaceHeader({
+  activeTab,
+  onTabChange,
+  onOpenModal,
+  isNewMode,
+  onOptimizationTriggered,
+}: WorkspaceHeaderProps) {
+  const {
+    documentInfo,
+    annotations,
+    apiDefinition,
+    documents,
+    apiDefinitionId,
+  } = useWorkspaceStore()
   const navigate = useNavigate()
   const [optimizing, setOptimizing] = useState(false)
 
-  // Show optimize button when there are confirmed/edited fields
-  const hasCorrections = processingResults.some((r) => r.confidence >= 100)
+  const sampleCount = documents.length
+  const hasEnoughSamples = sampleCount >= MIN_SAMPLES
 
   const handleOptimize = async () => {
-    if (!apiDefinition?.id) {
-      toast.info('请先保存 API 后再进行 Prompt 优化')
+    if (!apiDefinitionId) {
+      toast.info('请先保存 API 后再开始优化')
       return
     }
+    // Gate 1: sample count
+    if (!hasEnoughSamples) {
+      toast.error(
+        `样本量过少（当前 ${sampleCount} 张），请继续添加至 ${MIN_SAMPLES} 张或以上`,
+      )
+      return
+    }
+    // Jump to optimization tab immediately so user sees loading skeleton there
+    onTabChange('optimize')
+    onOptimizationTriggered?.()
+
     setOptimizing(true)
     try {
-      const res = await triggerOptimization(apiDefinition.id)
+      const res = await triggerOptimization(apiDefinitionId)
       const data = res.data
       if (data.status === 'completed') {
-        toast.success(`Prompt 优化完成！准确率: ${Math.round(data.accuracy_score * 100)}%（版本 v${data.version}）`)
+        const acc =
+          typeof data.overall_accuracy === 'number'
+            ? `${Math.round(data.overall_accuracy * 100)}%`
+            : 'N/A'
+        toast.success(
+          `优化完成！准确率: ${acc}（共 ${data.rounds_completed} 轮）`,
+        )
+      } else if (data.status === 'failed') {
+        toast.error(data.error_message || '优化失败')
       } else {
-        toast.info(data.message || '优化未产生改进')
+        toast.info(`优化状态: ${data.status}`)
       }
+      onOptimizationTriggered?.()
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })
         ?.response?.data?.detail
@@ -50,7 +95,15 @@ export default function WorkspaceHeader({ activeTab, onTabChange, onOpenModal, i
     { key: 'fields', label: '字段视图', icon: List },
     { key: 'rules', label: '校验规则', icon: ShieldCheck },
     { key: 'stats', label: '统计分析', icon: BarChart2 },
+    { key: 'optimize', label: '优化过程', icon: GitBranch },
   ]
+
+  // Tooltip text for the optimize button depending on state
+  const optimizeDisabledReason = isNewMode
+    ? '请先保存 API'
+    : !hasEnoughSamples
+      ? `至少需要 ${MIN_SAMPLES} 张样本（当前 ${sampleCount}）`
+      : null
 
   return (
     <header className="flex items-center justify-between px-4 py-2.5 bg-[#1e1e24] border-b border-white/10 text-white">
@@ -64,14 +117,24 @@ export default function WorkspaceHeader({ activeTab, onTabChange, onOpenModal, i
           返回
         </button>
         <div className="h-4 w-px bg-white/10" />
-        <span className="text-sm font-medium text-gray-200 max-w-[220px] truncate">
+        <span className="text-sm font-medium text-gray-200 max-w-[280px] truncate">
           {isNewMode
             ? '新建定制 API'
-            : documentInfo?.filename ?? 'Loading...'}
+            : apiDefinition?.name ||
+              documentInfo?.filename ||
+              'Loading...'}
         </span>
-        {!isNewMode && documentInfo?.status === 'completed' && (
-          <span className="text-xs bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded">
-            已完成
+        {!isNewMode && apiDefinitionId && (
+          <span
+            className={cn(
+              'text-xs px-1.5 py-0.5 rounded font-mono',
+              hasEnoughSamples
+                ? 'bg-emerald-500/20 text-emerald-400'
+                : 'bg-amber-500/20 text-amber-400',
+            )}
+            title={hasEnoughSamples ? '满足优化条件' : '样本不足'}
+          >
+            {sampleCount}/{MIN_SAMPLES} 样本
           </span>
         )}
       </div>
@@ -99,23 +162,33 @@ export default function WorkspaceHeader({ activeTab, onTabChange, onOpenModal, i
             </button>
           )
         })}
-        {!isNewMode && (
-          <span className="text-xs text-gray-500 ml-2">{annotations.length} 字段</span>
+        {!isNewMode && activeTab === 'fields' && (
+          <span className="text-xs text-gray-500 ml-2">
+            {annotations.length} 字段
+          </span>
         )}
       </div>
 
-      {/* Right: optimize + save + avatar */}
+      {/* Right: 开始优化 + 保存 + avatar */}
       <div className="flex items-center gap-2">
-        {hasCorrections && !isNewMode && (
-          <button
-            onClick={handleOptimize}
-            disabled={optimizing}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition-colors font-medium bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 disabled:opacity-50"
-          >
-            {optimizing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-            {optimizing ? '优化中...' : '优化 Prompt'}
-          </button>
-        )}
+        <button
+          onClick={handleOptimize}
+          disabled={optimizing || isNewMode || !hasEnoughSamples}
+          title={optimizeDisabledReason ?? '触发完整优化 Run'}
+          className={cn(
+            'flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition-colors font-medium',
+            optimizing || isNewMode || !hasEnoughSamples
+              ? 'bg-white/5 text-gray-500 cursor-not-allowed'
+              : 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30',
+          )}
+        >
+          {optimizing ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Sparkles className="w-4 h-4" />
+          )}
+          {optimizing ? '优化中…' : '开始优化'}
+        </button>
         <button
           onClick={onOpenModal}
           disabled={isNewMode}

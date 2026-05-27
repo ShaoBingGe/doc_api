@@ -201,6 +201,102 @@ def delete_api_definition(db: Session, api_def_id: uuid.UUID) -> None:
     db.commit()
 
 
+# ── Sample documents (batch optimization) ─────────────────────────────────────
+#
+# An ApiDefinition can own a *sample set* of Documents used by the
+# `ocr_optimizer` subsystem as Ground Truth carriers. The set is persisted
+# as `config["sample_document_ids"]: list[str]`. These three helpers keep
+# the list in sync and surface a typed view to the API layer.
+
+def list_sample_documents(db: Session, api_def_id: uuid.UUID) -> list:
+    """Resolve config.sample_document_ids → list of Document ORM rows.
+    Silently drops IDs whose Document was deleted."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.document import Document
+
+    api_def = _get_or_404(db, api_def_id)
+    cfg = dict(api_def.config or {})
+    ids: list[str] = list(cfg.get("sample_document_ids") or [])
+    if not ids:
+        return []
+
+    docs = (
+        db.query(Document)
+        .filter(Document.id.in_([uuid.UUID(x) for x in ids]))
+        .all()
+    )
+    docs_by_id = {str(d.id): d for d in docs}
+
+    # Prune missing IDs back into config (cheap self-heal)
+    alive_ids = [x for x in ids if x in docs_by_id]
+    if alive_ids != ids:
+        cfg["sample_document_ids"] = alive_ids
+        api_def.config = cfg
+        flag_modified(api_def, "config")
+        db.commit()
+
+    # Return in the order the user originally inserted them
+    return [docs_by_id[x] for x in alive_ids]
+
+
+def add_sample_document(
+    db: Session,
+    *,
+    api_def_id: uuid.UUID,
+    filename: str,
+    file_data: bytes,
+    content_type: str | None,
+):
+    """Upload a file and append the new Document.id to config.sample_document_ids."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.services.document_service import upload_document
+
+    api_def = _get_or_404(db, api_def_id)
+    doc = upload_document(
+        db,
+        filename=filename,
+        file_data=file_data,
+        content_type=content_type,
+    )
+
+    cfg = dict(api_def.config or {})
+    ids: list[str] = list(cfg.get("sample_document_ids") or [])
+    if str(doc.id) not in ids:
+        ids.append(str(doc.id))
+        cfg["sample_document_ids"] = ids
+        api_def.config = cfg
+        flag_modified(api_def, "config")
+        db.commit()
+        db.refresh(api_def)
+    return doc
+
+
+def remove_sample_document(
+    db: Session,
+    *,
+    api_def_id: uuid.UUID,
+    document_id: uuid.UUID,
+) -> None:
+    """Drop a Document from the sample set (does NOT delete the Document itself)."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    api_def = _get_or_404(db, api_def_id)
+    cfg = dict(api_def.config or {})
+    ids: list[str] = list(cfg.get("sample_document_ids") or [])
+    sid = str(document_id)
+    if sid not in ids:
+        raise NotFoundError(
+            f"document '{sid}' is not in API '{api_def_id}' sample set",
+            {"code": "sample_not_found"},
+        )
+    cfg["sample_document_ids"] = [x for x in ids if x != sid]
+    api_def.config = cfg
+    flag_modified(api_def, "config")
+    db.commit()
+
+
 # ── Stats & Docs ──────────────────────────────────────────────────────────────
 
 def get_stats(db: Session, api_def_id: uuid.UUID) -> ApiStatsResponse:

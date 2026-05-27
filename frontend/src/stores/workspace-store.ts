@@ -1,6 +1,12 @@
 import { create } from 'zustand'
-import apiClient, { updateAnnotation, deleteAnnotation } from '../lib/api-client'
+import apiClient, { updateAnnotation, deleteAnnotation, reprocessDocument, initialExtract } from '../lib/api-client'
 import { toast } from '../lib/toast'
+
+// Page-scoped record of doc IDs whose canonical initial extraction has succeeded.
+// Module-level (not in store state) so it persists across store reset()s within
+// the same browser session, but resets on full reload — matching the user's
+// "page state" semantics.
+const _initialExtractionDone = new Set<string>()
 
 export type WorkspaceStep = 'annotate' | 'configure' | 'test' | 'publish'
 export type WorkspaceTab = 'fields' | 'api'
@@ -43,6 +49,24 @@ export interface ApiDefinition {
   isExisting?: boolean
 }
 
+export interface PendingField {
+  tempId: string
+  name: string
+  value: string
+  fieldType: 'text' | 'number' | 'date' | 'boolean' | 'array'
+}
+
+/**
+ * Lightweight summary of a sample document in the batch sample set.
+ * Comes from GET /api-definitions/{id}/documents.
+ */
+export interface SampleDoc {
+  id: string
+  filename: string
+  fileType: string
+  status: string
+}
+
 interface WorkspaceStore {
   annotations: Annotation[]
   selectedFieldId: string | null
@@ -56,6 +80,9 @@ interface WorkspaceStore {
   documentLoading: boolean
   apiDefinition: ApiDefinition | null
   correctionHistory: string[]
+  pendingFields: PendingField[]
+  drawingFieldId: string | null
+  reprocessing: boolean
 
   setStep: (step: WorkspaceStep) => void
   setSelectedFieldId: (id: string | null) => void
@@ -73,7 +100,26 @@ interface WorkspaceStore {
   saveAnnotation: (docId: string, fieldId: string, data: Record<string, unknown>) => Promise<void>
   deleteAnnotationRemote: (docId: string, fieldId: string) => Promise<void>
   loadDocument: (documentId: string) => Promise<void>
+  addPendingField: (name: string, value?: string, fieldType?: PendingField['fieldType']) => void
+  removePendingField: (tempId: string) => void
+  clearPendingFields: () => void
+  setDrawingFieldId: (id: string | null) => void
+  commitDrawingBbox: (id: string, bbox: Annotation['boundingBox']) => Promise<void>
+  confirmPendingFields: () => Promise<void>
+  triggerInitialExtraction: (docId: string, opts: { isNewApi: boolean }) => Promise<boolean>
   reset: () => void
+
+  // ── Multi-doc batch sample layer (v3) ────────────────────────────────────
+  apiDefinitionId: string | null
+  documents: SampleDoc[]
+  selectedDocId: string | null
+  samplesLoading: boolean
+  uploadingSample: boolean
+
+  loadApiDefinition: (apiDefinitionId: string) => Promise<void>
+  selectDocument: (docId: string) => Promise<void>
+  addSampleDocument: (file: File) => Promise<SampleDoc | null>
+  removeSampleDocument: (docId: string) => Promise<void>
 }
 
 // ─── Structured data parser ───────────────────────────────────────────────────
@@ -86,68 +132,117 @@ interface StructuredDataItem {
   bbox?: { x: number; y: number; width: number; height: number } | null
 }
 
+function _isLeaf(v: unknown): boolean {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false
+  return 'value' in (v as Record<string, unknown>)
+}
+
+function _normConfidence(c: unknown): number {
+  if (typeof c !== 'number') return 90
+  return c <= 1 ? c * 100 : c
+}
+
+function _defaultBbox(idx: number): Annotation['boundingBox'] {
+  return {
+    x: 5 + (idx % 4) * 22,
+    y: 10 + Math.floor(idx / 4) * 9,
+    width: 20,
+    height: 4,
+  }
+}
+
 function parseStructuredData(sd: unknown): {
   annotations: Annotation[]
   results: ProcessingResult[]
 } {
   const annotations: Annotation[] = []
   const results: ProcessingResult[] = []
+  let idxCounter = 0
 
-  // Handle list format: [{id, keyName, value, confidence, bbox}]
-  if (Array.isArray(sd)) {
+  // Recursive walker: flattens nested objects / table rows into a flat list of
+  // leaf fields, prefixing keys with a dot path so the right-pane field viewer
+  // shows hierarchy via "seller.tax_id", "line_items[0].description", etc.
+  function walk(node: unknown, pathPrefix: string) {
+    if (node == null) return
+
+    // Leaf: { value, confidence, bbox }
+    if (_isLeaf(node)) {
+      const v = node as { value: unknown; confidence?: unknown; bbox?: unknown }
+      const id = `field-${idxCounter++}`
+      const rawBbox = v.bbox && typeof v.bbox === 'object' ? (v.bbox as Record<string, unknown>) : null
+      const bbox = rawBbox
+        ? {
+            x: Number(rawBbox.x ?? 0),
+            y: Number(rawBbox.y ?? 0),
+            width: Number(rawBbox.width ?? rawBbox.w ?? 0),
+            height: Number(rawBbox.height ?? rawBbox.h ?? 0),
+          }
+        : _defaultBbox(idxCounter)
+      const page = rawBbox && typeof rawBbox.page === 'number' ? (rawBbox.page as number) : 1
+      const value = v.value as string | number | boolean | null
+      const fieldType: Annotation['fieldType'] = typeof value === 'number' ? 'number' : 'text'
+      annotations.push({ id, label: pathPrefix || `field_${idxCounter}`, fieldType, page, boundingBox: bbox })
+      results.push({ annotationId: id, value, confidence: _normConfidence(v.confidence) })
+      return
+    }
+
+    // Container object: recurse into each child key (skip _meta).
+    if (typeof node === 'object' && !Array.isArray(node)) {
+      const obj = node as Record<string, unknown>
+      // Table-shaped container { _meta, rows: [...] } → walk each row
+      if (Array.isArray(obj.rows)) {
+        ;(obj.rows as unknown[]).forEach((row, i) => {
+          walk(row, `${pathPrefix}[${i}]`)
+        })
+        return
+      }
+      for (const [key, val] of Object.entries(obj)) {
+        if (key === '_meta') continue
+        const nextPath = pathPrefix ? `${pathPrefix}.${key}` : key
+        walk(val, nextPath)
+      }
+      return
+    }
+
+    // Bare array (legacy / fallback)
+    if (Array.isArray(node)) {
+      node.forEach((item, i) => walk(item, `${pathPrefix}[${i}]`))
+      return
+    }
+
+    // Bare scalar (legacy {key: value} dict format)
+    const id = `field-${idxCounter++}`
+    annotations.push({
+      id,
+      label: pathPrefix || `field_${idxCounter}`,
+      fieldType: typeof node === 'number' ? 'number' : 'text',
+      page: 1,
+      boundingBox: _defaultBbox(idxCounter),
+    })
+    results.push({ annotationId: id, value: node as string | number | boolean | null, confidence: 90 })
+  }
+
+  // Legacy list format: [{id, keyName, value, confidence, bbox}]
+  if (Array.isArray(sd) && sd.length > 0 && typeof sd[0] === 'object' && sd[0] && 'keyName' in sd[0]) {
     sd.forEach((item: StructuredDataItem, idx: number) => {
       const id = item.id ?? `field-${idx}`
-      const confidence = item.confidence != null
-        ? (item.confidence <= 1 ? item.confidence * 100 : item.confidence)
-        : 90
-      const bbox: Annotation['boundingBox'] = item.bbox ?? {
-        x: 5 + (idx % 4) * 22,
-        y: 10 + Math.floor(idx / 4) * 9,
-        width: 20,
-        height: 4,
-      }
-
+      const rawBbox = item.bbox as (Annotation['boundingBox'] & { page?: number }) | null | undefined
+      const bbox: Annotation['boundingBox'] = rawBbox
+        ? { x: rawBbox.x, y: rawBbox.y, width: rawBbox.width, height: rawBbox.height }
+        : _defaultBbox(idx)
+      const page = rawBbox && typeof rawBbox.page === 'number' ? rawBbox.page : 1
       const fieldType: Annotation['fieldType'] = typeof item.value === 'number' ? 'number' : 'text'
-
-      annotations.push({ id, label: item.keyName, fieldType, page: 1, boundingBox: bbox })
-      results.push({ annotationId: id, value: item.value, confidence })
+      annotations.push({ id, label: item.keyName, fieldType, page, boundingBox: bbox })
+      results.push({
+        annotationId: id,
+        value: item.value,
+        confidence: _normConfidence(item.confidence),
+      })
     })
     return { annotations, results }
   }
 
-  // Handle dict format: {key: value} or {key: {value, confidence, bbox}}
-  if (sd && typeof sd === 'object') {
-    let idx = 0
-    for (const [key, val] of Object.entries(sd as Record<string, unknown>)) {
-      const id = `field-${idx}`
-      let fieldValue: string | number | boolean | null
-      let confidence = 90
-      let bbox: Annotation['boundingBox'] = {
-        x: 5 + (idx % 4) * 22,
-        y: 10 + Math.floor(idx / 4) * 9,
-        width: 20,
-        height: 4,
-      }
-
-      if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
-        const v = val as Record<string, unknown>
-        fieldValue = v.value as string | number | boolean | null
-        if (typeof v.confidence === 'number') {
-          confidence = v.confidence <= 1 ? v.confidence * 100 : v.confidence
-        }
-        if (v.bbox && typeof v.bbox === 'object') {
-          bbox = v.bbox as Annotation['boundingBox']
-        }
-      } else {
-        fieldValue = val as string | number | boolean | null
-      }
-
-      annotations.push({ id, label: key, fieldType: 'text', page: 1, boundingBox: bbox })
-      results.push({ annotationId: id, value: fieldValue, confidence })
-      idx++
-    }
-  }
-
+  walk(sd, '')
   return { annotations, results }
 }
 
@@ -166,6 +261,16 @@ const initialState = {
   documentLoading: false,
   apiDefinition: null as ApiDefinition | null,
   correctionHistory: [] as string[],
+  pendingFields: [] as PendingField[],
+  drawingFieldId: null as string | null,
+  reprocessing: false,
+
+  // ── batch layer ────────────────────────────────────────────────────────────
+  apiDefinitionId: null as string | null,
+  documents: [] as SampleDoc[],
+  selectedDocId: null as string | null,
+  samplesLoading: false,
+  uploadingSample: false,
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -278,6 +383,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           fileUrl,
           status: data.status ?? 'unknown',
         },
+        selectedDocId: data.id,
       })
 
       // Load processing versions if available
@@ -357,7 +463,269 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
   },
 
+  addPendingField: (name, value = '', fieldType = 'text') =>
+    set((state) => ({
+      pendingFields: [
+        ...state.pendingFields,
+        {
+          tempId: `pending-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          name,
+          value,
+          fieldType,
+        },
+      ],
+    })),
+
+  removePendingField: (tempId) =>
+    set((state) => ({
+      pendingFields: state.pendingFields.filter((f) => f.tempId !== tempId),
+    })),
+
+  clearPendingFields: () => set({ pendingFields: [] }),
+
+  setDrawingFieldId: (id) => set({ drawingFieldId: id }),
+
+  commitDrawingBbox: async (id, bbox) => {
+    set((state) => ({
+      annotations: state.annotations.map((a) =>
+        a.id === id ? { ...a, boundingBox: bbox } : a,
+      ),
+      drawingFieldId: null,
+    }))
+    const docId = get().documentInfo?.id
+    if (docId) {
+      try {
+        await updateAnnotation(docId, id, { bounding_box: bbox })
+      } catch {
+        toast.error('保存方框失败')
+      }
+    }
+  },
+
+  confirmPendingFields: async () => {
+    const { pendingFields, documentInfo } = get()
+    if (!documentInfo?.id || pendingFields.length === 0) return
+    set({ reprocessing: true })
+    try {
+      const res = await reprocessDocument(documentInfo.id, undefined, {
+        extra_fields: pendingFields.map((f) => f.name),
+      })
+      const sd = res.data?.structured_data
+      if (sd && (typeof sd === 'object' || Array.isArray(sd))) {
+        const { annotations, results } = parseStructuredData(sd)
+        // Override AI value with user-supplied value when present
+        const userValueMap = new Map(
+          pendingFields.filter((f) => f.value.trim()).map((f) => [f.name, f.value]),
+        )
+        const mergedResults = results.map((r) => {
+          const ann = annotations.find((a) => a.id === r.annotationId)
+          if (ann && userValueMap.has(ann.label)) {
+            return { ...r, value: userValueMap.get(ann.label) ?? r.value, confidence: 100 }
+          }
+          return r
+        })
+        set({ annotations, processingResults: mergedResults })
+      }
+      set({ pendingFields: [] })
+      toast.success(`已识别 ${pendingFields.length} 个新字段`)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(typeof msg === 'string' ? msg : 'AI 识别失败')
+    } finally {
+      set({ reprocessing: false })
+    }
+  },
+
+  /**
+   * 一次性、有条件的初始 OCR 调用。仅在以下三个条件全部满足时才会发起请求:
+   *   1. opts.isNewApi === true        — 当前是"新建定制 API"流程
+   *   2. annotations.length === 0      — 当前页面没有任何字段
+   *   3. _initialExtractionDone 不含 docId — 该文档在本会话中尚未成功完成过此调用
+   *
+   * 返回 true 表示真的触发并成功;返回 false 表示守卫拦截或调用失败。
+   * 失败不会写入完成集合,允许重试。
+   */
+  triggerInitialExtraction: async (docId, opts) => {
+    if (!opts.isNewApi) return false
+    if (get().annotations.length > 0) return false
+    if (_initialExtractionDone.has(docId)) return false
+    if (get().reprocessing) return false
+
+    set({ reprocessing: true })
+    try {
+      const res = await initialExtract(docId)
+      const sd = res.data?.structured_data
+      if (sd && (typeof sd === 'object' || Array.isArray(sd))) {
+        const { annotations, results } = parseStructuredData(sd)
+        set({ annotations, processingResults: results })
+      }
+      _initialExtractionDone.add(docId)
+      toast.success('已完成首次 AI 识别')
+      return true
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(typeof msg === 'string' ? msg : '首次 AI 识别失败,可手动重试')
+      return false
+    } finally {
+      set({ reprocessing: false })
+    }
+  },
+
   reset: () => {
     set(initialState)
+  },
+
+  // ── Multi-doc batch sample layer ────────────────────────────────────────
+  //
+  // Workspace v3 pivots from `/workspace/{docId}` to `/workspace/{apiDefId}`.
+  // `apiDefinitionId` is the URL anchor; `selectedDocId` points at whichever
+  // doc in the sample set is currently shown in the (existing) single-doc
+  // panels. Switching docs calls `selectDocument(id)` which delegates to
+  // `loadDocument(id)`, so the rest of the store stays untouched.
+
+  loadApiDefinition: async (apiDefId) => {
+    set({ samplesLoading: true, apiDefinitionId: apiDefId })
+    try {
+      // 1. fetch ApiDefinition itself for header chrome
+      try {
+        const defRes = await apiClient.get('/api/v1/api-definitions/' + apiDefId)
+        const d = defRes.data
+        const code = (d.api_code ?? '') as string
+        set({
+          apiDefinition: {
+            id: d.id as string,
+            name: (d.name ?? '') as string,
+            description: (d.description ?? '') as string,
+            apiCode: code,
+            endpoint:
+              (d.endpoint_url as string) ??
+              'https://api.apianything.io/v1/extract/' + code,
+            isExisting: true,
+          },
+        })
+      } catch {
+        // non-fatal — header just shows placeholder
+      }
+
+      // 2. fetch sample set
+      const res = await apiClient.get(
+        '/api/v1/api-definitions/' + apiDefId + '/documents',
+      )
+      const list = (Array.isArray(res.data) ? res.data : []) as Array<
+        Record<string, unknown>
+      >
+      const docs: SampleDoc[] = list.map((d) => ({
+        id: d.id as string,
+        filename: (d.filename ?? '') as string,
+        fileType: (d.file_type ?? 'unknown') as string,
+        status: (d.status ?? 'unknown') as string,
+      }))
+      set({ documents: docs })
+
+      // 3. auto-select first doc
+      if (docs.length > 0) {
+        await get().selectDocument(docs[0].id)
+      } else {
+        // Empty sample set — clear single-doc view
+        set({
+          selectedDocId: null,
+          documentInfo: null,
+          annotations: [],
+          processingResults: [],
+          processingVersions: [],
+        })
+      }
+    } catch (err) {
+      console.error('loadApiDefinition error:', err)
+      toast.error('加载样本集失败')
+    } finally {
+      set({ samplesLoading: false })
+    }
+  },
+
+  selectDocument: async (docId) => {
+    if (get().selectedDocId === docId) return
+    // Capture the batch-layer ApiDefinition so loadDocument's per-doc lookup
+    // doesn't overwrite it with a doc-derived placeholder.
+    const lockedApiDef = get().apiDefinition
+    set({ selectedDocId: docId })
+    set({
+      annotations: [],
+      processingResults: [],
+      processingVersions: [],
+      selectedFieldId: null,
+      hoveredFieldId: null,
+      pendingFields: [],
+    })
+    await get().loadDocument(docId)
+    // Restore — but only if we're still in batch mode (apiDefinitionId set)
+    if (lockedApiDef && get().apiDefinitionId) {
+      set({ apiDefinition: lockedApiDef })
+    }
+  },
+
+  addSampleDocument: async (file) => {
+    const apiDefId = get().apiDefinitionId
+    if (!apiDefId) {
+      toast.error('请先保存 API 后再添加样本')
+      return null
+    }
+    set({ uploadingSample: true })
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await apiClient.post(
+        '/api/v1/api-definitions/' + apiDefId + '/documents',
+        fd,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      )
+      const d = res.data
+      const newDoc: SampleDoc = {
+        id: d.id as string,
+        filename: (d.filename ?? file.name) as string,
+        fileType: (d.file_type ?? 'unknown') as string,
+        status: (d.status ?? 'queued') as string,
+      }
+      set((s) => ({ documents: [...s.documents, newDoc] }))
+      // Auto-select the freshly added doc so user can start labelling right away
+      await get().selectDocument(newDoc.id)
+      toast.success('样本添加成功')
+      return newDoc
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail
+      toast.error(typeof msg === 'string' ? msg : '上传失败')
+      return null
+    } finally {
+      set({ uploadingSample: false })
+    }
+  },
+
+  removeSampleDocument: async (docId) => {
+    const apiDefId = get().apiDefinitionId
+    if (!apiDefId) return
+    try {
+      await apiClient.delete(
+        '/api/v1/api-definitions/' + apiDefId + '/documents/' + docId,
+      )
+      const remaining = get().documents.filter((d) => d.id !== docId)
+      set({ documents: remaining })
+      // If the removed doc was selected, pick another (or clear)
+      if (get().selectedDocId === docId) {
+        if (remaining.length > 0) {
+          await get().selectDocument(remaining[0].id)
+        } else {
+          set({
+            selectedDocId: null,
+            documentInfo: null,
+            annotations: [],
+            processingResults: [],
+          })
+        }
+      }
+      toast.success('已从样本集移除')
+    } catch {
+      toast.error('移除失败')
+    }
   },
 }))

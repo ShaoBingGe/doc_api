@@ -49,6 +49,7 @@ backend/static/uploads/
 
 # Claude local settings
 .claude/settings.local.json
+.claude/worktrees/
 
 # Embedded repos (not submodules)
 label-studio/

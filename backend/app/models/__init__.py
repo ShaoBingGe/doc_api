@@ -11,7 +11,14 @@ from .conversation import Conversation, ConversationStatus, Message, MessageRole
 from .api_definition import ApiDefinition, ApiDefinitionStatus
 from .api_key import ApiKey
 from .usage_record import UsageRecord
-from .prompt_version import PromptVersion
+# OCR optimizer subsystem tables — imported here so Base.metadata sees them
+from app.ocr_optimizer.models import (  # noqa: E402,F401
+    OcrModule,
+    OcrModuleIteration,
+    OcrOptimizationRound,
+    OcrOptimizationRun,
+    OcrPromptVersion,
+)
 
 __all__ = [
     # base
@@ -38,6 +45,10 @@ __all__ = [
     "ApiKey",
     # usage
     "UsageRecord",
-    # prompt
-    "PromptVersion",
+    # ocr optimizer
+    "OcrPromptVersion",
+    "OcrModule",
+    "OcrOptimizationRun",
+    "OcrOptimizationRound",
+    "OcrModuleIteration",
 ]

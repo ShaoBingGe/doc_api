@@ -80,6 +80,93 @@ def _validate_file(filename: str, size: int, content_type: str | None = None) ->
 
 # ── Service functions ─────────────────────────────────────────────────────────
 
+def upload_document_with_annotations(
+    db: Session,
+    *,
+    filename: str,
+    file_data: bytes,
+    content_type: str | None,
+    annotations: list[dict],
+    user_id: uuid.UUID | None = None,
+) -> Document:
+    """
+    Single-transaction upload of a document + its pre-labeled ground-truth annotations.
+
+    Each item in `annotations` must be `{"field_path": str, "value": Any}`.
+    `field_path` may be a dotted/bracketed JSON path like "items[0].price" — stored
+    as-is in Annotation.field_name. All created annotations are marked
+    source='manual', is_corrected=True (treated as Ground Truth by the optimizer).
+    """
+    from app.core.exceptions import ValidationError
+    from app.models.annotation import Annotation, AnnotationSource
+
+    if not annotations:
+        raise ValidationError("annotations list must not be empty")
+
+    file_type = _validate_file(filename, len(file_data), content_type)
+    storage_path = _save_upload(file_data, filename)
+
+    doc = Document(
+        user_id=user_id,
+        filename=filename,
+        file_type=file_type,
+        file_size=len(file_data),
+        storage_path=storage_path,
+        status=DocumentStatus.completed,  # GT provided, no extraction needed
+    )
+    db.add(doc)
+    db.flush()
+
+    # Persist each annotation. We deliberately do NOT create a ProcessingResult
+    # since this document was never machine-extracted — only human-labeled.
+    for ann in annotations:
+        field_path = ann.get("field_path")
+        if not field_path or not isinstance(field_path, str):
+            raise ValidationError(
+                f"annotation missing string field_path: {ann!r}"
+            )
+        value = ann.get("value")
+        # Coerce value to str for storage (Annotation.field_value is Text)
+        if value is None:
+            value_str = None
+        elif isinstance(value, (str, int, float, bool)):
+            value_str = str(value)
+        else:
+            import json
+            value_str = json.dumps(value, ensure_ascii=False)
+        inferred_type = _infer_field_type(value)
+        a = Annotation(
+            document_id=doc.id,
+            processing_result_id=None,
+            field_name=field_path,
+            field_value=value_str,
+            field_type=inferred_type,
+            source=AnnotationSource.manual,
+            is_corrected=True,  # explicitly GT
+        )
+        db.add(a)
+
+    db.commit()
+    db.refresh(doc)
+    return doc
+
+
+def _infer_field_type(value) -> str:
+    """Map a Python value to one of the FieldType enum strings."""
+    from app.models.annotation import FieldType
+
+    if isinstance(value, bool):
+        return FieldType.boolean
+    if isinstance(value, (int, float)):
+        return FieldType.number
+    if isinstance(value, list):
+        return FieldType.array
+    # date detection is heuristic — leave as string unless ISO-ish
+    if isinstance(value, str) and len(value) >= 8 and value[:4].isdigit() and "-" in value:
+        return FieldType.date
+    return FieldType.string
+
+
 def upload_document(
     db: Session,
     *,
@@ -108,8 +195,11 @@ def upload_document(
     db.add(doc)
     db.flush()  # get doc.id before processing
 
-    # Trigger synchronous processing
-    _run_extraction(db, doc, processor_type=processor_type or settings.DEFAULT_PROCESSOR)
+    # 默认上传时识别已禁用 —— 新流程改为前端在新建定制 API 上传完成后,
+    # 通过 POST /api/v1/documents/{id}/initial-extract 触发一次性的、带固定层
+    # 次化 prompt 的 OCR 调用 (见 services/initial_extraction.py)。
+    # 文档保持在 queued 状态,等待该调用把它推进到 completed。
+    # _run_extraction(db, doc, processor_type=processor_type or settings.DEFAULT_PROCESSOR)
     db.commit()
     db.refresh(doc)
     return doc
@@ -120,6 +210,7 @@ def _run_extraction(
     doc: Document,
     *,
     processor_type: str,
+    model_name: str | None = None,
     prompt: str | None = None,
     schema: dict | None = None,
     previous_version: int = 0,
@@ -136,7 +227,7 @@ def _run_extraction(
     try:
         start_ms = int(time.time() * 1000)
         raw_output, raw_structured, model_name = _call_processor(
-            doc.storage_path, processor_type, prompt=prompt, schema=schema
+            doc.storage_path, processor_type, prompt=prompt, schema=schema, model_name=model_name
         )
         elapsed_ms = int(time.time() * 1000) - start_ms
 
@@ -174,6 +265,7 @@ def _call_processor(
     *,
     prompt: str | None,
     schema: dict | None,
+    model_name: str | None = None,
 ) -> tuple[dict, dict, str]:
     """
     Delegate to ProcessorFactory. Returns (raw_output, structured_data, model_name).
@@ -183,7 +275,10 @@ def _call_processor(
 
     from app.processors.factory import ProcessorFactory
 
-    processor = ProcessorFactory.create(processor_type)
+    kwargs = {}
+    if model_name:
+        kwargs["model_name"] = model_name
+    processor = ProcessorFactory.create(processor_type, **kwargs)
     instruction = prompt or "Extract all structured data fields from this document."
     runtime_config = {"schema": schema} if schema else None
 
@@ -229,60 +324,118 @@ def _mock_extraction(storage_path: str) -> tuple[dict, dict, str]:
     return raw_output, structured_data, "mock-v1"
 
 
+def _normalize_bbox(bbox: dict | None) -> dict | None:
+    """Coerce LLM bbox output to {x, y, width, height, page} in 0-100 range.
+
+    Some Gemini outputs use 0-1000 coords; if any value > 100, divide by 10.
+    """
+    if not isinstance(bbox, dict):
+        return None
+    try:
+        x = float(bbox.get("x", 0))
+        y = float(bbox.get("y", 0))
+        w = float(bbox.get("width", bbox.get("w", 0)))
+        h = float(bbox.get("height", bbox.get("h", 0)))
+    except (TypeError, ValueError):
+        return None
+    if max(x, y, w, h) > 100:
+        x, y, w, h = x / 10, y / 10, w / 10, h / 10
+    page_val = bbox.get("page", 1)
+    try:
+        page = int(page_val) if page_val is not None else 1
+    except (TypeError, ValueError):
+        page = 1
+    return {
+        "x": max(0.0, min(100.0, x)),
+        "y": max(0.0, min(100.0, y)),
+        "width": max(0.0, min(100.0, w)),
+        "height": max(0.0, min(100.0, h)),
+        "page": page,
+    }
+
+
+def _is_leaf_field(v) -> bool:
+    """Hierarchical leaf shape: {value, confidence, bbox}."""
+    return isinstance(v, dict) and "value" in v and not isinstance(v.get("value"), dict)
+
+
+def _flatten_hierarchical(node, path: str, out: list[dict]) -> None:
+    """Recursively walk the hierarchical Gemini output and emit flat entries."""
+    if node is None:
+        return
+
+    # Leaf: { value, confidence, bbox }
+    if _is_leaf_field(node):
+        out.append({
+            "id": str(uuid.uuid4()),
+            "keyName": path or "field",
+            "value": node.get("value"),
+            "confidence": node.get("confidence"),
+            "bbox": _normalize_bbox(node.get("bbox") or node.get("bounding_box")),
+        })
+        return
+
+    # Dict container: recurse into each key (skip _meta, capture container bbox if present).
+    if isinstance(node, dict):
+        # Table-shaped container { _meta, rows: [...] }
+        rows = node.get("rows")
+        if isinstance(rows, list):
+            for i, row in enumerate(rows):
+                _flatten_hierarchical(row, f"{path}[{i}]" if path else f"[{i}]", out)
+            return
+
+        for key, val in node.items():
+            if key == "_meta":
+                continue
+            # Some hierarchical leaves might have value as a nested dict (rare); recurse.
+            if "value" in node and key == "value":
+                continue
+            child_path = f"{path}.{key}" if path else key
+            _flatten_hierarchical(val, child_path, out)
+        return
+
+    # List of items (table without _meta wrapper, or bare array)
+    if isinstance(node, list):
+        for i, item in enumerate(node):
+            _flatten_hierarchical(item, f"{path}[{i}]" if path else f"[{i}]", out)
+        return
+
+    # Bare scalar — record as a value-only entry
+    out.append({
+        "id": str(uuid.uuid4()),
+        "keyName": path or "field",
+        "value": node,
+        "confidence": None,
+        "bbox": None,
+    })
+
+
 def _normalize_structured_data(raw: dict | list) -> list[dict]:
     """
     Normalize AI processor output to design format:
       [{id, keyName, value, confidence, bbox}, ...]
 
-    Handles both flat-dict output (most processors) and pre-structured list output.
+    Recursively descends into hierarchical Gemini output so every leaf field
+    (e.g. "seller.name", "line_items[0].description") gets its own entry with
+    its own bbox preserved.
     """
-    if isinstance(raw, list):
+    # Pre-structured list with `keyName` items — keep as-is, just normalize bbox.
+    if isinstance(raw, list) and raw and isinstance(raw[0], dict) and "keyName" in raw[0]:
         result = []
         for item in raw:
             if not isinstance(item, dict):
                 continue
-            if "keyName" in item:
-                # Already in design format — ensure id is present
-                entry = dict(item)
-                if "id" not in entry:
-                    entry["id"] = str(uuid.uuid4())
-                entry.setdefault("confidence", None)
-                entry.setdefault("bbox", None)
-            else:
-                entry = {
-                    "id": item.get("id", str(uuid.uuid4())),
-                    "keyName": item.get("key", item.get("name", "")),
-                    "value": item.get("value"),
-                    "confidence": item.get("confidence"),
-                    "bbox": item.get("bbox") or item.get("bounding_box"),
-                }
+            entry = dict(item)
+            if "id" not in entry:
+                entry["id"] = str(uuid.uuid4())
+            entry.setdefault("confidence", None)
+            entry["bbox"] = _normalize_bbox(entry.get("bbox") or entry.get("bounding_box"))
             result.append(entry)
         return result
 
-    if isinstance(raw, dict):
-        result = []
-        for key, value in raw.items():
-            if isinstance(value, dict) and "value" in value:
-                # Processor returned structured per-field dict with metadata
-                entry = {
-                    "id": str(uuid.uuid4()),
-                    "keyName": key,
-                    "value": value.get("value"),
-                    "confidence": value.get("confidence"),
-                    "bbox": value.get("bbox") or value.get("bounding_box"),
-                }
-            else:
-                entry = {
-                    "id": str(uuid.uuid4()),
-                    "keyName": key,
-                    "value": value,
-                    "confidence": None,
-                    "bbox": None,
-                }
-            result.append(entry)
-        return result
-
-    return []
+    out: list[dict] = []
+    _flatten_hierarchical(raw, "", out)
+    return out
 
 
 def _create_annotations(
@@ -440,9 +593,32 @@ def reprocess_document(
         .first()
     )
     prev_version = latest.version if latest else 0
-    processor = body.processor_type or (latest.processor_type if latest else settings.DEFAULT_PROCESSOR)
+    # Always fall back to the globally-configured DEFAULT_PROCESSOR (from .env),
+    # not to the previous result's processor_type — so switching DEFAULT_PROCESSOR
+    # from "mock" to "gemini" takes effect immediately without DB migrations.
+    processor = body.processor_type or settings.DEFAULT_PROCESSOR
 
-    result = _run_extraction(db, doc, processor_type=processor, previous_version=prev_version)
+    # Build prompt: explicit prompt > prompt+extra_fields > extra_fields appended to last prompt > None
+    prompt = body.prompt
+    if body.extra_fields:
+        existing_fields = []
+        if latest and latest.structured_data and isinstance(latest.structured_data, dict):
+            existing_fields = list(latest.structured_data.keys())
+        all_fields = list(dict.fromkeys(existing_fields + body.extra_fields))  # dedupe, preserve order
+        field_list = ", ".join(all_fields)
+        base = prompt or (latest.prompt_used if latest else None) or (
+            "Extract all structured data fields from this document and return them as valid JSON."
+        )
+        prompt = (
+            f"{base}\n\n"
+            f"Required fields to extract: {field_list}\n"
+            f"Return a JSON object whose keys include every required field. "
+            f"If a field cannot be located, set its value to null."
+        )
+
+    result = _run_extraction(
+        db, doc, processor_type=processor, prompt=prompt, previous_version=prev_version
+    )
     db.commit()
     db.refresh(result)
     return ProcessingResultResponse.model_validate(result)

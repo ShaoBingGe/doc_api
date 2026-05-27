@@ -19,11 +19,11 @@
 
 ### 环境要求
 
-| 工具 | 版本 | 安装方式 |
-|------|------|---------|
-| Python | 3.11+ | `uv python install 3.12` |
-| Node.js | 18+ | `nodeenv ~/.local/nodeenv --node=20.18.0` |
-| uv | latest | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| 工具 | 版本 | 本地安装方式 |
+|------|------|-------------|
+| Python | 3.12 | Homebrew: `brew install python@3.12` |
+| Node.js | 18+ | Homebrew: `brew install node@22` |
+| npm | 10+ | 随 Node.js 一起安装 |
 
 ---
 
@@ -32,11 +32,18 @@
 ```bash
 cd backend
 
+# 使用本地 Python 3.12 创建虚拟环境
+/opt/homebrew/bin/python3.12 -m venv .venv
+
+# 激活虚拟环境
+source .venv/bin/activate
+
 # 安装依赖
-uv sync
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt google-genai
 
 # 启动开发服务器
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 访问 API 文档：http://localhost:8000/docs
@@ -48,19 +55,34 @@ uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```bash
 cd frontend
 
-# 安装依赖（需要 Node.js 在 PATH 中）
-export PATH="$HOME/.local/nodeenv/bin:$PATH"
+# 安装依赖
 npm install
 
 # 启动开发服务器
-npm run dev
+npm run dev -- --host 0.0.0.0
 ```
 
 访问前端：http://localhost:5173
 
 ---
 
-### 3. Mock 模式（无需 AI API Key）
+### 3. 根目录联动启动
+
+```bash
+# 安装根目录依赖
+npm install
+
+# 同时启动前后端
+npm run dev
+```
+
+访问前端：http://localhost:5173
+
+访问后端：http://localhost:8000
+
+---
+
+### 4. Mock 模式（无需 AI API Key）
 
 后端默认使用 Mock 处理器，无需配置任何 API Key：
 
@@ -75,7 +97,7 @@ Mock 处理器返回固定的发票结构化数据，适合开发调试。
 
 ---
 
-### 4. 接入真实 AI
+### 5. 接入真实 AI
 
 ```bash
 # backend/.env
@@ -210,8 +232,8 @@ python testing/test_e2e.py --no-cleanup
 
 ```bash
 cd backend
-uv run alembic revision --autogenerate -m "describe change"
-uv run alembic upgrade head
+.venv/bin/python -m alembic revision --autogenerate -m "describe change"
+.venv/bin/python -m alembic upgrade head
 ```
 
 ---

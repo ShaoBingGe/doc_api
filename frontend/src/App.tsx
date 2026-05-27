@@ -7,6 +7,7 @@ import ApiKeyManagement from './pages/settings/ApiKeyManagement'
 import UserManagement from './pages/settings/UserManagement'
 import TrafficMonitoring from './pages/settings/TrafficMonitoring'
 import Billing from './pages/settings/Billing'
+import OcrOptimizer from './pages/settings/OcrOptimizer'
 import ToastContainer from './components/ToastContainer'
 
 export default function App() {
@@ -15,6 +16,9 @@ export default function App() {
       <ToastContainer />
       <Routes>
         <Route path="/workspace/new" element={<Workspace />} />
+        {/* v3: API-centric batch workspace */}
+        <Route path="/workspace/api/:apiDefinitionId" element={<Workspace />} />
+        {/* legacy single-doc URL → Workspace resolves which API owns it and redirects */}
         <Route path="/workspace/:documentId" element={<Workspace />} />
         <Route element={<MainLayout />}>
           <Route index element={<ApiList />} />
@@ -25,6 +29,7 @@ export default function App() {
           <Route path="api-keys" element={<ApiKeyManagement />} />
           <Route path="traffic" element={<TrafficMonitoring />} />
           <Route path="billing" element={<Billing />} />
+          <Route path="ocr-optimizer" element={<OcrOptimizer />} />
         </Route>
       </Routes>
     </BrowserRouter>

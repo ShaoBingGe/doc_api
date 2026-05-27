@@ -22,6 +22,7 @@ from app.schemas.document import (
     ReprocessRequest,
 )
 from app.services import document_service as svc
+from app.services import initial_extraction
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -46,6 +47,77 @@ async def upload_document(
         content_type=file.content_type,
         processor_type=processor_type,
         template_id=template_id,
+    )
+    return DocumentUploadResponse.model_validate(doc)
+
+
+@router.post(
+    "/upload-with-annotations",
+    response_model=DocumentUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="一次性上传文档 + 预标注 ground-truth JSON",
+)
+async def upload_document_with_annotations(
+    file: UploadFile = File(..., description="图片/PDF/XLSX 等数据文件"),
+    annotations: UploadFile = File(
+        ..., description="JSON 文件，结构: {filename?, annotations: [{field_path, value}, ...]}"
+    ),
+    db: Session = Depends(get_db),
+) -> DocumentUploadResponse:
+    """
+    Single-transaction upload of a labeled sample. All annotations are
+    persisted with source='manual', is_corrected=True so they qualify as
+    Ground Truth for the OCR optimizer.
+
+    JSON format (see UI_DESIGN §12.4):
+      {"filename": "x.png", "annotations": [{"field_path": "...", "value": ...}, ...]}
+    """
+    import json
+    from fastapi import HTTPException
+
+    file_data = await file.read()
+    json_bytes = await annotations.read()
+
+    try:
+        payload = json.loads(json_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=f"标注 JSON 解析失败: {exc}") from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=400, detail="JSON 顶层必须是对象（含 annotations 数组）"
+        )
+    ann_list = payload.get("annotations")
+    if not isinstance(ann_list, list) or not ann_list:
+        raise HTTPException(
+            status_code=400,
+            detail="JSON 必须包含非空数组字段 'annotations'",
+        )
+
+    # Coarse client-side-like validation (mirror frontend lint to give a
+    # consistent error surface).
+    for i, item in enumerate(ann_list):
+        if not isinstance(item, dict):
+            raise HTTPException(
+                status_code=400, detail=f"annotations[{i}] 不是对象"
+            )
+        if "field_path" not in item or not isinstance(item["field_path"], str):
+            raise HTTPException(
+                status_code=400,
+                detail=f"annotations[{i}] 缺少字符串字段 field_path",
+            )
+        if "value" not in item:
+            raise HTTPException(
+                status_code=400,
+                detail=f"annotations[{i}] 缺少 value 字段",
+            )
+
+    doc = svc.upload_document_with_annotations(
+        db,
+        filename=file.filename or "upload",
+        file_data=file_data,
+        content_type=file.content_type,
+        annotations=ann_list,
     )
     return DocumentUploadResponse.model_validate(doc)
 
@@ -123,6 +195,19 @@ def reprocess_document(
     db: Session = Depends(get_db),
 ) -> ProcessingResultResponse:
     return svc.reprocess_document(db, document_id, body)
+
+
+@router.post(
+    "/{document_id}/initial-extract",
+    response_model=ProcessingResultResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="新建定制 API 首次自动 OCR(固定层次化 prompt)",
+)
+def initial_extract(
+    document_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> ProcessingResultResponse:
+    return initial_extraction.trigger_initial_extraction(db, document_id)
 
 
 @router.delete(

@@ -6,6 +6,7 @@ const tabs = [
   { to: '/settings/api-keys', label: 'API Key' },
   { to: '/settings/traffic', label: '流量监控' },
   { to: '/settings/billing', label: '账单续费' },
+  { to: '/settings/ocr-optimizer', label: 'OCR 优化器' },
 ]
 
 export default function SettingsLayout() {

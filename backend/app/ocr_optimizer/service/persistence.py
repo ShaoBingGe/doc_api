@@ -1,0 +1,263 @@
+"""
+Persistence helpers for OcrPromptVersion / OcrModule / Run / Round / Iteration.
+
+Also exposes the production-facing entry point `get_active_composed_prompt`
+that extract_service calls before each public OCR request.
+"""
+
+from __future__ import annotations
+
+import logging
+import uuid
+from datetime import datetime, timezone
+from typing import Any
+
+from sqlalchemy import desc
+from sqlalchemy.orm import Session
+
+from app.core.exceptions import NotFoundError
+from app.models.api_definition import ApiDefinition
+
+from ..models import (
+    OcrModule,
+    OcrModuleIteration,
+    OcrOptimizationRound,
+    OcrOptimizationRun,
+    OcrPromptVersion,
+    PromptVersionStatus,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ── Production entry point (called by extract_service) ───────────────────────
+
+def get_active_composed_prompt(db: Session, api_definition_id: uuid.UUID) -> str | None:
+    """Fetch the composed_prompt of the active version for an API, or None."""
+    v = (
+        db.query(OcrPromptVersion)
+        .filter(OcrPromptVersion.api_definition_id == api_definition_id)
+        .filter(OcrPromptVersion.status == PromptVersionStatus.active.value)
+        .first()
+    )
+    return v.composed_prompt if v else None
+
+
+def get_active_version(db: Session, api_definition_id: uuid.UUID) -> OcrPromptVersion | None:
+    return (
+        db.query(OcrPromptVersion)
+        .filter(OcrPromptVersion.api_definition_id == api_definition_id)
+        .filter(OcrPromptVersion.status == PromptVersionStatus.active.value)
+        .first()
+    )
+
+
+# ── Version queries ───────────────────────────────────────────────────────────
+
+def list_versions(db: Session, api_definition_id: uuid.UUID) -> list[OcrPromptVersion]:
+    return (
+        db.query(OcrPromptVersion)
+        .filter(OcrPromptVersion.api_definition_id == api_definition_id)
+        .order_by(desc(OcrPromptVersion.version))
+        .all()
+    )
+
+
+def get_version_or_404(db: Session, version_id: uuid.UUID) -> OcrPromptVersion:
+    v = db.get(OcrPromptVersion, version_id)
+    if not v:
+        raise NotFoundError(f"OcrPromptVersion {version_id} not found")
+    return v
+
+
+def activate_version(
+    db: Session, api_definition_id: uuid.UUID, version_id: uuid.UUID
+) -> OcrPromptVersion:
+    target = get_version_or_404(db, version_id)
+    if target.api_definition_id != api_definition_id:
+        raise NotFoundError(f"Version {version_id} does not belong to API {api_definition_id}")
+
+    db.query(OcrPromptVersion).filter(
+        OcrPromptVersion.api_definition_id == api_definition_id,
+        OcrPromptVersion.status == PromptVersionStatus.active.value,
+        OcrPromptVersion.id != version_id,
+    ).update({"status": PromptVersionStatus.archived.value})
+
+    target.status = PromptVersionStatus.active.value
+    target.activated_at = datetime.now(timezone.utc)
+
+    # Sync ApiDefinition.prompt_version_id
+    api_def = db.get(ApiDefinition, api_definition_id)
+    if api_def:
+        api_def.prompt_version_id = target.id
+
+    db.commit()
+    db.refresh(target)
+    return target
+
+
+# ── Run / Round / Iteration queries ───────────────────────────────────────────
+
+def list_runs(db: Session, api_definition_id: uuid.UUID) -> list[OcrOptimizationRun]:
+    return (
+        db.query(OcrOptimizationRun)
+        .filter(OcrOptimizationRun.api_definition_id == api_definition_id)
+        .order_by(desc(OcrOptimizationRun.started_at))
+        .all()
+    )
+
+
+def get_run_or_404(db: Session, run_id: uuid.UUID) -> OcrOptimizationRun:
+    r = db.get(OcrOptimizationRun, run_id)
+    if not r:
+        raise NotFoundError(f"OcrOptimizationRun {run_id} not found")
+    return r
+
+
+def get_round_or_404(
+    db: Session, run_id: uuid.UUID, round_num: int
+) -> OcrOptimizationRound:
+    r = (
+        db.query(OcrOptimizationRound)
+        .filter(
+            OcrOptimizationRound.run_id == run_id,
+            OcrOptimizationRound.round_num == round_num,
+        )
+        .first()
+    )
+    if not r:
+        raise NotFoundError(f"Round {round_num} of run {run_id} not found")
+    return r
+
+
+def list_iterations_for_run(db: Session, run_id: uuid.UUID) -> list[OcrModuleIteration]:
+    return (
+        db.query(OcrModuleIteration)
+        .join(OcrOptimizationRound, OcrModuleIteration.round_id == OcrOptimizationRound.id)
+        .filter(OcrOptimizationRound.run_id == run_id)
+        .order_by(OcrOptimizationRound.round_num, OcrModuleIteration.module_key)
+        .all()
+    )
+
+
+# ── Module history (for module_optimizer's history input) ────────────────────
+
+def load_recent_module_history(
+    db: Session,
+    api_definition_id: uuid.UUID,
+    module_key: str,
+    k: int = 3,
+) -> list[dict]:
+    """
+    Return up to K most-recent iterations for this module across all runs of
+    this API definition. Each entry is a dict suitable for LLM context.
+    """
+    rows = (
+        db.query(OcrModuleIteration, OcrOptimizationRound, OcrOptimizationRun)
+        .join(OcrOptimizationRound, OcrModuleIteration.round_id == OcrOptimizationRound.id)
+        .join(OcrOptimizationRun, OcrOptimizationRound.run_id == OcrOptimizationRun.id)
+        .filter(OcrOptimizationRun.api_definition_id == api_definition_id)
+        .filter(OcrModuleIteration.module_key == module_key)
+        .order_by(desc(OcrModuleIteration.created_at))
+        .limit(k)
+        .all()
+    )
+    out: list[dict] = []
+    for it, rnd, _run in rows:
+        out.append({
+            "round_num": rnd.round_num,
+            "aggregate_accuracy": it.aggregate_accuracy,
+            "optimization_suggestion": it.optimization_suggestion,
+            "diff_summary": (it.aggregate_diff or {}).get("differences_description", ""),
+        })
+    # Caller wants oldest → newest
+    return list(reversed(out))
+
+
+# ── Snapshot helpers (copy modules into next version) ────────────────────────
+
+def clone_modules_to_new_version(
+    db: Session,
+    new_version: OcrPromptVersion,
+    base_modules: list[OcrModule],
+    updates: dict[str, dict[str, Any]] | None = None,
+    keep_keys: set[str] | None = None,
+    add_specs: list[dict] | None = None,
+    renames: dict[str, str] | None = None,
+) -> list[OcrModule]:
+    """
+    Build a fresh OcrModule set for `new_version` by copying `base_modules`,
+    applying per-module updates, optional removals, additions, and renames.
+
+    Args:
+        new_version:  unsaved version (id already populated)
+        base_modules: existing modules (sorted by order_index)
+        updates:      {module_key: {description?, ocr_suggestions?, ocr_prompt?}}
+        keep_keys:    if provided, drop any base module whose key is not in this set
+        add_specs:    list of new module dicts (from meta_optimizer.add_modules)
+        renames:      {old_key: new_key}
+
+    Returns the new list of OcrModule (unsaved; caller commits).
+    """
+    updates = updates or {}
+    renames = renames or {}
+    keep_keys = keep_keys if keep_keys is not None else {m.module_key for m in base_modules}
+
+    seen_keys: set[str] = set()
+    new_modules: list[OcrModule] = []
+    order = 0
+
+    for m in base_modules:
+        if m.module_key not in keep_keys:
+            continue
+        upd = updates.get(m.module_key, {})
+        new_key = renames.get(m.module_key, m.module_key)
+        if new_key in seen_keys:
+            continue  # avoid duplicate keys from renaming collisions
+        seen_keys.add(new_key)
+
+        new_modules.append(
+            OcrModule(
+                id=uuid.uuid4(),
+                prompt_version_id=new_version.id,
+                module_key=new_key,
+                display_name=m.display_name,
+                description=upd.get("description") or m.description,
+                json_path=m.json_path,
+                schema_fragment=m.schema_fragment,
+                ocr_suggestions=upd.get("ocr_suggestions") or m.ocr_suggestions,
+                ocr_prompt=upd.get("ocr_prompt") or m.ocr_prompt,
+                # ★ HARD COPY: skill_ids never come from updates dict — design §15.10.
+                # Optimizer's `updates` payload is filtered upstream to exclude skills,
+                # but defense in depth: we never read skill_ids from upd here.
+                skill_ids=list(getattr(m, "skill_ids", None) or []),
+                order_index=order,
+                status=m.status,
+            )
+        )
+        order += 1
+
+    for spec in (add_specs or []):
+        key = spec.get("module_key")
+        if not key or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        new_modules.append(
+            OcrModule(
+                id=uuid.uuid4(),
+                prompt_version_id=new_version.id,
+                module_key=key,
+                display_name=spec.get("display_name") or key,
+                description=spec.get("description") or "",
+                json_path=spec.get("json_path") or "$",
+                schema_fragment=spec.get("schema_fragment") or {},
+                ocr_suggestions=spec.get("ocr_suggestions") or {},
+                ocr_prompt=spec.get("ocr_prompt") or "",
+                # New modules start with empty skill_ids; even if Meta Optimizer
+                # tries to set them, we ignore that field entirely.
+                skill_ids=[],
+                order_index=order,
+            )
+        )
+        order += 1
+    return new_modules

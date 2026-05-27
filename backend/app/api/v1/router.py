@@ -18,7 +18,7 @@ from .api_keys import router as api_keys_router
 from .conversations import router as conversations_router
 from .documents import router as documents_router
 from .extract import router as extract_router
-from .prompts import router as prompts_router
+from app.ocr_optimizer.router import router as ocr_optimizer_router
 from .templates import router as templates_router
 from .usage import router as usage_router
 
@@ -30,6 +30,6 @@ v1_router.include_router(conversations_router)
 v1_router.include_router(api_defs_router)
 v1_router.include_router(api_keys_router)
 v1_router.include_router(extract_router)
-v1_router.include_router(prompts_router)
+v1_router.include_router(ocr_optimizer_router)
 v1_router.include_router(templates_router)
 v1_router.include_router(usage_router)

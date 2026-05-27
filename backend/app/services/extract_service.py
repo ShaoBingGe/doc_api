@@ -93,9 +93,9 @@ def extract_document(
     # ── 4. Run extraction ─────────────────────────────────────────────────
     start_ms = int(time.time() * 1000)
     try:
-        # Fetch active optimized prompt if available
-        from app.services.prompt_optimizer import get_active_prompt
-        active_prompt = get_active_prompt(db, api_def.id)
+        # Fetch active modular OCR prompt if available
+        from app.ocr_optimizer import get_active_composed_prompt
+        active_prompt = get_active_composed_prompt(db, api_def.id)
 
         raw_output, structured_data, model_name, tokens_used = _run_processor(
             storage_path=temp_path,

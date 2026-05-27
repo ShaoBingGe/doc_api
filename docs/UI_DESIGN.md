@@ -700,3 +700,552 @@ workspace-store (Zustand)
 | `next-intl` | 国际化（中/英/日/韩） |
 | `fabric.js` 或 `konva` | A 栏 Canvas 画框/高亮 |
 | `fuse.js` | 字段值模糊匹配（逆向定位用） |
+
+---
+
+## 九、批量样本工作台（Batch Sample Workspace）
+
+> 版本：v3.0 | 日期：2026-05-24
+> 起因：`ocr_optimizer` 子系统要求 ≥ 3 张带 Ground Truth 的样本才能跑 Run，单文档工作台无法满足"批量标注"和"批量优化"的诉求。
+
+### 9.1 范式升级
+
+| 维度 | v2 单文档工作台 | v3 批量样本工作台 |
+|---|---|---|
+| 核心实体 | `Document` | `ApiDefinition`（持有 `documents[]`） |
+| 路由 | `/workspace/{documentId}` | `/workspace/{apiDefinitionId}` |
+| 左侧栏 | 单文档预览（占 1/3 列宽） | **缩略图列**（80px 宽）+ 文档预览（占剩余宽度） |
+| 标注模型 | 单文档单份 annotations | `annotationsByDoc: Map<docId, Annotation[]>`，doc 切换时按需加载 |
+| AI 预填 | 首次进入页面自动调用 `initial_extract` | **不再自动预填**。用户必须手动在每张样本上填 GT |
+| 触发优化按钮 | 「AI 识别」+「优化 Prompt」(两个) | **「开始优化」**（一个），点击 = 触发 `POST /ocr-optimizer/optimize` |
+| 触发优化前置条件 | 无 | **样本数 ≥ 3** 且每张文档的 schema 字段都有用户标注 |
+
+### 9.2 五列总体布局
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  ← 返回 │ API: receipt-cn-v1 │ [字段视图][校验规则][统计分析][优化过程] │
+│         │                    │       [开始优化] [保存并生成API]          │
+├────────┬────────────────────┬────────────────────┬────────────────────────────┤
+│ Thumbs │   文档预览          │   字段视图          │   JSON 输出                │
+│ (80px) │   (剩余 1/3)        │   (1/3)            │   (1/3)                    │
+│        │                    │                    │                            │
+│ ┌────┐ │  ┌──────────────┐  │  store_name: ___   │  {                         │
+│ │ 1 │◀│  │              │  │  total:     ___    │   "store_name": null,      │
+│ ├────┤ │  │  当前选中文档  │  │  date:      ___    │   "total": null,           │
+│ │ 2 │ │  │              │  │  ...               │   ...                      │
+│ ├────┤ │  │              │  │                    │  }                         │
+│ │ 3 │ │  │              │  │                    │                            │
+│ ├────┤ │  └──────────────┘  │                    │                            │
+│ │ + │ │                    │                    │                            │
+│ └────┘ │                    │                    │                            │
+└────────┴────────────────────┴────────────────────┴────────────────────────────┘
+```
+
+- **缩略图列**：固定 80px 宽，列出该 ApiDefinition 的所有样本文档。当前选中文档高亮（紫色边框）。底部 `+` 按钮上传新文档。
+- **文档预览 / 字段视图 / JSON 输出**：跟现有 v2 一致，但内容随缩略图列的选中变化。
+- **顶部 tabs** 新增 **「优化过程」** 选项卡（4 → 5 项）。
+
+### 9.3 缩略图列详细行为
+
+```
+┌────┐
+│ 1  │  ← 选中：紫色 ring-2 ring-purple-500
+├────┤    标签角标：●(灰=未标完) / ✓(绿=已完整标注)
+│ 2  │
+├────┤
+│ 3  │
+├────┤
+│ +  │  ← 上传按钮，hover 灰背景
+└────┘
+```
+
+- **缩略图渲染**：图片直接显示，PDF 调用 `pdfjs-dist` 渲染第 1 页。
+- **选中 ↔ 主区联动**：点击缩略图，主区三栏（文档预览/字段视图/JSON）同步刷新到该 doc 的状态。
+- **删除**：长按或右键缩略图弹「移出样本集」菜单，调用 `DELETE /api-definitions/{id}/documents/{docId}`。
+- **新增**：点 `+` 弹文件选择，调用 `POST /api-definitions/{id}/documents`（同时把 docId 追加进 `config.sample_document_ids`）。
+
+### 9.4 「开始优化」按钮行为
+
+```ts
+onClick = () => {
+  if (documents.length < 3) {
+    Modal.warn({
+      title: "样本量过少",
+      content: "请继续添加文档至 3 张或以上，再开始优化。",
+    })
+    return
+  }
+  if (!allDocsHaveCompleteAnnotations) {
+    Modal.warn({
+      title: "标注不完整",
+      content: "存在未标注完整的样本，请先完成全部字段的标注。",
+    })
+    return
+  }
+  // 1. tab 切到「优化过程」
+  setActiveTab('optimize')
+  // 2. 触发 Run（同步阻塞，约 30s–2min）
+  triggerOptimization(apiDefinitionId)
+}
+```
+
+按钮的三种状态（按优先级）：
+1. `documents.length < 3` → disabled + tooltip "至少 3 张样本"
+2. 任意 doc 字段未标完 → disabled + tooltip "完成全部标注"
+3. 运行中 → loading spinner + 「优化中…」
+
+### 9.5 后端契约新增
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `POST` | `/api/v1/api-definitions/{id}/documents` | 上传文件 + 自动追加到 `config.sample_document_ids` |
+| `GET` | `/api/v1/api-definitions/{id}/documents` | 列出该 API 的样本文档（resolve `sample_document_ids`） |
+| `DELETE` | `/api/v1/api-definitions/{id}/documents/{docId}` | 从样本集移除（不删 Document 本身） |
+
+---
+
+## 十、优化过程子页面（Optimization Process Panel）
+
+> 集成位置：Workspace 顶部 tabs 的 **第 4 项「优化过程」**
+> 数据源：`ocr_optimizer` 子系统的 `OcrPromptVersion` / `OcrOptimizationRun` / `OcrOptimizationRound` / `OcrModuleIteration` 表
+> **核心变更（v2）**：从「按 Phase 平铺全部模块」改成「**左列模块列表 + 右侧单模块 5-phase 详情**」；Run 改为「逐轮人工触发」状态机；支持人工编辑 suggestions/description 派生新版本。
+
+### 10.1 整体布局
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│  字段视图  校验规则  统计分析  [优化过程]      [开始优化] [保存并生成API]         │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│  Versions: [v1(init)] [v2 round1] [v2.1 manual] [v3 round2 ★]   ←Run 状态条→     │
+│            Run #abc... · paused_for_review · round 2/5 · [下一轮▶] [完成此次Run] │
+├────────────────┬─────────────────────────────────────────────────────────────────┤
+│  模块列表       │  当前模块：line_items     · accuracy 65% · iter#42              │
+│  ─────────────  │  ───────────────────────────────────────────────────────────   │
+│  store_identity │  ▼ Phase 1 — OCR 输出（4 个样本）                             │
+│       ✓ 90%    │     sample-1: { items: [...] }  ▶ 展开                          │
+│  ────────────  │     sample-2: { items: [...] }                                  │
+│  ▶ line_items   │                                                                │
+│       ⚠ 65%    │  ▼ Phase 2 — 模块差异分析                                       │
+│  ────────────  │     aggregate_diff.differences_description: "..."               │
+│  totals        │     per_sample_results: 4 行表格                                │
+│       ✓ 85%    │                                                                │
+│  ────────────  │  ▼ Phase 3 — 分析原因（LLM Reasoning）                         │
+│  temporal      │     optimization_suggestion: "..."                              │
+│       ✓ 100%   │                                                                │
+│  ────────────  │  ▼ Phase 4 — 生成优化建议  [✏ 编辑]                            │
+│  payment       │     new_ocr_suggestions: { semantics, position, ... }           │
+│       ✓ 75%    │     description: "..."  [✏ 编辑]                                │
+│  ────────────  │                                                                │
+│                 │  ▼ Phase 5 — 生成新 OCR Prompt                                  │
+│  [+ Skill] 模块 │     new_ocr_prompt: "..."                                       │
+│                 │     [composed_prompt 完整预览]                                  │
+│                 │                                                                │
+│                 │  ─────────────────── Skills ───────────────────                │
+│                 │  （当前模块挂载的 skills，read-only）                            │
+│                 │   • 暂未挂载                                                    │
+│                 │   skill_feedback (来自 optimizer): "..."                        │
+│                 │   [+ 添加 Skill]  ← 点击 toast "Coming Soon"                    │
+│                 │                                                                │
+│                 │  [✏ 编辑当前模块] [保存 patch 生成 v2.x]                       │
+└────────────────┴─────────────────────────────────────────────────────────────────┘
+```
+
+### 10.2 左侧模块列表
+
+固定宽度 200px，垂直滚动。每项展示：
+
+```
+┌──────────────────────────┐
+│ ▶ line_items          ⚠  │   ← ▶ 表示选中；右侧图标 ✓达标/⚠未达标
+│   accuracy 65%           │   ← 当前版本上的 module_accuracy
+│   8 字段 · 4/4 样本     │
+└──────────────────────────┘
+```
+
+底部固定一个 `[+ Skill] 模块` 按钮 —— 占位，点击 toast `Coming Soon`（§13）。
+
+### 10.3 顶部 Version + Run 状态条
+
+```
+[v1(init)] [v2 round1] [v2.1 manual ✏] [v3 round2 ★active]      ← Version 切换
+─────────────────────────────────────────────────────────────────
+Run #abc1234 · paused_for_review · round 2/5 · [下一轮 ▶] [完成此次 Run] [放弃]
+```
+
+- **版本 chip 颜色编码**：
+  - `init` 灰色
+  - `round` 蓝色（产生于某一轮）
+  - `manual_edit` 紫色，带 ✏ 图标
+  - `★active` 角标 + 绿框
+- **Run 状态条**：仅当当前 API 存在 `paused_for_review` 或 `running` 状态的 Run 时显示。`completed` / `aborted` 后该条隐藏，但 Versions 切换器仍可回看历史版本。
+- **按钮：**
+  - `[下一轮 ▶]`：调 `POST /runs/{id}/advance`，body `{use_version_id?: <当前选中版本 id>}`。**默认 use_version_id = 最近一个 manual_edit 版本 ?? 最近一轮 round next_version**
+  - `[完成此次 Run]`：弹模态框让用户从 Run 演化链上所有版本中选一个 activate；调 `POST /runs/{id}/finalize`
+  - `[放弃]`：二次确认后调 `POST /runs/{id}/abort`
+
+### 10.4 右侧详情区 — 单模块 5 Phase
+
+只展示**当前选中模块**在**当前选中版本对应的 Round**中的数据。版本切换或模块切换都触发右侧重渲染。
+
+Phase 4 旁有 `[✏ 编辑]` 按钮（详见 §10.6 编辑流），Phase 5 不可编辑（ocr_prompt 由 description+suggestions 派生）。
+
+#### 数据映射（同 v1，保留不变）
+
+| Phase | UI 名 | 数据源 |
+|---|---|---|
+| 1 | OCR 输出 | `Round.ocr_raw_outputs[sample]` 按 `module.json_path` 切片后展示 |
+| 2 | 模块差异分析 | `Iteration.aggregate_diff` + `per_sample_results` |
+| 3 | 分析原因 | `Iteration.optimization_suggestion` |
+| 4 | 生成优化建议 | `Iteration.new_ocr_suggestions` + `new_description` |
+| 5 | 生成新 Prompt | `Iteration.new_ocr_prompt` + 下一版本 `composed_prompt` |
+
+#### Skills 子区（read-only）
+
+固定在 5 phases 下方：
+- 列出当前模块 `skill_ids` 对应 skill 卡片（MVP 阶段空列表）
+- 展示 `Iteration.skill_feedback`（optimizer 关于 skill 的反馈文本，灰色斜体）
+- `[+ 添加 Skill]` 按钮 → toast `Coming Soon`
+
+### 10.5 版本切换器交互细节
+
+数据加载策略：
+- 进入 tab 拉一次 `GET /ocr-optimizer/versions`（含 origin / produced_in_round / overall_accuracy 摘要）
+- 切换版本时按需拉 `GET /versions/{id}`（modules 全文）
+- 若版本是 round 产物：再拉 `GET /runs/{runId}/rounds/{n}`（iterations + raw_outputs）
+- 若版本是 manual_edit 产物：右侧 5 phases **沿用 parent_version 对应 round 的数据**，但 Phase 4/5 字段值显示 manual patch 后的版本，让用户直观看到"编辑前 vs 编辑后"
+- 客户端 LRU 缓存
+
+### 10.6 编辑流（manual_patch）
+
+用户在 Phase 4 点 `[✏ 编辑]`：
+
+1. 该模块的 `description` 和 `ocr_suggestions` 区域切到 inline 编辑模式（Textarea + JSON 编辑器）
+2. 编辑期间，**顶部右侧出现一个 `[保存 patch → 生成 vX.Y]` 按钮**（绿色），左侧顶部出现 dirty 标志
+3. 可以在多个模块上连续编辑，dirty 标志累加（"3 个模块有未保存改动"）
+4. 点 `[保存 patch]`：
+   - 调 `POST /versions/{currentVersion.id}/manual-patch` body `{edits: [{module_key, description?, ocr_suggestions?}, ...]}`
+   - 后端返回新版本（status=draft, origin='manual_edit'）
+   - 前端在 Versions 列表中**追加紫色 v2.1 chip 并自动选中它**
+5. 之后用户可以：
+   - 点 `[下一轮]` —— 后端用 v2.1 作为起点跑 Round (n+1)
+   - 继续在 v2.1 上再编辑 → 生成 v2.2
+   - 点 `[完成此次 Run]` 选 v2.1 → activate
+
+**严格限制**：编辑面板**没有** ocr_prompt / skill_ids 的编辑入口（即使 hack 调用 API 也会被后端拒绝）。
+
+### 10.7 触发流程端到端时序（Run 状态机）
+
+```
+用户点「开始优化」（顶部按钮，§见 WorkspaceHeader）
+    │
+    ▼ 前端校验：documents.length ≥ 3
+    │
+    ▼ setActiveTab('optimize')
+    │
+    ▼ POST /ocr-optimizer/optimize  （同步阻塞 ~30-60s 跑 Round 1）
+    │
+    ▼ 返回 { run_id, status: 'paused_for_review', current_round_num: 1,
+    │        round: <Round1 详情> }
+    │
+    ▼ 前端：
+    │   1. 刷新 Versions 列表（init + round1 产物 v2 出现）
+    │   2. 默认选中 v2（新轮产物）
+    │   3. 默认选中第一个 module（按 accuracy 升序，最差的最先看）
+    │   4. Run 状态条出现 "paused_for_review · round 1/5"
+    │
+    ▼  用户 review 模块详情
+    │   │
+    │   ├─ 用户编辑 suggestions → 点 [保存 patch] → 生成 v2.1（紫）
+    │   │     │
+    │   │     └─ 用户继续 review / 编辑 / 直到满意
+    │   │
+    │   ├─ 用户点 [下一轮]
+    │   │     │
+    │   │     ▼ POST /runs/{id}/advance  body { use_version_id: v2.1.id }
+    │   │     │
+    │   │     ▼ 后端跑 Round 2（同步 ~30-60s）
+    │   │     │
+    │   │     ▼ 返回新一轮数据；前端追加 v3 chip；循环回到 review
+    │   │
+    │   └─ 用户点 [完成此次 Run]
+    │         │
+    │         ▼ 弹模态框：列出所有候选版本（v2 / v2.1 / v3 / ...）
+    │         │   每行显示：version · origin · accuracy · 创建时间
+    │         │
+    │         ▼ 用户选 → POST /runs/{id}/finalize body { version_id }
+    │         │
+    │         ▼ 该版本 activate；Run.status='completed'
+    │         │
+    │         ▼ Toast: "优化完成！v2.1 已激活（准确率 87.5%）"
+    │         │
+    │         ▼ Run 状态条隐藏；Versions 切换器保留作为历史
+```
+
+### 10.8 与「字段视图 / 校验规则 / 统计分析」的关系
+
+- **字段视图**：展示**当前 active 版本**的字段结构；optimize 进行时不阻塞用户继续标注
+- **校验规则**：不变
+- **统计分析**：可叠加 Run 时间线 + 每轮 accuracy 折线
+- **优化过程**：本章
+
+### 10.9 后续可升级方向（非本期范围）
+
+- **实时流式（SSE）**：后端在 Round 内推 phase 事件，前端实时点亮 1→5
+- **Side-by-side diff**：vX 与 vY 的 composed_prompt 并排对比（特别是 manual_edit 前后）
+- **Module 冻结**：把已达 100% 的 module 标记为 frozen，advance 时跳过其 LLM 优化
+- **Skill 子系统正式启用**（§13）：解锁 [+ Skill] 按钮真实功能
+
+---
+
+## 十一、Run 状态机交互详解
+
+> 这是「优化过程子页面」的状态机层 spec，把 §10 散落在各处的按钮/状态/数据流统一成一张图，给前端实现做参考。
+
+### 11.1 Run 状态机
+
+```
+                          ┌──────────────┐
+       (no active run) ───→│   IDLE       │
+                          └──────────────┘
+                                 │
+              点「开始优化」 ↓ POST /optimize
+                                 │
+                          ┌──────────────┐
+                          │  RUNNING     │ ←─┐
+                          │  (Round N    │   │
+                          │   跑 OCR +   │   │ 后端跑下一轮
+                          │   LLM)       │   │ POST /advance
+                          └──────────────┘   │
+                                 │           │
+                  Round 完成    ↓           │
+                                 │           │
+                          ┌──────────────┐   │
+                          │  PAUSED_FOR_ │   │
+                          │  REVIEW      │───┘
+                          │              │
+                          │  · 编辑 patch │ POST /manual-patch → 仍 PAUSED
+                          │  · 切换版本   │
+                          │  · 切换模块   │
+                          └──────────────┘
+                                 │
+                ┌────────────────┼──────────────────┐
+                ↓                ↓                  ↓
+       POST /finalize   POST /abort         (Run.current_round_num
+                                              已达 max_rounds？)
+                ↓                ↓                  ↓
+        ┌──────────────┐  ┌──────────────┐    强制 finalize
+        │  COMPLETED   │  │  ABORTED     │     (UI 隐藏 [下一轮])
+        └──────────────┘  └──────────────┘
+        version 已 activate    无副作用
+```
+
+### 11.2 状态与 UI 元素映射
+
+| Run.status | Run 状态条 | [开始优化] 按钮 | [下一轮] | [完成此次 Run] | [放弃] | 模块详情可编辑？ |
+|---|---|---|---|---|---|---|
+| IDLE | 隐藏 | 可点（高亮） | — | — | — | — |
+| RUNNING | "运行中... round N · OCR 调用中" + spinner | 禁用 | 禁用 | 禁用 | 禁用 | 否（数据仍在变） |
+| PAUSED_FOR_REVIEW | "已暂停 · 等待 review · round N/M" | 禁用 | **可点** | **可点** | 可点 | **是** |
+| COMPLETED | 隐藏（Versions 仍可回看） | 可点（开下一个 Run） | — | — | — | 否（历史数据） |
+| ABORTED | 隐藏 | 可点 | — | — | — | 否 |
+| FAILED | "失败：{error_message}" 红色 | 可点（重试） | — | — | 可点 | 否 |
+
+### 11.3 客户端轮询策略
+
+由于 `POST /optimize` 和 `POST /advance` 都是**同步阻塞 30-60s** 的请求，前端不需要轮询。但要注意：
+
+- 显示 spinner + 文案"正在跑 Round N，预计 30-60 秒…"
+- 设置 request timeout 至少 180s
+- 失败时显示重试按钮，不要静默回退
+- 若用户在请求中途刷新页面：进入页面时拉 `GET /runs?status=running,paused_for_review&api_definition_id=...` 恢复状态
+
+### 11.4 finalize 模态框
+
+点 `[完成此次 Run]` 弹出模态：
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  选择要激活的版本                              [X 关闭]   │
+├──────────────────────────────────────────────────────────┤
+│  ○ v1 (init)        ─    创建于 ...                       │
+│  ● v2 (round 1)     76%  创建于 ...                       │
+│  ○ v2.1 (manual ✏)  ─    创建于 ... [编辑了 2 个模块]     │
+│  ○ v3 (round 2)     87%  创建于 ...   ★ 当前 active       │
+│                                                            │
+│  说明：选中的版本会被设为 active，老 active 版本归档       │
+│                                                            │
+│              [取消]              [确定激活]                │
+└──────────────────────────────────────────────────────────┘
+```
+
+默认选中**当前在右侧详情区查看的版本**。
+
+---
+
+## 十二、上传已标注数据（InlineUploadPanel Tab）
+
+> 集成位置：`InlineUploadPanel`（仅在 `Workspace` `isNewMode` 即创建新 API 流程中显示）
+
+### 12.1 整体布局
+
+```
+┌─────────────────────────────────────────────────────┐
+│  ┌─────────────────┬───────────────────────┐         │
+│  │ 📄 上传新文档    │ 📦 上传已标注数据    │         │  ← 顶部 Tab
+│  └─────────────────┴───────────────────────┘         │
+│  ━━━━━━━━━━━━━━━                                     │
+│                                                       │
+│  ┌─────────────────────────────────────────────┐    │
+│  │            (Tab 内容区)                       │    │
+│  └─────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────┘
+```
+
+两个 Tab 互斥；切换 Tab 清空对应状态。
+
+### 12.2 Tab A — 上传新文档（现状，无修改）
+
+保持现有 `InlineUploadPanel` 行为：单文件拖拽/点击上传，调 `POST /api/v1/documents/upload`。
+
+### 12.3 Tab B — 上传已标注数据（新）
+
+```
+┌─────────────────────────────────────────────────────┐
+│  上传图片或 PDF 文件 (1)                              │
+│  ┌─────────────────────────────────────────────┐    │
+│  │  📎 receipt_001.png  · 1.2 MB    [移除 ✕]  │    │  ← 已选状态
+│  │  [点击重新选择]                              │    │
+│  └─────────────────────────────────────────────┘    │
+│                                                       │
+│  上传标注 JSON 文件 (2)                               │
+│  ┌─────────────────────────────────────────────┐    │
+│  │  📎 receipt_001.json · 4 KB     [移除 ✕]  │    │
+│  │  ✓ JSON 格式正确，包含 12 条 annotation     │    │
+│  └─────────────────────────────────────────────┘    │
+│                                                       │
+│  [取消]                          [📤 上传 & 创建]     │
+└─────────────────────────────────────────────────────┘
+```
+
+- 两个文件选择器都用单文件 picker；**不允许选文件夹**
+- 文件 (2) 上传后**前端立即解析**做 lint：JSON 合法 + 含 `annotations[]` + 每项有 `field_path` 和 `value`
+- 两个文件**都选完才能点 `[上传 & 创建]`**
+- 上传后调 `POST /api/v1/documents/upload-with-annotations` (multipart: `file` + `annotations`)
+
+### 12.4 JSON 格式（包装元信息版）
+
+```json
+{
+  "filename": "receipt_001.png",
+  "annotations": [
+    {"field_path": "store_name", "value": "全家便利店"},
+    {"field_path": "date", "value": "2026-03-12"},
+    {"field_path": "items[0].name", "value": "矿泉水"},
+    {"field_path": "items[0].price", "value": 3.50},
+    {"field_path": "items[0].quantity", "value": 2},
+    {"field_path": "items[1].name", "value": "三明治"},
+    {"field_path": "items[1].price", "value": 12.00},
+    {"field_path": "total", "value": 19.00}
+  ]
+}
+```
+
+字段说明：
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `filename` | 否 | 仅作 sanity check 与文件 (1) 文件名比对；不一致警告但允许提交 |
+| `annotations` | 是 | array，至少 1 项 |
+| `annotations[].field_path` | 是 | JSONPath-lite：`a.b.c` / `a[0].b`。后端校验是否命中 response_schema leaf path |
+| `annotations[].value` | 是 | 标注值；后端按 schema 校验类型 |
+
+### 12.5 错误处理
+
+- 客户端 lint 失败：红色提示框列出第一个错误，不让上传
+- 后端 422（field_path 不命中 / 类型不匹配）：上传后 toast 错误 + 详情列表
+- 后端 5xx：toast + 保留已选文件让用户重试
+
+### 12.6 与现有上传逻辑的关系
+
+- 不替换 Tab A，并存
+- 后端 `upload-with-annotations` 内部走 `upload_document()` + 一段事务内的 annotation 批量写入；用同样的 storage backend
+- 上传成功后行为与 Tab A 一致：进入 `/workspace/api/{newApiDefId}`，新文档自动成为 sample 集合第一项，且**所有 annotations 已是 GT**（`source='manual', is_corrected=True`）—— 用户可立即继续添加更多样本，无需手动标注这一张
+
+---
+
+## 十三、Skill 子系统入口（TODO — Coming Soon）
+
+> **状态**：仅前端按钮 + Toast；后端见 [`docs/ocr-optimizer-design.md`](./ocr-optimizer-design.md) §17
+
+### 13.1 按钮出现的两处位置
+
+**位置 1 — 字段视图 (DarkFieldViewer)**
+
+在字段列表（DarkFieldViewer）底部已有的 `[+ 添加字段]` 按钮**旁边**新增 `[+ 添加 Skill]` 按钮：
+
+```
+─────────────────────────────────────────────
+  字段列表 (8)
+  ─ store_name        string  ✏ 已标注
+  ─ date              date    ✏ 已标注
+  ─ items[]           array   ✏ 已标注
+  ...
+─────────────────────────────────────────────
+  [+ 添加字段]   [+ 添加 Skill]   ← 新增
+─────────────────────────────────────────────
+```
+
+**位置 2 — 优化过程页 (OptimizationProcessPanel)**
+
+如 §10.1 / §10.2 所示：
+- 左列模块列表底部一个 `[+ Skill] 模块` 按钮（创建跨模块共用 skill，或挂载已有 skill）
+- 右列每个模块详情底部的 Skills 子区也有 `[+ 添加 Skill]` 按钮
+
+### 13.2 点击效果（统一）
+
+所有 Skill 入口按钮点击：
+
+```ts
+toast.info("Skill 功能即将上线 (Coming Soon)")
+```
+
+不调任何 API，不弹任何模态框。
+
+### 13.3 数据流（前端预留）
+
+`OcrModule` Pydantic schema 加上 `skill_ids: string[]` 字段（默认 `[]`）；前端类型定义同步：
+
+```ts
+interface OcrModule {
+  ...existing fields...
+  skill_ids: string[]   // MVP 永远是 []
+  skill_feedback?: string  // 在 Iteration 级别，optimizer 写
+}
+```
+
+UI 渲染时：
+- skill_ids 为空 → 显示 "暂未挂载"
+- skill_feedback 有内容 → 灰色斜体单独一段显示
+
+### 13.4 视觉占位（让用户看到"将来这里会有东西"）
+
+模块详情底部 Skills 子区即使空也保留高度，显示：
+
+```
+┌─────────── Skills ─────────────────────────────┐
+│  暂未挂载 skills                                 │
+│  Optimizer 反馈: "如果有'如何读表格'这样的         │
+│   skill，本模块可能在多列对齐场景表现更好"        │
+│  [+ 添加 Skill] ← coming soon                   │
+└─────────────────────────────────────────────────┘
+```
+
+让用户知道"系统在思考这件事，UI 已经预留了入口"。
+
+### 13.5 严格限制（与后端 §15 一致）
+
+- Optimizer **永远不能** 修改 `OcrModule.skill_ids` —— 后端 Pydantic 校验拒绝
+- 用户手动 patch（§10.6 编辑流）**也不能** 修改 `skill_ids` —— `/manual-patch` 端点的 edits schema 不含此字段
+- 未来 skill 子系统上线后，修改 skill 的唯一合法途径是 `/ocr-skills/...` 和 `/modules/{key}/skills` 专用端点
+

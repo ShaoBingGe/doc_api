@@ -67,6 +67,13 @@ class ReprocessRequest(BaseModel):
         default=None, description="Override processor; defaults to original"
     )
     model_name: str | None = Field(default=None)
+    prompt: str | None = Field(
+        default=None, description="Override extraction prompt sent to the AI processor"
+    )
+    extra_fields: list[str] | None = Field(
+        default=None,
+        description="Additional field names to ask the AI to extract; merged into the prompt",
+    )
 
 
 # ── Region OCR ────────────────────────────────────────────────────────────────

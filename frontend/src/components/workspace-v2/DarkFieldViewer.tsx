@@ -11,11 +11,16 @@ import {
   BarChart2,
   Trash2,
   Check,
+  Square,
+  X,
+  Loader2,
+  Sparkles,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useWorkspaceStore, type Annotation, type ProcessingResult } from '../../stores/workspace-store'
-import { createAnnotation } from '../../lib/api-client'
 import { toast } from '../../lib/toast'
+
+const LOW_CONFIDENCE_THRESHOLD = 85
 
 type ViewTab = 'fields' | 'rules' | 'stats'
 
@@ -155,6 +160,8 @@ function FieldRow({
   onSaveValue,
   onSaveType,
   onConfirmConfidence,
+  onStartDrawing,
+  isDrawingThis,
 }: {
   annotation: Annotation
   result?: ProcessingResult
@@ -165,11 +172,14 @@ function FieldRow({
   onSaveValue: (id: string, value: string) => void
   onSaveType: (id: string, type: string) => void
   onConfirmConfidence: (id: string) => void
+  onStartDrawing: (id: string) => void
+  isDrawingThis: boolean
 }) {
   const value = result?.value ?? annotation.value ?? ''
   const confidence = result?.confidence ?? 0
-  const isLowConfidence = confidence < 85
+  const isLowConfidence = confidence < LOW_CONFIDENCE_THRESHOLD
   const isConfirmed = confidence >= 100
+  const showDrawIcon = isLowConfidence && !isConfirmed
 
   return (
     <div
@@ -250,14 +260,36 @@ function FieldRow({
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
+
+        {/* Draw bbox button (low-confidence only, visible on hover) */}
+        {showDrawIcon && (
+          <button
+            onClick={() => onStartDrawing(annotation.id)}
+            className={cn(
+              'p-1 rounded transition-all',
+              isDrawingThis
+                ? 'opacity-100 text-purple-400 bg-purple-500/20'
+                : 'opacity-0 group-hover:opacity-100 text-gray-500 hover:text-purple-400 hover:bg-purple-500/10',
+            )}
+            title="在文档上画框标注此字段位置"
+          >
+            <Square className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
     </div>
   )
 }
 
-// ─── New field row (inline creation) ─────────────────────────────────────────
+// ─── New field row (name + value, queues field, stays open for next entry) ──
 
-function NewFieldRow({ onCancel, onSave }: { onCancel: () => void; onSave: (name: string, value: string) => void }) {
+function NewFieldRow({
+  onAdd,
+  onClose,
+}: {
+  onAdd: (name: string, value: string) => void
+  onClose: () => void
+}) {
   const [name, setName] = useState('')
   const [value, setValue] = useState('')
   const nameRef = useRef<HTMLInputElement>(null)
@@ -265,8 +297,12 @@ function NewFieldRow({ onCancel, onSave }: { onCancel: () => void; onSave: (name
   useEffect(() => { nameRef.current?.focus() }, [])
 
   const commit = () => {
-    if (!name.trim()) { onCancel(); return }
-    onSave(name.trim(), value.trim())
+    const trimmedName = name.trim()
+    if (!trimmedName) return
+    onAdd(trimmedName, value.trim())
+    setName('')
+    setValue('')
+    setTimeout(() => nameRef.current?.focus(), 0)
   }
 
   return (
@@ -277,23 +313,94 @@ function NewFieldRow({ onCancel, onSave }: { onCancel: () => void; onSave: (name
         onChange={(e) => setName(e.target.value)}
         placeholder="字段名"
         className="bg-transparent border-b border-white/20 text-sm text-gray-200 w-28 flex-shrink-0 outline-none focus:border-blue-400 px-0.5 py-0.5"
-        onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') onCancel() }}
+        onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') onClose() }}
       />
       <input
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        placeholder="值"
+        placeholder="值（可空，留给 AI 识别）"
         className="bg-transparent border-b border-white/20 text-sm text-gray-200 flex-1 min-w-0 outline-none focus:border-blue-400 px-0.5 py-0.5"
-        onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') onCancel() }}
+        onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') onClose() }}
       />
       <div className="flex items-center gap-1 flex-shrink-0">
-        <button onClick={commit} className="p-1 rounded text-emerald-400 hover:bg-emerald-500/10 transition-colors" title="保存">
+        <button
+          onClick={commit}
+          disabled={!name.trim()}
+          className="p-1 rounded text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          title="暂存（Enter）"
+        >
           <Check className="w-4 h-4" />
         </button>
-        <button onClick={onCancel} className="p-1 rounded text-gray-400 hover:bg-white/10 transition-colors text-xs">
-          取消
+        <button
+          onClick={onClose}
+          className="p-1 rounded text-gray-400 hover:bg-white/10 transition-colors"
+          title="收起（Esc）"
+        >
+          <X className="w-4 h-4" />
         </button>
       </div>
+    </div>
+  )
+}
+
+// ─── Pending fields list + confirm button ───────────────────────────────────
+
+function PendingFieldsBar() {
+  const { pendingFields, removePendingField, clearPendingFields, confirmPendingFields, reprocessing } =
+    useWorkspaceStore()
+
+  if (pendingFields.length === 0) return null
+
+  return (
+    <div className="rounded-lg bg-amber-500/5 border border-amber-500/20 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-amber-300 font-medium">
+          待确认字段 · {pendingFields.length}
+        </span>
+        <button
+          onClick={clearPendingFields}
+          disabled={reprocessing}
+          className="text-xs text-gray-500 hover:text-gray-300 transition-colors disabled:opacity-30"
+        >
+          清空
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {pendingFields.map((f) => (
+          <span
+            key={f.tempId}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 text-xs text-amber-200"
+          >
+            <span className="font-medium">{f.name}</span>
+            {f.value && <span className="text-amber-300/70">= {f.value}</span>}
+            <button
+              onClick={() => removePendingField(f.tempId)}
+              disabled={reprocessing}
+              className="hover:text-red-300 disabled:opacity-30"
+              title="移除"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        ))}
+      </div>
+      <button
+        onClick={confirmPendingFields}
+        disabled={reprocessing}
+        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
+      >
+        {reprocessing ? (
+          <>
+            <Loader2 className="w-4 h-4 animate-spin" />
+            AI 识别中...
+          </>
+        ) : (
+          <>
+            <Sparkles className="w-4 h-4" />
+            确认并 AI 识别
+          </>
+        )}
+      </button>
     </div>
   )
 }
@@ -303,8 +410,9 @@ function NewFieldRow({ onCancel, onSave }: { onCancel: () => void; onSave: (name
 function FieldsView() {
   const {
     annotations, processingResults, hoveredFieldId, setHoveredFieldId,
-    documentInfo, addAnnotation, removeAnnotation, updateFieldValue,
+    documentInfo, removeAnnotation, updateFieldValue,
     saveAnnotation, deleteAnnotationRemote,
+    addPendingField, drawingFieldId, setDrawingFieldId,
   } = useWorkspaceStore()
   const resultMap = new Map(processingResults.map((r) => [r.annotationId, r]))
 
@@ -364,75 +472,47 @@ function FieldsView() {
     toast.success('字段已删除')
   }, [docId, removeAnnotation, deleteAnnotationRemote])
 
-  const handleAddField = useCallback(async (name: string, value: string) => {
-    const id = `manual-${Date.now()}`
-    const newAnn: Annotation = {
-      id,
-      label: name,
-      fieldType: 'text',
-      page: 1,
-      boundingBox: { x: 0, y: 0, width: 0, height: 0 },
-      value,
-      isManual: true,
-    }
-    addAnnotation(newAnn)
+  const handleQueueField = useCallback((name: string, value: string) => {
+    addPendingField(name, value)
+    toast.info(value ? `已暂存：${name} = ${value}` : `已暂存：${name}`)
+  }, [addPendingField])
 
-    // Also add a ProcessingResult entry so it shows up properly
-    useWorkspaceStore.setState((state) => ({
-      processingResults: [
-        ...state.processingResults,
-        { annotationId: id, value, confidence: 0 },
-      ],
-    }))
-
-    setAddingField(false)
-
-    // Persist to backend
-    if (docId) {
-      try {
-        const res = await createAnnotation(docId, {
-          field_name: name,
-          field_value: value,
-          field_type: 'string',
-          source: 'manual',
-        })
-        // Update the ID to match backend
-        const backendId = res.data?.id
-        if (backendId) {
-          useWorkspaceStore.setState((state) => ({
-            annotations: state.annotations.map((a) =>
-              a.id === id ? { ...a, id: backendId } : a,
-            ),
-            processingResults: state.processingResults.map((r) =>
-              r.annotationId === id ? { ...r, annotationId: backendId } : r,
-            ),
-          }))
-        }
-        toast.success(`字段 "${name}" 已添加`)
-      } catch {
-        toast.error('添加字段失败')
-      }
-    }
-  }, [docId, addAnnotation])
+  const handleStartDrawing = useCallback((id: string) => {
+    setDrawingFieldId(id)
+    toast.info('在左侧文档上拖拽画框，按 Esc 取消')
+  }, [setDrawingFieldId])
 
   return (
     <div className="flex-1 overflow-auto p-4 space-y-4">
-      {/* Add field bar */}
-      <button
-        onClick={() => setAddingField(true)}
-        className="flex items-center gap-2 px-3 py-1.5 text-sm text-purple-400 bg-purple-500/10 border border-purple-500/20 rounded-md hover:bg-purple-500/20 transition-colors w-full justify-center"
-      >
-        <Plus className="w-4 h-4" />
-        添加识别字段
-      </button>
+      {/* Add field + Skill bar */}
+      <div className="flex gap-2">
+        <button
+          onClick={() => setAddingField(true)}
+          className="flex-1 flex items-center gap-2 px-3 py-1.5 text-sm text-purple-400 bg-purple-500/10 border border-purple-500/20 rounded-md hover:bg-purple-500/20 transition-colors justify-center"
+        >
+          <Plus className="w-4 h-4" />
+          添加识别字段
+        </button>
+        <button
+          onClick={() => toast.info('Skill 功能即将上线 (Coming Soon)')}
+          className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-400 bg-white/5 border border-white/10 rounded-md hover:bg-white/10 hover:text-purple-300 transition-colors"
+          title="挂载可复用的 OCR 技能（Coming Soon）"
+        >
+          <Plus className="w-4 h-4" />
+          Skill
+        </button>
+      </div>
 
-      {/* Inline new field form */}
+      {/* Inline new field row (queues; stays open for multiple entries) */}
       {addingField && (
         <NewFieldRow
-          onCancel={() => setAddingField(false)}
-          onSave={handleAddField}
+          onAdd={handleQueueField}
+          onClose={() => setAddingField(false)}
         />
       )}
+
+      {/* Pending fields + confirm button */}
+      <PendingFieldsBar />
 
       {/* Basic info section */}
       <div className="bg-[#2a2a32] rounded-lg border border-white/5 overflow-hidden">
@@ -469,6 +549,8 @@ function FieldsView() {
                   onSaveValue={handleSaveValue}
                   onSaveType={handleSaveType}
                   onConfirmConfidence={handleConfirmConfidence}
+                  onStartDrawing={handleStartDrawing}
+                  isDrawingThis={drawingFieldId === ann.id}
                 />
               ))
             )}

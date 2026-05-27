@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
-import { Plus, BookTemplate, Settings } from 'lucide-react'
+import { Plus, BookTemplate, Settings, Sparkles } from 'lucide-react'
 import TemplateBrowserModal from './templates/TemplateBrowserModal'
 
 export default function MainLayout() {
@@ -30,6 +30,15 @@ export default function MainLayout() {
           >
             <BookTemplate className="w-4 h-4" />
             订阅模板
+          </button>
+
+          <button
+            onClick={() => navigate('/settings/ocr-optimizer')}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+            title="查看 OCR Prompt 优化器所有字段"
+          >
+            <Sparkles className="w-4 h-4" />
+            OCR 优化器
           </button>
 
           <button

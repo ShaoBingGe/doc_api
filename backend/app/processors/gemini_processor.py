@@ -45,7 +45,7 @@ class GeminiLMModelParams(BaseModel):
 class GeminiProcessor(DocumentProcessor):
     """Gemini-based document processor."""
 
-    def __init__(self, model_name: str = "gemini-2.5-flash"):
+    def __init__(self, model_name: str = "gemini-3.1-pro-preview"):
         if not GEMINI_AVAILABLE:
             raise ImportError("google-genai package is required for GeminiProcessor")
 
@@ -168,9 +168,11 @@ class GeminiProcessor(DocumentProcessor):
         if merged.get("response_schema"):
             merged["response_schema"] = self._normalize_schema(merged["response_schema"])
 
-        # Set default thinking_config if not provided
+        # Set default thinking_config if not provided.
+        # Gemini 3.x requires thinking mode (budget > 0); use -1 for auto/dynamic.
+        # Older 2.x models accept budget=0 (off) but auto also works.
         if "thinking_config" not in merged:
-            merged["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+            merged["thinking_config"] = types.ThinkingConfig(thinking_budget=-1)
 
         param_config = GeminiLMModelParams(**merged).model_dump(exclude_none=True)
         param_config["system_instruction"] = [types.Part.from_text(text=instruction)]
