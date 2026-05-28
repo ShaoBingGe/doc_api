@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Copy, Download, Code2 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useWorkspaceStore, type Annotation, type ProcessingResult } from '../../stores/workspace-store'
@@ -13,7 +13,9 @@ function JsonLine({
   isLast = false,
   isNumber = false,
   hoveredFieldId,
+  selectedFieldId,
   onHover,
+  onSelect,
 }: {
   annotationId?: string
   indent: number
@@ -22,18 +24,47 @@ function JsonLine({
   isLast?: boolean
   isNumber?: boolean
   hoveredFieldId: string | null
+  selectedFieldId: string | null
   onHover: (id: string | null) => void
+  onSelect: (id: string | null) => void
 }) {
   const isHovered = annotationId ? hoveredFieldId === annotationId : false
+  const isSelected = annotationId ? selectedFieldId === annotationId : false
+
+  // Single click = preview only (highlight middle column). Double click = commit
+  // focus (drive zoom on left image + select in middle). React fires onClick on
+  // both clicks of a double click, so guard with a small delay.
+  const clickTimerRef = useRef<number | null>(null)
+
+  const handleClick = () => {
+    if (!annotationId) return
+    if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current)
+    clickTimerRef.current = window.setTimeout(() => {
+      onHover(annotationId)
+      clickTimerRef.current = null
+    }, 220)
+  }
+
+  const handleDoubleClick = () => {
+    if (!annotationId) return
+    if (clickTimerRef.current) {
+      window.clearTimeout(clickTimerRef.current)
+      clickTimerRef.current = null
+    }
+    onSelect(isSelected ? null : annotationId)
+  }
 
   return (
     <div
       className={cn(
-        'font-mono text-sm py-0.5 px-4 -mx-4 cursor-default transition-colors',
-        isHovered ? 'bg-purple-500/30' : 'hover:bg-white/5',
+        'font-mono text-sm py-0.5 px-4 -mx-4 cursor-pointer transition-colors',
+        isSelected ? 'bg-purple-500/40' : isHovered ? 'bg-purple-500/30' : 'hover:bg-white/5',
       )}
       onMouseEnter={() => annotationId && onHover(annotationId)}
       onMouseLeave={() => annotationId && onHover(null)}
+      onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
+      title="单击预览 · 双击聚焦到图像"
       style={{ paddingLeft: `${indent * 1.5 + 1}rem` }}
     >
       <span className="text-blue-400">&quot;{keyName}&quot;</span>
@@ -80,6 +111,8 @@ export default function DarkJsonViewer() {
     processingResults,
     hoveredFieldId,
     setHoveredFieldId,
+    selectedFieldId,
+    setSelectedFieldId,
     apiDefinition,
   } = useWorkspaceStore()
 
@@ -167,7 +200,9 @@ export default function DarkJsonViewer() {
                   isNumber={line.isNumber}
                   isLast={idx === lines.length - 1}
                   hoveredFieldId={hoveredFieldId}
+                  selectedFieldId={selectedFieldId}
                   onHover={setHoveredFieldId}
+                  onSelect={setSelectedFieldId}
                 />
               ))}
               <div className="font-mono text-sm text-gray-400 py-0.5">{'}'}</div>

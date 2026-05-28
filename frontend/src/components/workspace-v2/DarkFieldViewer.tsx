@@ -338,7 +338,7 @@ function FieldRow({
                 ? 'opacity-100 text-purple-400 bg-purple-500/20'
                 : 'opacity-0 group-hover:opacity-100 text-gray-500 hover:text-purple-400 hover:bg-purple-500/10',
             )}
-            title="在文档上画框标注此字段位置"
+            title="在文档上点击标注此字段位置"
           >
             <Square className="w-3.5 h-3.5" />
           </button>
@@ -713,7 +713,7 @@ function FieldsView() {
 
   const handleStartDrawing = useCallback((id: string) => {
     setDrawingFieldId(id)
-    toast.info('在左侧文档上拖拽画框，按 Esc 取消')
+    toast.info('在左侧文档上点击字段位置，按 Esc 取消')
   }, [setDrawingFieldId])
 
   return (

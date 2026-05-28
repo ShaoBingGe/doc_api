@@ -8,150 +8,72 @@ import { useWorkspaceStore, type Annotation, type ProcessingResult } from '../..
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
 
-// ─── Bbox overlay for dark theme ─────────────────────────────────────────────
+// ─── Anchor point overlay ────────────────────────────────────────────────────
+//
+// Each field is shown as a single point (the center of its stored bbox). No
+// rectangle, no resize handle — the LLM is only expected to localize a center
+// position for each field. The bbox shape stays in the data model for legacy
+// compatibility, but its width/height are no longer rendered.
 
-interface BboxLayerProps {
+interface AnchorLayerProps {
   annotations: Annotation[]
   results: ProcessingResult[]
   selectedFieldId: string | null
   hoveredFieldId: string | null
   onSelect: (id: string | null) => void
   onHover: (id: string | null) => void
-  onUpdateBbox: (id: string, bbox: Annotation['boundingBox']) => void
 }
 
-function BboxLayer({ annotations, results, selectedFieldId, hoveredFieldId, onSelect, onHover, onUpdateBbox }: BboxLayerProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const dragState = useRef<{
-    type: 'move' | 'resize'
-    annotationId: string
-    startX: number
-    startY: number
-    origBbox: Annotation['boundingBox']
-  } | null>(null)
-  const [isDragging, setIsDragging] = useState(false)
-
+function AnchorLayer({ annotations, results, selectedFieldId, hoveredFieldId, onSelect, onHover }: AnchorLayerProps) {
   const resultMap = new Map(results.map((r) => [r.annotationId, r]))
 
-  const startDrag = useCallback(
-    (e: React.MouseEvent, ann: Annotation, type: 'move' | 'resize') => {
-      e.preventDefault()
-      dragState.current = {
-        type,
-        annotationId: ann.id,
-        startX: e.clientX,
-        startY: e.clientY,
-        origBbox: { ...ann.boundingBox },
-      }
-      setIsDragging(true)
-    },
-    [],
-  )
-
-  useEffect(() => {
-    if (!isDragging) return
-
-    const handleMove = (e: MouseEvent) => {
-      if (!dragState.current || !containerRef.current) return
-      const { type, annotationId, startX, startY, origBbox } = dragState.current
-      const rect = containerRef.current.getBoundingClientRect()
-      const dx = ((e.clientX - startX) / rect.width) * 100
-      const dy = ((e.clientY - startY) / rect.height) * 100
-
-      if (type === 'move') {
-        onUpdateBbox(annotationId, {
-          ...origBbox,
-          x: Math.max(0, Math.min(100 - origBbox.width, origBbox.x + dx)),
-          y: Math.max(0, Math.min(100 - origBbox.height, origBbox.y + dy)),
-        })
-      } else {
-        onUpdateBbox(annotationId, {
-          ...origBbox,
-          width: Math.max(5, origBbox.width + dx),
-          height: Math.max(2, origBbox.height + dy),
-        })
-      }
-    }
-
-    const handleUp = () => {
-      dragState.current = null
-      setIsDragging(false)
-    }
-
-    document.addEventListener('mousemove', handleMove)
-    document.addEventListener('mouseup', handleUp)
-    return () => {
-      document.removeEventListener('mousemove', handleMove)
-      document.removeEventListener('mouseup', handleUp)
-    }
-  }, [isDragging, onUpdateBbox])
-
   return (
-    <div ref={containerRef} className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
+    <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
       {annotations.map((ann) => {
         const result = resultMap.get(ann.id)
         const confidence = result?.confidence ?? -1
         const isSelected = ann.id === selectedFieldId
         const isHovered = ann.id === hoveredFieldId
         const { x, y, width, height } = ann.boundingBox
+        const cx = x + width / 2
+        const cy = y + height / 2
 
-        let borderColor = 'border-emerald-500'
-        let labelBg = 'bg-emerald-500'
-        if (confidence < 90) {
-          borderColor = 'border-red-500'
-          labelBg = 'bg-red-500'
-        } else if (confidence < 95) {
-          borderColor = 'border-amber-500'
-          labelBg = 'bg-amber-500'
-        }
+        let dotColor = 'bg-emerald-500'
+        if (confidence < 90) dotColor = 'bg-red-500'
+        else if (confidence < 95) dotColor = 'bg-amber-500'
+
+        const active = isSelected || isHovered
 
         return (
           <div
             key={ann.id}
-            className={cn(
-              'absolute border-2 pointer-events-auto transition-all duration-150',
-              isSelected || isHovered
-                ? 'border-purple-500 bg-purple-500/20 ring-2 ring-purple-500/50'
-                : `${borderColor} hover:bg-white/10`,
-            )}
+            className="absolute pointer-events-auto"
             style={{
-              left: `${x}%`,
-              top: `${y}%`,
-              width: `${width}%`,
-              height: `${height}%`,
-              cursor: isSelected ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
-              transition: isDragging && isSelected ? 'none' : undefined,
+              left: `${cx}%`,
+              top: `${cy}%`,
+              transform: 'translate(-50%, -50%)',
             }}
             onClick={(e) => {
               e.stopPropagation()
-              if (!isDragging) onSelect(isSelected ? null : ann.id)
+              onSelect(isSelected ? null : ann.id)
             }}
             onMouseEnter={() => onHover(ann.id)}
             onMouseLeave={() => onHover(null)}
-            onMouseDown={(e) => {
-              if (isSelected) startDrag(e, ann, 'move')
-            }}
           >
-            {/* Label tag */}
+            {/* Dot */}
             <div
               className={cn(
-                'absolute -top-5 left-0 px-1.5 py-0.5 text-[9px] font-semibold text-white leading-none rounded-t whitespace-nowrap max-w-[120px] overflow-hidden text-ellipsis',
-                isSelected || isHovered ? 'bg-purple-500' : labelBg,
+                'rounded-full cursor-pointer transition-all duration-150',
+                active
+                  ? 'w-3 h-3 bg-purple-500 ring-2 ring-purple-300/70 shadow-[0_0_8px_rgba(168,85,247,0.7)]'
+                  : `w-2 h-2 ${dotColor} hover:scale-150`,
               )}
-            >
-              {ann.label}
-            </div>
-
-            {/* Resize handle */}
-            {isSelected && (
-              <div
-                className="absolute bottom-0 right-0 w-2 h-2 bg-purple-500 cursor-nwse-resize rounded-sm"
-                style={{ transform: 'translate(50%, 50%)' }}
-                onMouseDown={(e) => {
-                  e.stopPropagation()
-                  startDrag(e, ann, 'resize')
-                }}
-              />
+            />
+            {/* Label tag — only visible when active (selected or hovered) */}
+            {active && (
+              <div className="absolute left-1/2 top-4 -translate-x-1/2 px-1.5 py-0.5 text-[9px] font-semibold text-white leading-none rounded bg-purple-500 whitespace-nowrap max-w-[140px] overflow-hidden text-ellipsis shadow-lg">
+                {ann.label}
+              </div>
             )}
           </div>
         )
@@ -162,53 +84,27 @@ function BboxLayer({ annotations, results, selectedFieldId, hoveredFieldId, onSe
 
 // ─── Main component ──────────────────────────────────────────────────────────
 
-// ─── Drawing overlay (active when drawingFieldId is set) ─────────────────────
+// ─── Click-to-place overlay (active when drawingFieldId is set) ──────────────
+//
+// Replaces the legacy drag-a-rectangle flow: the user clicks once at the
+// field's location on the document, and we commit a zero-size bbox centered
+// on that point (so the focus zoom can re-target it).
 
-interface DrawingOverlayProps {
+interface PlacePointOverlayProps {
   fieldLabel: string
   onCommit: (bbox: { x: number; y: number; width: number; height: number }) => void
   onCancel: () => void
 }
 
-function DrawingOverlay({ fieldLabel, onCommit, onCancel }: DrawingOverlayProps) {
+function PlacePointOverlay({ fieldLabel, onCommit, onCancel }: PlacePointOverlayProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [rect, setRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
-  const startRef = useRef<{ x: number; y: number } | null>(null)
 
-  const onMouseDown = (e: React.MouseEvent) => {
+  const handleClick = (e: React.MouseEvent) => {
     if (!containerRef.current) return
     const r = containerRef.current.getBoundingClientRect()
     const x = ((e.clientX - r.left) / r.width) * 100
     const y = ((e.clientY - r.top) / r.height) * 100
-    startRef.current = { x, y }
-    setRect({ x, y, w: 0, h: 0 })
-  }
-
-  const onMouseMove = (e: React.MouseEvent) => {
-    if (!startRef.current || !containerRef.current) return
-    const r = containerRef.current.getBoundingClientRect()
-    const x2 = ((e.clientX - r.left) / r.width) * 100
-    const y2 = ((e.clientY - r.top) / r.height) * 100
-    const { x: x1, y: y1 } = startRef.current
-    setRect({
-      x: Math.min(x1, x2),
-      y: Math.min(y1, y2),
-      w: Math.abs(x2 - x1),
-      h: Math.abs(y2 - y1),
-    })
-  }
-
-  const onMouseUp = () => {
-    if (rect && rect.w > 1 && rect.h > 1) {
-      onCommit({
-        x: Math.max(0, Math.min(100, rect.x)),
-        y: Math.max(0, Math.min(100, rect.y)),
-        width: Math.max(1, Math.min(100 - rect.x, rect.w)),
-        height: Math.max(1, Math.min(100 - rect.y, rect.h)),
-      })
-    }
-    startRef.current = null
-    setRect(null)
+    onCommit({ x, y, width: 0, height: 0 })
   }
 
   return (
@@ -216,28 +112,11 @@ function DrawingOverlay({ fieldLabel, onCommit, onCancel }: DrawingOverlayProps)
       ref={containerRef}
       className="absolute inset-0 cursor-crosshair"
       style={{ zIndex: 30 }}
-      onMouseDown={onMouseDown}
-      onMouseMove={onMouseMove}
-      onMouseUp={onMouseUp}
-      onMouseLeave={() => { startRef.current = null; setRect(null) }}
+      onClick={handleClick}
     >
-      {/* Hint banner */}
       <div className="absolute top-2 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-purple-600 text-white text-xs font-medium shadow-lg pointer-events-none z-10 whitespace-nowrap">
-        正在为 "{fieldLabel}" 画框 · 拖拽选择区域，Esc 取消
+        正在为 "{fieldLabel}" 标记位置 · 单击文档上的字段中心，Esc 取消
       </div>
-      {/* Live preview rectangle */}
-      {rect && (
-        <div
-          className="absolute border-2 border-purple-400 bg-purple-500/20 pointer-events-none"
-          style={{
-            left: `${rect.x}%`,
-            top: `${rect.y}%`,
-            width: `${rect.w}%`,
-            height: `${rect.h}%`,
-          }}
-        />
-      )}
-      {/* Hidden cancel hotkey hint trigger */}
       <button
         onClick={(e) => { e.stopPropagation(); onCancel() }}
         onMouseDown={(e) => e.stopPropagation()}
@@ -277,7 +156,6 @@ export default function DarkDocumentViewer() {
     hoveredFieldId,
     setSelectedFieldId,
     setHoveredFieldId,
-    updateFieldBbox,
     drawingFieldId,
     setDrawingFieldId,
     commitDrawingBbox,
@@ -475,19 +353,18 @@ export default function DarkDocumentViewer() {
                   style={{ width: pageWidth }}
                   draggable={false}
                 />
-                <BboxLayer
+                <AnchorLayer
                   annotations={visibleAnnotations}
                   results={processingResults}
                   selectedFieldId={selectedFieldId}
                   hoveredFieldId={hoveredFieldId}
                   onSelect={setSelectedFieldId}
                   onHover={setHoveredFieldId}
-                  onUpdateBbox={updateFieldBbox}
                 />
                 {drawingAnn && (
-                  <DrawingOverlay
+                  <PlacePointOverlay
                     fieldLabel={drawingAnn.label}
-                    onCommit={(bbox) => commitDrawingBbox(drawingAnn.id, { ...bbox, })}
+                    onCommit={(bbox) => commitDrawingBbox(drawingAnn.id, bbox)}
                     onCancel={() => setDrawingFieldId(null)}
                   />
                 )}
@@ -514,17 +391,16 @@ export default function DarkDocumentViewer() {
                 >
                   <div className="relative">
                     <Page pageNumber={page} width={pageWidth} />
-                    <BboxLayer
+                    <AnchorLayer
                       annotations={visibleAnnotations}
                       results={processingResults}
                       selectedFieldId={selectedFieldId}
                       hoveredFieldId={hoveredFieldId}
                       onSelect={setSelectedFieldId}
                       onHover={setHoveredFieldId}
-                      onUpdateBbox={updateFieldBbox}
                     />
                     {drawingAnn && (
-                      <DrawingOverlay
+                      <PlacePointOverlay
                         fieldLabel={drawingAnn.label}
                         onCommit={(bbox) => commitDrawingBbox(drawingAnn.id, bbox)}
                         onCancel={() => setDrawingFieldId(null)}
