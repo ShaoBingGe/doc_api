@@ -102,6 +102,35 @@ def _schema_from_conversation(db: Session, conversation_id: uuid.UUID) -> dict |
 
 # ── List ──────────────────────────────────────────────────────────────────────
 
+_PLACEHOLDER_TTL_DAYS = 7
+
+
+def _gc_stale_placeholders(db: Session) -> None:
+    """Lazy GC: delete pending_first_doc rows older than _PLACEHOLDER_TTL_DAYS.
+
+    Called at the head of list_api_definitions. Failures are swallowed so a
+    GC hiccup never blocks the list response.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_PLACEHOLDER_TTL_DAYS)
+    try:
+        stale = (
+            db.query(ApiDefinition)
+            .filter(
+                ApiDefinition.status == ApiDefinitionStatus.pending_first_doc.value,
+                ApiDefinition.updated_at < cutoff,
+            )
+            .all()
+        )
+        for row in stale:
+            db.delete(row)
+        if stale:
+            db.commit()
+    except Exception:
+        db.rollback()
+
+
 def list_api_definitions(
     db: Session,
     *,
@@ -109,10 +138,16 @@ def list_api_definitions(
     page_size: int = 20,
     status_filter: str | None = None,
     search: str | None = None,
+    include_pending: bool = False,
 ) -> PaginatedResponse[ApiDefinitionResponse]:
+    _gc_stale_placeholders(db)
+
     q = db.query(ApiDefinition)
     if status_filter:
         q = q.filter(ApiDefinition.status == status_filter)
+    elif not include_pending:
+        # Hide placeholder APIs from the default list view (see design §16.3)
+        q = q.filter(ApiDefinition.status != ApiDefinitionStatus.pending_first_doc.value)
     if search:
         pattern = f"%{search}%"
         q = q.filter(
@@ -248,28 +283,26 @@ def add_sample_document(
     file_data: bytes,
     content_type: str | None,
 ):
-    """Upload a file and append the new Document.id to config.sample_document_ids."""
-    from sqlalchemy.orm.attributes import flag_modified
+    """Upload a file, bind it to the API, run OCR using the API's active prompt,
+    and append the new Document.id to config.sample_document_ids."""
+    from app.services.document_service import (
+        bind_to_api_and_extract,
+        upload_document,
+    )
 
-    from app.services.document_service import upload_document
-
-    api_def = _get_or_404(db, api_def_id)
+    _get_or_404(db, api_def_id)  # 404 guard
     doc = upload_document(
         db,
         filename=filename,
         file_data=file_data,
         content_type=content_type,
+        api_definition_id=api_def_id,
     )
-
-    cfg = dict(api_def.config or {})
-    ids: list[str] = list(cfg.get("sample_document_ids") or [])
-    if str(doc.id) not in ids:
-        ids.append(str(doc.id))
-        cfg["sample_document_ids"] = ids
-        api_def.config = cfg
-        flag_modified(api_def, "config")
-        db.commit()
-        db.refresh(api_def)
+    # Trigger OCR using the API's active OcrPromptVersion.composed_prompt
+    # (§6.4 country-template flow). This also appends doc.id to
+    # config.sample_document_ids; nothing more for us to do here.
+    bind_to_api_and_extract(db, doc, api_def_id)
+    db.refresh(doc)
     return doc
 
 

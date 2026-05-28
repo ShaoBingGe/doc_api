@@ -48,10 +48,19 @@ def list_api_definitions(
     page_size: int = Query(default=20, ge=1, le=100),
     status_filter: str | None = Query(default=None, alias="status"),
     search: str | None = Query(default=None),
+    include_pending: bool = Query(
+        default=False,
+        description="是否包含 pending_first_doc 占位 API（默认 false；§6.4）",
+    ),
     db: Session = Depends(get_db),
 ) -> PaginatedResponse[ApiDefinitionResponse]:
     return svc.list_api_definitions(
-        db, page=page, page_size=page_size, status_filter=status_filter, search=search
+        db,
+        page=page,
+        page_size=page_size,
+        status_filter=status_filter,
+        search=search,
+        include_pending=include_pending,
     )
 
 

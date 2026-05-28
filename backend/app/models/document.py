@@ -54,6 +54,14 @@ class Document(UUIDMixin, TimestampMixin, Base):
         String(128), nullable=True, comment="Default processor configuration key for this document"
     )
 
+    # ── api binding ────────────────────────────────────────────────────────
+    # Set when the document is uploaded through an existing ApiDefinition workflow
+    # (e.g. §6.4 country-template flow). reprocess_document uses this to pull
+    # the active OcrPromptVersion.composed_prompt when no explicit prompt is given.
+    api_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        nullable=True, index=True, comment="FK → api_definitions.id (no constraint to avoid circular)"
+    )
+
     # ── processing state ───────────────────────────────────────────────────
     status: Mapped[str] = mapped_column(
         String(32),

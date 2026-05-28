@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -15,6 +15,7 @@ import {
   X,
   Loader2,
   Sparkles,
+  Table as TableIcon,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useWorkspaceStore, type Annotation, type ProcessingResult } from '../../stores/workspace-store'
@@ -25,6 +26,63 @@ const LOW_CONFIDENCE_THRESHOLD = 85
 type ViewTab = 'fields' | 'rules' | 'stats'
 
 const FIELD_TYPES = ['text', 'number', 'date', 'boolean', 'array'] as const
+
+// ─── Array detection ────────────────────────────────────────────────────────
+//
+// The store flattens nested structured_data into labels like
+// `detailOfGoodsOrServices[0].articleName`. To render the array as a table we
+// match this pattern and bucket annotations by their array path + index.
+
+const ARRAY_LABEL_RE = /^(.*?)\[(\d+)\](?:\.(.+))?$/
+
+interface ArrayCell {
+  annotation: Annotation
+  result?: ProcessingResult
+}
+
+interface ArrayGroup {
+  /** Path of the array itself, e.g. "detailOfGoodsOrServices" or "items[0].nested" */
+  arrayPath: string
+  /** Column keys in first-appearance order across all rows */
+  columns: string[]
+  /** Row index → column key → cell */
+  rows: Map<number, Map<string, ArrayCell>>
+}
+
+function groupAnnotations(
+  annotations: Annotation[],
+  resultMap: Map<string, ProcessingResult>,
+): { scalars: Annotation[]; arrays: ArrayGroup[] } {
+  const scalars: Annotation[] = []
+  const arraysByPath = new Map<string, ArrayGroup>()
+
+  for (const ann of annotations) {
+    const m = ann.label.match(ARRAY_LABEL_RE)
+    if (!m) {
+      scalars.push(ann)
+      continue
+    }
+    const [, arrayPath, idxStr, fieldName] = m
+    const idx = Number(idxStr)
+    const colKey = fieldName ?? '(value)'
+
+    let group = arraysByPath.get(arrayPath)
+    if (!group) {
+      group = { arrayPath, columns: [], rows: new Map() }
+      arraysByPath.set(arrayPath, group)
+    }
+    if (!group.columns.includes(colKey)) group.columns.push(colKey)
+
+    let row = group.rows.get(idx)
+    if (!row) {
+      row = new Map()
+      group.rows.set(idx, row)
+    }
+    row.set(colKey, { annotation: ann, result: resultMap.get(ann.id) })
+  }
+
+  return { scalars, arrays: Array.from(arraysByPath.values()) }
+}
 
 // ─── Editable cell ───────────────────────────────────────────────────────────
 
@@ -154,7 +212,9 @@ function FieldRow({
   annotation,
   result,
   isHovered,
+  isSelected,
   onHover,
+  onSelect,
   onDeleteField,
   onSaveLabel,
   onSaveValue,
@@ -166,7 +226,9 @@ function FieldRow({
   annotation: Annotation
   result?: ProcessingResult
   isHovered: boolean
+  isSelected: boolean
   onHover: (id: string | null) => void
+  onSelect: (id: string | null) => void
   onDeleteField: (id: string) => void
   onSaveLabel: (id: string, label: string) => void
   onSaveValue: (id: string, value: string) => void
@@ -184,9 +246,14 @@ function FieldRow({
   return (
     <div
       className={cn(
-        'group flex items-center justify-between py-2 px-3 -mx-3 rounded cursor-default transition-colors',
-        isHovered ? 'bg-purple-500/20' : 'hover:bg-white/5',
+        'group flex items-center justify-between py-2 px-3 -mx-3 rounded cursor-pointer transition-colors',
+        isSelected
+          ? 'bg-purple-500/30 ring-1 ring-purple-500/40'
+          : isHovered
+          ? 'bg-purple-500/20'
+          : 'hover:bg-white/5',
       )}
+      onClick={() => onSelect(isSelected ? null : annotation.id)}
       onMouseEnter={() => onHover(annotation.id)}
       onMouseLeave={() => onHover(null)}
     >
@@ -343,6 +410,162 @@ function NewFieldRow({
   )
 }
 
+// ─── Array table (renders detailOfGoodsOrServices etc.) ────────────────────
+
+function ArrayTable({
+  group,
+  hoveredFieldId,
+  selectedFieldId,
+  onHover,
+  onSelect,
+  onSaveValue,
+}: {
+  group: ArrayGroup
+  hoveredFieldId: string | null
+  selectedFieldId: string | null
+  onHover: (id: string | null) => void
+  onSelect: (id: string | null) => void
+  onSaveValue: (id: string, value: string) => void
+}) {
+  const [expanded, setExpanded] = useState(true)
+  const sortedIndices = useMemo(
+    () => Array.from(group.rows.keys()).sort((a, b) => a - b),
+    [group.rows],
+  )
+
+  return (
+    <div className="bg-[#2a2a32] rounded-lg border border-white/5 overflow-hidden">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center justify-between p-3 bg-white/5 hover:bg-white/10 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 rounded bg-cyan-500/20 flex items-center justify-center text-cyan-400">
+            <TableIcon className="w-3.5 h-3.5" />
+          </div>
+          <span className="text-sm font-medium text-gray-200">
+            {group.arrayPath || '明细'}
+          </span>
+          <span className="text-xs text-gray-500 ml-2">
+            {sortedIndices.length} 行 · {group.columns.length} 列
+          </span>
+        </div>
+        {expanded ? (
+          <ChevronDown className="w-4 h-4 text-gray-500" />
+        ) : (
+          <ChevronRight className="w-4 h-4 text-gray-500" />
+        )}
+      </button>
+
+      {expanded && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="bg-[#1e1e24] text-gray-400">
+                <th className="px-2 py-2 text-left font-medium border-b border-white/10 sticky left-0 bg-[#1e1e24] z-10 w-8">
+                  #
+                </th>
+                {group.columns.map((col) => (
+                  <th
+                    key={col}
+                    className="px-2 py-2 text-left font-medium border-b border-white/10 whitespace-nowrap"
+                  >
+                    {col}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedIndices.map((idx) => {
+                const row = group.rows.get(idx)!
+                return (
+                  <tr
+                    key={idx}
+                    className="hover:bg-white/5 transition-colors"
+                  >
+                    <td className="px-2 py-1.5 text-gray-500 border-b border-white/5 sticky left-0 bg-[#2a2a32] z-10">
+                      {idx + 1}
+                    </td>
+                    {group.columns.map((col) => {
+                      const cell = row.get(col)
+                      if (!cell) {
+                        return (
+                          <td
+                            key={col}
+                            className="px-2 py-1.5 text-gray-700 border-b border-white/5"
+                          >
+                            —
+                          </td>
+                        )
+                      }
+                      const { annotation, result } = cell
+                      const value = result?.value ?? annotation.value ?? ''
+                      const confidence = result?.confidence ?? 0
+                      const isLow = confidence < LOW_CONFIDENCE_THRESHOLD
+                      const isHovered = hoveredFieldId === annotation.id
+                      const isSelected = selectedFieldId === annotation.id
+                      return (
+                        <td
+                          key={col}
+                          className={cn(
+                            'px-2 py-1.5 border-b border-white/5 cursor-pointer transition-colors',
+                            isSelected
+                              ? 'bg-purple-500/30'
+                              : isHovered
+                              ? 'bg-purple-500/15'
+                              : '',
+                          )}
+                          onMouseEnter={() => onHover(annotation.id)}
+                          onMouseLeave={() => onHover(null)}
+                          onClick={() =>
+                            onSelect(isSelected ? null : annotation.id)
+                          }
+                          title={`置信度 ${Math.round(confidence)}%`}
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <div
+                              className={cn(
+                                'flex-1 min-w-0 max-w-[180px] truncate',
+                                isLow ? 'text-amber-300' : 'text-gray-200',
+                              )}
+                              onDoubleClick={(e) => {
+                                e.stopPropagation()
+                                const next = window.prompt(
+                                  `编辑 ${col}`,
+                                  value === null || value === undefined
+                                    ? ''
+                                    : String(value),
+                                )
+                                if (next !== null) onSaveValue(annotation.id, next)
+                              }}
+                              title="双击编辑"
+                            >
+                              {value === null ||
+                              value === undefined ||
+                              value === ''
+                                ? <span className="text-gray-600">—</span>
+                                : String(value)}
+                            </div>
+                            {isLow && (
+                              <span className="flex-shrink-0 text-[10px] text-amber-400">
+                                {Math.round(confidence)}%
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Pending fields list + confirm button ───────────────────────────────────
 
 function PendingFieldsBar() {
@@ -410,11 +633,22 @@ function PendingFieldsBar() {
 function FieldsView() {
   const {
     annotations, processingResults, hoveredFieldId, setHoveredFieldId,
+    selectedFieldId, setSelectedFieldId,
     documentInfo, removeAnnotation, updateFieldValue,
     saveAnnotation, deleteAnnotationRemote,
     addPendingField, drawingFieldId, setDrawingFieldId,
   } = useWorkspaceStore()
-  const resultMap = new Map(processingResults.map((r) => [r.annotationId, r]))
+  const resultMap = useMemo(
+    () => new Map(processingResults.map((r) => [r.annotationId, r])),
+    [processingResults],
+  )
+
+  // Bucket annotations: scalars stay in the basic-info list; anything matching
+  // `path[N].field` gets pulled into a per-array table below.
+  const { scalars, arrays } = useMemo(
+    () => groupAnnotations(annotations, resultMap),
+    [annotations, resultMap],
+  )
 
   const [expanded, setExpanded] = useState({ basic: true, summary: true })
   const toggle = (k: keyof typeof expanded) =>
@@ -525,7 +759,7 @@ function FieldsView() {
               <FileText className="w-3.5 h-3.5" />
             </div>
             <span className="text-sm font-medium text-gray-200">基本信息</span>
-            <span className="text-xs text-gray-500 ml-2">{annotations.length} 字段</span>
+            <span className="text-xs text-gray-500 ml-2">{scalars.length} 字段</span>
           </div>
           {expanded.basic
             ? <ChevronDown className="w-4 h-4 text-gray-500" />
@@ -534,16 +768,18 @@ function FieldsView() {
 
         {expanded.basic && (
           <div className="p-3 space-y-1">
-            {annotations.length === 0 ? (
+            {scalars.length === 0 ? (
               <p className="text-xs text-gray-500 text-center py-4">暂无字段，等待文档处理完成</p>
             ) : (
-              annotations.map((ann) => (
+              scalars.map((ann) => (
                 <FieldRow
                   key={ann.id}
                   annotation={ann}
                   result={resultMap.get(ann.id)}
                   isHovered={hoveredFieldId === ann.id}
+                  isSelected={selectedFieldId === ann.id}
                   onHover={setHoveredFieldId}
+                  onSelect={setSelectedFieldId}
                   onDeleteField={handleDeleteField}
                   onSaveLabel={handleSaveLabel}
                   onSaveValue={handleSaveValue}
@@ -557,6 +793,19 @@ function FieldsView() {
           </div>
         )}
       </div>
+
+      {/* Array tables (detailOfGoodsOrServices, detailOfTaxSummary, ...) */}
+      {arrays.map((group) => (
+        <ArrayTable
+          key={group.arrayPath}
+          group={group}
+          hoveredFieldId={hoveredFieldId}
+          selectedFieldId={selectedFieldId}
+          onHover={setHoveredFieldId}
+          onSelect={setSelectedFieldId}
+          onSaveValue={handleSaveValue}
+        />
+      ))}
 
       {/* Summary section */}
       <div className="bg-[#2a2a32] rounded-lg border border-white/5 overflow-hidden">

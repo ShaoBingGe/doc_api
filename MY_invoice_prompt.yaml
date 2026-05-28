@@ -1,0 +1,278 @@
+id: '7_6'
+remark: gemini的 json schema, 使用了 anyof
+structure_prompt_version: '4'
+prompt_template:
+  prompt_format: |-
+    **任务描述：**
+    请识别并提取用户提供的票据信息。文档中可能包含多张不同类型的票据，且部分票据可能跨越多页。
+        
+    **输入说明：**
+    - 用户上传的文档可能是PDF文件或图片文件；
+    - 文档中可能存在排版混乱、印刷不清等情况，请尽可能准确识别关键信息。
+    
+    **处理要求：**
+    1.票据识别：识别文档中的所有票据，一页可能包含多张票据
+    2.跨页处理：对于跨越多页的票据，请合并信息后作为单个完整票据输出
+    3.分类处理：根据票据类型采用不同的提取策略
+    4.结构化输出：以JSON格式输出结果
+    
+    
+    **票据分类标准：**
+    - invoice：正式的付款凭证，通常包含供应商和客户信息、发票号码、日期、税务信息（如增值税号）、付款条款、银行信息、商品或服务详情及总金额。
+      特别说明：以下类型均属于 invoice，即使名称中包含易混淆词汇，也必须优先归类为 invoice：
+      standard invoice、proforma invoice、credit note、debit note、請求書（日语“请求书”）
+      quotation（报价单）：尽管名称为“报价单”，但只要包含供应商/客户信息、商品/服务详情、金额等 invoice 核心要素，即属于 invoice
+      receipt/tax invoice（收据/税务发票）：因包含税务信息（如增值税号），区别于普通 receipt，故属于 invoice
+    - receipt：通常为较小金额的付款凭证，一般不包含详细税务信息，常见于零售交易、餐饮、交通等消费场景。通常包括各种小票、收据、领収書等。此外，标题明确为「支払明細書」的文档归类为 receipt。
+    - other：不符合上述标准的文档，如合同、订单确认书等
+    
+    **提取规则：**
+    - 保持原文：提取内容保留票据原文语言，不进行翻译
+    - 数据格式：
+      - **【强制规则】金额处理必须分两步执行：**
+        - **第一步：识别该票据的币种及其数字格式习惯。** 不同国家/地区对"."和","的含义可能完全相反，必须先判断再处理：
+          - 以"."作为千分位、","作为小数点的格式（常见于越南 VND、部分欧洲国家等）：票面上的 `6.000` 实际值为 **6000**，`1.234.567,89` 实际值为 **1234567.89**
+          - 以","作为千分位、"."作为小数点的格式（常见于 USD、CNY、GBP 等）：票面上的 `6,000` 实际值为 **6000**，`1,234,567.89` 实际值为 **1234567.89**
+          - 判断依据：优先参考票面明确标注的币种符号及国家/地区信息；其次观察票面数字的整体规律（如是否同时出现两种分隔符）。
+        - **第二步：将识别出的实际数值转换为纯数字格式输出**（如：`1234567.89`），严禁在输出中保留任何千分位符号。
+      - 税率以百分比字符串形式输出（如："10%"）
+    - 日期处理规则: 这是一个绝对规则，必须严格遵守。
+      1. **核心原则：年份必须是近期年份**。所有发票的年份 **必须** 大于等于2015年。任何解析出年份小于2015（如2014, 2012, 2006）的结果都是 **绝对错误** 的，决不能输出。
+      2. **解决歧义的强制步骤**: 当你看到一个像 '07-09-24' 这样的日期时，你必须按以下步骤思考来消除歧义：
+         a. **列出可能性**: 这个字符串可能是 YY-MM-DD, MM-DD-YY, 或 DD-MM-YY 格式。
+         b. **应用年份原则进行筛选**:
+            - 如果按 YY-MM-DD 解析，日期是 2007年09月24日。年份是2007，小于2015，所以这个解析 **是错误的，必须抛弃**。
+            - 如果按 MM-DD-YY 解析，日期是 2024年07月09日。年份是2024，大于2015，所以这个解析 **是可能的**。
+            - 如果按 DD-MM-YY 解析，日期是 2024年09月07日。年份是2024，大于2015，所以这个解析 **也是可能的**。
+         c. **最终决策**: 在所有通过“年份原则”筛选的、可能的解析中，选择最合理的一个；
+      3. **输出格式**: 最终所有日期字段都必须统一转换为 YYYY-MM-DD 格式输出。
+    - 必填字段：
+      - invoice/receipt类型：docType、invoiceType、page、currency必须输出。如果票面上没有currency信息，则根据上下文推断。
+      - other类型：仅docType、page必须输出
+    - 缺失信息：无法找到的字段不输出，不进行推断或填充
+    - 税种简称映射：detailOfTaxSummary.taxCategory字段必须使用以下标准简称（如果识别的税种不在此列表中，则使用你识别出的税种名称）：{tax_categories_text}
+    - 必须全面提取票据上出现的所有税种信息，不漏掉任何一种税种
+    - 发票上可能同时存在多种不同的税种（如增值税、预扣税等），需要逐一识别并提取
+    - 注意识别加项税种（如VAT）和减项税种（如WHT、预扣税等）
+    
+  json_schema:
+    title: invoice_and_receipts
+    type: ARRAY
+    items: 
+      anyOf:
+        - type: OBJECT
+          properties:
+            docType:
+              type: STRING
+              description: 票据类型：invoice 或 receipt 
+              enum:
+                - invoice
+                - receipt
+            page:
+              type: ARRAY
+              description: "所在文档中的页码列表（从1开始编号）。注意：一张票据可能跨越多个页面，应将这些连续页码作为一个数组整体输出。例如：票据出现在第2至第4页时，输出为 [2, 3, 4]。"
+              items:
+                type: NUMBER
+            invoiceType:
+              type: STRING
+              description: |-
+                发票类型，分为：
+                  - 'Commercial Invoice' (正式发票)：默认类型，若非 'Proforma Invoice' 或 'Credit Note'，则归为此类。
+                  - 'Proforma Invoice' (形式发票)：如果票面包含 "PROFORMA", "PRO FORMA", "Záloha", "Facture d'Avance", "Prepayment", "Vorkassenrechnung" 等关键词。
+                  - 'Credit Note' (贷项发票)：如果票面包含 "AVOIR", "CREDIT" 等关键词，或 totalAmount < 0。
+                  - 'Tax Invoice' (税务发票)：如果票面包含 "'Tax Invoice", "Faktur Pajak" 等关键词。
+              enum:
+                - Commercial Invoice
+                - Proforma Invoice
+                - Credit Note
+                - Tax Invoice
+            nameOfInvoice:
+              type: STRING
+              description: 票面标题，票面上的标题，如'VAT Invoice'、'Debit Note'等。
+            invoiceNumber:
+              type: STRING
+              description: |-
+                发票号码或收据编号。
+                通用规则：如果找不到，则查找票面的 'Invoice No'、'請求書番号'、'ご請求番号'、'ﾚシートNo'、'発券No'、'伝票番号'、'No.'、'No'。
+                马来西亚发票补充规则：可查找 "Invoice No"、"No."、"INVOICE NO:"、"E INV NO"；典型格式如 PT-148862、S-25/10-0059、INV13398、IN2601/1024、25FC011847；严禁将 Sales Tax No 或 SST ID 提取为发票号。
+            invoiceCode:
+              type: STRING
+              description: 发票类型代码，如果没有发票类型代码信息, 则查找发票序列号、'Serial'、'Ký hiệu'、'Ký hiệu(Serial)'。'Mã CQT(Code)'不是发票类型代码。
+            invoiceDate:
+              type: STRING
+              description: 发票发行日期。
+            totalNetAmount:
+              type: NUMBER
+              description: |-
+                全票不含税总净额。
+                注意：必须是所有商品/服务项的净额加总。如果票面有多个部分（如本金和佣金），请务必求和后再输出，不要只提取其中一部分的金额作为总净额。
+            totalAmount:
+              type: NUMBER
+              description: 含税总金额，常见为Ukupan iznos fakture、subTotal、total、รำกวนเรียนทั้งสิ้น等。
+            totalTaxAmount:
+              type: NUMBER
+              description: |-
+                总税额。提取逻辑如下：
+                1. **语义优先**：优先提取明确标识为 'Tax', 'VAT', 'GST', 'IVA', 'Tax Amount' 等字段的数值总和。
+                2. **结构识别**：在存在多行税率汇总表（Tax Summary）的情况下，应提取表中各税种金额的加总，而不是提取表中的 'Total' 或 'Subtotal' 字段。
+                3. **严禁推算**：严禁仅通过 (TotalAmount - 某个收支项) 简单推算税额，必须在票面找到对应的税金标识。
+            currency:
+              type: STRING
+              description: 币种，以ISO 4217货币代码形式输出，如：USD, CNY, CAD, AUD, GBP, JPY, DEM, HKD, FRF, CHF, VND等。
+            billToName:
+              type: STRING
+              description: 收票方的名称。如果没有'Bill To'，则找'MESSRS'、'Purchaser'、'Customer'、'Buyer'、'Attention to'或其他和'购买方'同义的词语。
+            billToComposite:
+              type: STRING
+              description: 收票方的完整地址信息。
+            billToCountry:
+              type: STRING
+              description: 收票方所在国家，根据收票方的完整地址提取。
+            billToCountryCode:
+              type: STRING
+              description: 收票方所在国家的ISO 3166-1 alpha-2国家代码，如：CN, US, MY, SG, JP, GB, DE等。
+            billToTaxIdentificationNumber:
+              type: STRING
+              description: |-
+                收票方（买方）的税务注册码。
+                马来西亚发票补充规则：查找 "TIN"、"TIN No."、"TIN Number"、"Supplier TIN"、"Buyer TIN"、"Customer Tin No."；格式必须为 "C" 开头 + 10 位数字（例如 C5884056070、C4908240100），不符合此格式的不要写入该字段；当票面同时存在供应商 TIN 与买方 TIN 时，只取买方 TIN。
+            billFromName:
+              type: STRING
+              description: 开票方的名称。如果没有'From'信息, 或者'From'信息不像一个公司名称，则找：'Account Name'、'Beneficiary Name'、'Seller'、'Remit to'、底部签名处或者标题、收据或小票的商家名称。
+            billFromComposite:
+              type: STRING
+              description: 开票方的完整地址信息。
+            billFromCountry:
+              type: STRING
+              description: 开票方所在国家，根据开票方的地址信息提取。
+            billFromCountryCode:
+              type: STRING
+              description: 开票方所在国家的ISO 3166-1 alpha-2国家代码，如：CN, US, MY, SG, JP, GB, DE等。
+            billFromTaxIdentificationNumber:
+              type: STRING
+              description: 开票方的纳税识别号。如果找不到，则查找税务注册码、'VAT Registration'、'TAX#'。
+            billFromBusinessRegistrationNumber:
+              type: STRING
+              description: |-
+                开票方（供应商）的商业登记号 / 注册号 / SSM 号码。
+                通用规则：提取 Company No. / Co. Reg. No. / Registration No. / Company Reg No. / BRN 后面的编号，注意可能包含新旧号、括号、连字符，例如 200201024195 或 199501005689 (New)。
+                马来西亚发票补充规则：查找 "Company Reg.No"、"Registration No"、"SSM"，或公司名称旁括号内的 12 位数字；典型格式如 199201000276、199501005689、518287-T、199701009372 (424868-V)；严禁提取买方的注册号；票面同时出现新旧号时按原文完整保留。
+            purchaseOrderNumber:
+              type: STRING
+              description: |-
+                采购订单号。
+                通用规则：查找 PO number / P/O No / Cust PO / CUSTOMER P/O NO 等标注。仅当该单号适用于整张发票时提取；如果单号只对应某一明细行，则不填此字段，填入对应明细行的 purchaseOrderNumber 中。
+                马来西亚发票补充规则：查找 "P/O No."、"Your PO No."、"PO No"、"Order No"、"Buyer's Order No"、"P.O.NO."（表头）；典型格式如 W1 537443、K2 513875、W1 525065、N1 547225、90001110；通常由字母前缀（W1/K2/N1 等）+ 数字组成，可能含空格分隔（如 W1 516992），提取时保留原始空格格式；当票面以 "P.O.NO. D.O.NO. SALES REP." 横向表头形式呈现时，PO 值通常位于表头下方第二行。
+            dueDate:
+              type: STRING
+              description: 付款截止日期。
+            salesOrderNumber:
+              type: STRING
+              description: 销售订单号，如 SO No / S/O No / Sales order / SO#。仅当该单号适用于整张发票时提取；如果单号只对应某一明细行，则不填此字段，填入对应明细行的 salesOrderNumber 中。
+            deliveryOrderNumber:
+              type: STRING
+              description: |-
+                发货单号 / 交货单号。
+                通用规则：查找 Packing slip / D.O.NO. / D/O NO / DO 等标注，常见格式如 DO-153555、DO251728。仅当该单号适用于整张发票时提取；如果单号只对应某一明细行，则不填此字段，填入对应明细行的 deliveryOrderNumber 中。
+                马来西亚发票补充规则：查找 "D/O No."、"Our D/O No"、"DO NO"、"D.O. No."、"REFER D/O"、"D.O.NO."（表头）；典型格式如 E-DO00863、DO2601/0543、SH34756、LTA2507250095、T 056331、90001110；一张发票可能含多个 DO 号，必须全部列出并以分号";"分隔写入同一字段；当票面以 "P.O.NO. D.O.NO. SALES REP." 横向表头形式呈现时，DO 值通常位于表头下方第一行（多为纯数字）。
+            detailOfGoodsOrServices:
+              type: ARRAY
+              description: 商品或服务明细列表，包括每项商品或服务的名称、备注、数量、单位、单价、不含税金额、税率、税额、含税金额、订单号、销售订单号和发货单号
+              items:
+                type: OBJECT
+                properties:
+                  articleName:
+                    type: STRING
+                    description: 商品或服务名称（需要提取完整信息）
+                  description:
+                    type: STRING
+                    description: 备注
+                  quantity:
+                    type: NUMBER
+                    description: 商品或服务的数量
+                  unitOfMeasure:
+                    type: STRING
+                    description: 计量单位，如 pcs、kg、m、hour 等
+                  unitPrice:
+                    type: NUMBER
+                    description: 商品或服务的单价
+                  netAmount:
+                    type: NUMBER
+                    description: 不含税金额
+                  taxRate:
+                    type: STRING
+                    description: 税率
+                  tax:
+                    type: NUMBER
+                    description: 税额
+                  grossAmount:
+                    type: NUMBER
+                    description: 含税金额
+                  orderNumber:
+                    type: STRING
+                    description: 订单号（注文番号）
+                  salesOrderNumber:
+                    type: STRING
+                    description: 本明细行对应的销售订单号，如 SO No / S/O No / Sales order / SO#。仅当该单号只对应本明细行时填入；如果单号适用于整张发票所有明细，则不填此字段，填入发票头部的 salesOrderNumber 中。
+                  deliveryOrderNumber:
+                    type: STRING
+                    description: 本明细行对应的发货单号，如 Packing slip / D.O.NO. / D/O NO / DO，常见格式如 DO-153555、DO251728。仅当该单号只对应本明细行时填入；如果单号适用于整张发票所有明细，则不填此字段，填入发票头部的 deliveryOrderNumber 中。
+                  purchaseOrderNumber:
+                    type: STRING
+                    description: 本明细行对应的采购订单号，如 P/O No / Cust PO / CUSTOMER P/O NO。仅当该单号只对应本明细行时填入；如果单号适用于整张发票所有明细，则不填此字段，填入发票头部的 purchaseOrderNumber 中。
+                required: []
+            detailOfTaxSummary:
+              type: ARRAY
+              description: 税金汇总列表，包括税种、税率、税基、税额。请注意，同一税种但不同税率的情况需要分别提取。
+              items:
+                type: OBJECT
+                properties:
+                  taxCategory:
+                    type: STRING
+                    description: "税种简称。必须使用prompt中提供的标准税种简称（如'VAT'、'CIT'、'CT'等）。如果识别的税种不在标准列表中，则使用原始税种名称。"
+                  taxRate:
+                    type: STRING
+                    description: 税率
+                  netTaxableAmount:
+                    type: NUMBER
+                    description: 税基（需计税的金额/不含税金额）
+                  tax:
+                    type: NUMBER
+                    description: 税额
+                required: []
+            originalInvoiceReferences:
+              type: ARRAY
+              description: 原始发票引用列表。仅当 invoiceType 为 'Credit Note' 时提取；其他发票类型保留该字段但内容为空。票面上可能存在多组原始发票信息，每组作为一个元素输出。
+              items:
+                type: OBJECT
+                properties:
+                  originalInvoiceCode:
+                    type: STRING
+                    description: 原发票代码（序列号），如票面无此信息则不输出。
+                  originalInvoiceNumber:
+                    type: STRING
+                    description: 原发票号码。
+                  originalInvoiceDate:
+                    type: STRING
+                    description: 原发票开票日期，格式 YYYY-MM-DD。
+                required: []
+          required:
+            - docType
+            - invoiceType
+            - page
+            - currency
+        - type: OBJECT
+          properties:
+            docType:
+              type: STRING
+              description: 其他类型文档
+              enum:
+                - other
+            page:
+              type: ARRAY
+              description: 所在文档中的页码列表（从1开始编号）。
+              items:
+                type: NUMBER
+          required:
+            - docType
+            - page

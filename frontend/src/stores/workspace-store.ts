@@ -1,12 +1,6 @@
 import { create } from 'zustand'
-import apiClient, { updateAnnotation, deleteAnnotation, reprocessDocument, initialExtract } from '../lib/api-client'
+import apiClient, { updateAnnotation, deleteAnnotation, reprocessDocument } from '../lib/api-client'
 import { toast } from '../lib/toast'
-
-// Page-scoped record of doc IDs whose canonical initial extraction has succeeded.
-// Module-level (not in store state) so it persists across store reset()s within
-// the same browser session, but resets on full reload — matching the user's
-// "page state" semantics.
-const _initialExtractionDone = new Set<string>()
 
 export type WorkspaceStep = 'annotate' | 'configure' | 'test' | 'publish'
 export type WorkspaceTab = 'fields' | 'api'
@@ -106,7 +100,6 @@ interface WorkspaceStore {
   setDrawingFieldId: (id: string | null) => void
   commitDrawingBbox: (id: string, bbox: Annotation['boundingBox']) => Promise<void>
   confirmPendingFields: () => Promise<void>
-  triggerInitialExtraction: (docId: string, opts: { isNewApi: boolean }) => Promise<boolean>
   reset: () => void
 
   // ── Multi-doc batch sample layer (v3) ────────────────────────────────────
@@ -531,41 +524,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       toast.error(typeof msg === 'string' ? msg : 'AI 识别失败')
-    } finally {
-      set({ reprocessing: false })
-    }
-  },
-
-  /**
-   * 一次性、有条件的初始 OCR 调用。仅在以下三个条件全部满足时才会发起请求:
-   *   1. opts.isNewApi === true        — 当前是"新建定制 API"流程
-   *   2. annotations.length === 0      — 当前页面没有任何字段
-   *   3. _initialExtractionDone 不含 docId — 该文档在本会话中尚未成功完成过此调用
-   *
-   * 返回 true 表示真的触发并成功;返回 false 表示守卫拦截或调用失败。
-   * 失败不会写入完成集合,允许重试。
-   */
-  triggerInitialExtraction: async (docId, opts) => {
-    if (!opts.isNewApi) return false
-    if (get().annotations.length > 0) return false
-    if (_initialExtractionDone.has(docId)) return false
-    if (get().reprocessing) return false
-
-    set({ reprocessing: true })
-    try {
-      const res = await initialExtract(docId)
-      const sd = res.data?.structured_data
-      if (sd && (typeof sd === 'object' || Array.isArray(sd))) {
-        const { annotations, results } = parseStructuredData(sd)
-        set({ annotations, processingResults: results })
-      }
-      _initialExtractionDone.add(docId)
-      toast.success('已完成首次 AI 识别')
-      return true
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      toast.error(typeof msg === 'string' ? msg : '首次 AI 识别失败,可手动重试')
-      return false
     } finally {
       set({ reprocessing: false })
     }

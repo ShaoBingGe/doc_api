@@ -16,6 +16,7 @@ from .annotations import router as annotations_router
 from .api_defs import router as api_defs_router
 from .api_keys import router as api_keys_router
 from .conversations import router as conversations_router
+from .country_templates import router as country_templates_router
 from .documents import router as documents_router
 from .extract import router as extract_router
 from app.ocr_optimizer.router import router as ocr_optimizer_router
@@ -32,4 +33,5 @@ v1_router.include_router(api_keys_router)
 v1_router.include_router(extract_router)
 v1_router.include_router(ocr_optimizer_router)
 v1_router.include_router(templates_router)
+v1_router.include_router(country_templates_router)
 v1_router.include_router(usage_router)

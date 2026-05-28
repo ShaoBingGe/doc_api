@@ -1249,3 +1249,78 @@ UI 渲染时：
 - 用户手动 patch（§10.6 编辑流）**也不能** 修改 `skill_ids` —— `/manual-patch` 端点的 edits schema 不含此字段
 - 未来 skill 子系统上线后，修改 skill 的唯一合法途径是 `/ocr-skills/...` 和 `/modules/{key}/skills` 专用端点
 
+---
+
+## 十四、国家模板初始化（New API 入口）
+
+「定制新 API」入口流程的统一标准。配合 `docs/ocr-optimizer-design.md §6.4 / §16` 一起看。
+
+### 14.1 入口与跳转
+
+- 顶栏「定制新 API」按钮（`MainLayout.tsx:20`）行为不变：跳 `/workspace/new`
+- `/workspace/new` 显示一个**新顶部条**「选国家」，下方依旧是 `InlineUploadPanel`（上传文档 / 上传已标注数据两 tab）
+- **必须先选国家**才能使用下方任何上传 UI；未选国家时下方 panel 灰显并提示「请先选择国家」
+
+### 14.2 「选国家」顶部条
+
+视觉形态：水平 chip 列表，全部 chip 等宽。
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ 选国家：                                                       │
+│  [🇲🇾 MY]   [🇨🇳 CN ⚪]   [🇺🇸 US ⚪]   [🇪🇺 EU ⚪]   [🌏 GLOBAL ⚪] │
+│                                                                │
+│  请选择一个国家以使用预设模板。已选：MY                       │
+└────────────────────────────────────────────────────────────────┘
+```
+
+Chip 列表：**hardcoded** `[MY, CN, US, EU, GLOBAL]`。
+
+| 标识 | 含义 |
+|---|---|
+| 实色（如 MY） | 已有 `<COUNTRY>_invoice_prompt.yaml` 模板，**可点击** |
+| 灰色 + ⚪「Coming Soon」徽标 | 模板未提供，**不可点击**；hover 显示 tooltip「该国家模板尚未提供」 |
+
+实色 chip 的判定来源：仓库根目录有 `<COUNTRY>_invoice_prompt.yaml`（后端启动时扫描，前端启动时拉一次 `GET /api/v1/country-templates`，返回如 `[{country:"MY", available:true}, {country:"CN", available:false}, ...]`）。
+
+### 14.3 选中行为
+
+点击实色 chip 后：
+
+```
+1. 前端发 POST /api/v1/api-definitions/from-country-template {country:"MY"}
+   - 同时 chip 显示加载态（spinner 覆盖国旗）
+   - 其他 chip 禁用以防重复点击
+2. 后端同步返回 {api_definition_id, version_id, redirect_url:"/workspace/api/<id>"}
+3. 前端 navigate(redirect_url, {replace:true})
+4. 在新页面顶部以 toast 提示「已基于 MY 模板创建占位 API；上传文档后自动跑首次识别」
+```
+
+### 14.4 跳转后的 Workspace 状态
+
+- `/workspace/api/<id>` 进入 v3 批量样本工作台（§9）
+- 缩略图列为空（占位 API 无样本）→ 显示 "上传第一张样本" 提示
+- 上传后**自动**用 active OcrPromptVersion.composed_prompt 跑一次 OCR（替代旧的 `triggerInitialExtraction` 硬编码 prompt 调用）
+- OCR 完成 → 三栏 Workspace 正常展示字段，用户编辑 GT
+- 点「保存并生成 API」时 SaveModal 默认带入 ApiDef 当前 name 字段（如 `MY_invoice_<hex>`）允许用户改名 → 提交后 ApiDef.status 从 `pending_first_doc` 变为 `active`
+
+### 14.5 不允许切换国家
+
+- 进入 `/workspace/api/<id>` 后，UI 不再显示「选国家」chip
+- 用户如果想换国家：唯一办法是去 ApiList 删掉这个占位 API（或等 7 天自动清），重新走入口流程
+- 这一约束写入 `docs/ocr-optimizer-design.md §16.5`
+
+### 14.6 占位 API 不进入 ApiList
+
+- ApiList 页（`/`）默认调 `GET /api/v1/api-definitions` —— 此 endpoint 默认过滤 `status='pending_first_doc'`，所以列表里看不到未完成的占位 API
+- 用户「保存并生成 API」后状态变 active，自然出现在列表
+- 7 天未保存 → 自动 GC（lazy cleanup，详见后端 §16.4）
+
+### 14.7 错误处理
+
+| 情况 | UI 反应 |
+|------|---------|
+| `POST /from-country-template` 网络失败 | chip 还原可点击 + toast "网络错误，请重试" |
+| yaml 解析失败（后端 500） | chip 还原 + toast "MY 模板配置异常，请联系管理员" |
+| 后端尚不支持该国家（前端 chip 状态过期） | toast "该国家暂不可用，请刷新页面" |
+| 用户在 OCR 跑的途中关闭浏览器 | 占位 API 已建，刷新后从 ApiList 仍看不到（因 status=pending）；用户可以重新进入 `/workspace/api/<id>` 继续编辑（需要保存 url 或加书签）。**MVP 不做后台续传**，7 天后自动清 |

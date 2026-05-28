@@ -249,6 +249,25 @@ function DrawingOverlay({ fieldLabel, onCommit, onCancel }: DrawingOverlayProps)
   )
 }
 
+// ─── Field-focus zoom ────────────────────────────────────────────────────────
+//
+// When the user selects a field, smoothly zoom the document so the field's
+// bbox sits at the visual center of the viewport at 2× scale. Switching from
+// one field to another runs a two-phase animation: zoom OUT to native (1s),
+// then zoom IN to the new bbox (1s). See UI_DESIGN §field-focus.
+//
+// Math: with the document positioned via flex-centering inside the viewport,
+//   - (Lx, Ly): doc's natural top-left in viewport coords (offsetLeft/Top)
+//   - (Dw, Dh): doc's pre-transform size (offsetWidth/Height)
+//   - (Vw, Vh): viewport client size
+//   - bbox center in doc px: (bcx, bcy) = ((bx + bw/2)% × Dw, (by + bh/2)% × Dh)
+//   - target: bbox center at (Vw/2, Vh/2)
+//   - transform: `translate(tx, ty) scale(S)` with origin (0,0)
+//     ⇒ tx = Vw/2 − Lx − S × bcx,  ty = Vh/2 − Ly − S × bcy
+
+const FOCUS_SCALE = 2
+const FOCUS_TRANSITION_MS = 1000
+
 export default function DarkDocumentViewer() {
   const {
     documentInfo,
@@ -269,6 +288,15 @@ export default function DarkDocumentViewer() {
   const [pdfError, setPdfError] = useState(false)
   const [zoom, setZoom] = useState(100)
 
+  // Field-focus state
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const docRef = useRef<HTMLDivElement>(null)
+  const [focusBbox, setFocusBbox] = useState<Annotation['boundingBox'] | null>(null)
+  const [docMetrics, setDocMetrics] = useState({ Lx: 0, Ly: 0, Dw: 0, Dh: 0 })
+  const [viewMetrics, setViewMetrics] = useState({ Vw: 0, Vh: 0 })
+  const prevSelIdRef = useRef<string | null>(null)
+  const transitionTimerRef = useRef<number | null>(null)
+
   const handleLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
     setNumPages(numPages)
     setPdfError(false)
@@ -285,10 +313,85 @@ export default function DarkDocumentViewer() {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [setSelectedFieldId, drawingFieldId, setDrawingFieldId])
 
+  // Two-phase field-focus animation
+  //   null  → A : single 1s zoom-in
+  //   A     → null : single 1s zoom-out
+  //   A     → B : zoom-out 1s, then zoom-in 1s
+  useEffect(() => {
+    if (transitionTimerRef.current) {
+      window.clearTimeout(transitionTimerRef.current)
+      transitionTimerRef.current = null
+    }
+    const prev = prevSelIdRef.current
+    const next = selectedFieldId
+    prevSelIdRef.current = next
+
+    const nextAnn = next ? annotations.find((a) => a.id === next) : null
+    const nextBbox = nextAnn?.boundingBox ?? null
+
+    if (prev && next && prev !== next && nextBbox) {
+      setFocusBbox(null)
+      transitionTimerRef.current = window.setTimeout(() => {
+        setFocusBbox(nextBbox)
+        transitionTimerRef.current = null
+      }, FOCUS_TRANSITION_MS)
+    } else {
+      setFocusBbox(nextBbox)
+    }
+  }, [selectedFieldId, annotations])
+
+  useEffect(() => {
+    return () => {
+      if (transitionTimerRef.current) window.clearTimeout(transitionTimerRef.current)
+    }
+  }, [])
+
+  // Measure doc + viewport (pre-transform), refresh on resize / zoom / page swap
+  useEffect(() => {
+    const update = () => {
+      if (docRef.current) {
+        setDocMetrics({
+          Lx: docRef.current.offsetLeft,
+          Ly: docRef.current.offsetTop,
+          Dw: docRef.current.offsetWidth,
+          Dh: docRef.current.offsetHeight,
+        })
+      }
+      if (viewportRef.current) {
+        setViewMetrics({
+          Vw: viewportRef.current.clientWidth,
+          Vh: viewportRef.current.clientHeight,
+        })
+      }
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    if (docRef.current) ro.observe(docRef.current)
+    if (viewportRef.current) ro.observe(viewportRef.current)
+    window.addEventListener('resize', update)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', update)
+    }
+  }, [documentInfo, zoom, page, numPages])
+
   const visibleAnnotations = annotations.filter((a) => a.page === page)
   const pageWidth = Math.round(680 * (zoom / 100))
   const drawingAnn = drawingFieldId ? annotations.find((a) => a.id === drawingFieldId) : null
   const isDrawing = !!drawingAnn
+
+  // Compute focus transform string
+  const focusTransform = (() => {
+    if (!focusBbox) return 'none'
+    const { Lx, Ly, Dw, Dh } = docMetrics
+    const { Vw, Vh } = viewMetrics
+    if (Dw === 0 || Vw === 0) return 'none'
+    const bcx = ((focusBbox.x + focusBbox.width / 2) / 100) * Dw
+    const bcy = ((focusBbox.y + focusBbox.height / 2) / 100) * Dh
+    const tx = Vw / 2 - Lx - FOCUS_SCALE * bcx
+    const ty = Vh / 2 - Ly - FOCUS_SCALE * bcy
+    return `translate(${tx}px, ${ty}px) scale(${FOCUS_SCALE})`
+  })()
 
   return (
     <div className={cn(
@@ -337,10 +440,13 @@ export default function DarkDocumentViewer() {
         </button>
       </div>
 
-      {/* Document area */}
+      {/* Document area — overflow-hidden viewport with a CSS-transformed doc wrapper.
+          Manual zoom drives the page's rendered width; field-focus zoom is layered
+          on top via `transform: translate(...) scale(2)` on docRef. */}
       <div
+        ref={viewportRef}
         className={cn(
-          'flex-1 overflow-auto p-8 flex justify-center bg-[#1e1e24] relative',
+          'flex-1 overflow-hidden p-4 flex items-center justify-center bg-[#1e1e24] relative',
           isDrawing && 'z-30',
         )}
         onClick={() => { if (!isDrawing) setSelectedFieldId(null) }}
@@ -350,54 +456,25 @@ export default function DarkDocumentViewer() {
             <FileText className="w-12 h-12 text-gray-600" />
             <p className="text-sm text-gray-500">正在加载文档...</p>
           </div>
-        ) : documentInfo.fileType === 'image' ? (
-          <div className="relative inline-block shadow-2xl rounded-lg overflow-hidden">
-            <img
-              src={documentInfo.fileUrl}
-              alt={documentInfo.filename}
-              className="block"
-              style={{ width: pageWidth }}
-              draggable={false}
-            />
-            <BboxLayer
-              annotations={visibleAnnotations}
-              results={processingResults}
-              selectedFieldId={selectedFieldId}
-              hoveredFieldId={hoveredFieldId}
-              onSelect={setSelectedFieldId}
-              onHover={setHoveredFieldId}
-              onUpdateBbox={updateFieldBbox}
-            />
-            {drawingAnn && (
-              <DrawingOverlay
-                fieldLabel={drawingAnn.label}
-                onCommit={(bbox) => commitDrawingBbox(drawingAnn.id, { ...bbox, })}
-                onCancel={() => setDrawingFieldId(null)}
-              />
-            )}
-          </div>
-        ) : pdfError ? (
-          <div className="flex flex-col items-center justify-center w-[680px] h-[900px] gap-3 bg-[#2a2a32] rounded-lg">
-            <AlertCircle className="w-8 h-8 text-red-400" />
-            <p className="text-sm text-gray-400">无法渲染 PDF</p>
-          </div>
         ) : (
-          <div className="relative shadow-2xl rounded-lg overflow-hidden bg-white">
-            <Document
-              file={documentInfo.fileUrl}
-              onLoadSuccess={handleLoadSuccess}
-              onLoadError={() => setPdfError(true)}
-              loading={
-                <div className="flex items-center justify-center" style={{ width: pageWidth, height: pageWidth * 1.3 }}>
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
-                    <p className="text-sm text-gray-400">加载 PDF...</p>
-                  </div>
-                </div>
-              }
-            >
-              <div className="relative">
-                <Page pageNumber={page} width={pageWidth} />
+          <div
+            ref={docRef}
+            style={{
+              transformOrigin: '0 0',
+              transition: `transform ${FOCUS_TRANSITION_MS}ms ease`,
+              transform: focusTransform,
+              willChange: 'transform',
+            }}
+          >
+            {documentInfo.fileType === 'image' ? (
+              <div className="relative inline-block shadow-2xl rounded-lg overflow-hidden">
+                <img
+                  src={documentInfo.fileUrl}
+                  alt={documentInfo.filename}
+                  className="block"
+                  style={{ width: pageWidth }}
+                  draggable={false}
+                />
                 <BboxLayer
                   annotations={visibleAnnotations}
                   results={processingResults}
@@ -410,12 +487,53 @@ export default function DarkDocumentViewer() {
                 {drawingAnn && (
                   <DrawingOverlay
                     fieldLabel={drawingAnn.label}
-                    onCommit={(bbox) => commitDrawingBbox(drawingAnn.id, bbox)}
+                    onCommit={(bbox) => commitDrawingBbox(drawingAnn.id, { ...bbox, })}
                     onCancel={() => setDrawingFieldId(null)}
                   />
                 )}
               </div>
-            </Document>
+            ) : pdfError ? (
+              <div className="flex flex-col items-center justify-center w-[680px] h-[900px] gap-3 bg-[#2a2a32] rounded-lg">
+                <AlertCircle className="w-8 h-8 text-red-400" />
+                <p className="text-sm text-gray-400">无法渲染 PDF</p>
+              </div>
+            ) : (
+              <div className="relative shadow-2xl rounded-lg overflow-hidden bg-white">
+                <Document
+                  file={documentInfo.fileUrl}
+                  onLoadSuccess={handleLoadSuccess}
+                  onLoadError={() => setPdfError(true)}
+                  loading={
+                    <div className="flex items-center justify-center" style={{ width: pageWidth, height: pageWidth * 1.3 }}>
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+                        <p className="text-sm text-gray-400">加载 PDF...</p>
+                      </div>
+                    </div>
+                  }
+                >
+                  <div className="relative">
+                    <Page pageNumber={page} width={pageWidth} />
+                    <BboxLayer
+                      annotations={visibleAnnotations}
+                      results={processingResults}
+                      selectedFieldId={selectedFieldId}
+                      hoveredFieldId={hoveredFieldId}
+                      onSelect={setSelectedFieldId}
+                      onHover={setHoveredFieldId}
+                      onUpdateBbox={updateFieldBbox}
+                    />
+                    {drawingAnn && (
+                      <DrawingOverlay
+                        fieldLabel={drawingAnn.label}
+                        onCommit={(bbox) => commitDrawingBbox(drawingAnn.id, bbox)}
+                        onCancel={() => setDrawingFieldId(null)}
+                      />
+                    )}
+                  </div>
+                </Document>
+              </div>
+            )}
           </div>
         )}
       </div>

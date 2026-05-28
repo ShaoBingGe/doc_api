@@ -175,11 +175,16 @@ def upload_document(
     content_type: str | None = None,
     processor_type: str | None = None,
     template_id: uuid.UUID | None = None,
+    api_definition_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
 ) -> Document:
     """
     Persist the uploaded file and create a Document record.
-    Triggers synchronous AI processing immediately (SyncRunner prototype).
+
+    OCR is NOT triggered here. When the upload is part of the §6.4 country-template
+    flow, the caller (documents.upload_document endpoint) follows up with
+    `bind_to_api_and_extract` which runs OCR using the active OcrPromptVersion's
+    composed_prompt. Otherwise the document stays in `queued`.
     """
     file_type = _validate_file(filename, len(file_data), content_type)
     storage_path = _save_upload(file_data, filename)
@@ -191,18 +196,62 @@ def upload_document(
         file_size=len(file_data),
         storage_path=storage_path,
         status=DocumentStatus.queued,
+        api_definition_id=api_definition_id,
     )
     db.add(doc)
     db.flush()  # get doc.id before processing
 
-    # 默认上传时识别已禁用 —— 新流程改为前端在新建定制 API 上传完成后,
-    # 通过 POST /api/v1/documents/{id}/initial-extract 触发一次性的、带固定层
-    # 次化 prompt 的 OCR 调用 (见 services/initial_extraction.py)。
-    # 文档保持在 queued 状态,等待该调用把它推进到 completed。
-    # _run_extraction(db, doc, processor_type=processor_type or settings.DEFAULT_PROCESSOR)
     db.commit()
     db.refresh(doc)
     return doc
+
+
+def bind_to_api_and_extract(
+    db: Session,
+    doc: Document,
+    api_definition_id: uuid.UUID,
+) -> ProcessingResult | None:
+    """Register `doc` with an ApiDefinition's sample set and trigger OCR.
+
+    Used by the §6.4 country-template flow: after the user uploads a document
+    on /workspace/api/<id>, this binds the doc to the API (appends to
+    config.sample_document_ids), bumps the API's updated_at to defer GC, and
+    runs OCR using the API's active OcrPromptVersion.composed_prompt.
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.api_definition import ApiDefinition
+
+    api_def: ApiDefinition | None = db.get(ApiDefinition, api_definition_id)
+    if not api_def:
+        return None
+
+    # Append to sample set so the optimizer subsystem can see this doc.
+    cfg = dict(api_def.config or {})
+    ids: list[str] = list(cfg.get("sample_document_ids") or [])
+    if str(doc.id) not in ids:
+        ids.append(str(doc.id))
+        cfg["sample_document_ids"] = ids
+        api_def.config = cfg
+        flag_modified(api_def, "config")
+
+    # Trigger OCR. reprocess_document will resolve the prompt from the active
+    # OcrPromptVersion when body.prompt is None (see _resolve_active_composed_prompt).
+    body = ReprocessRequest(prompt=None)
+    reprocess_document(db, doc.id, body)
+
+    # bump updated_at so GC defers
+    from datetime import datetime, timezone
+    api_def.updated_at = datetime.now(timezone.utc)
+    db.commit()
+
+    latest = (
+        db.query(ProcessingResult)
+        .filter(ProcessingResult.document_id == doc.id)
+        .order_by(desc(ProcessingResult.version))
+        .first()
+    )
+    return latest
 
 
 def _run_extraction(
@@ -580,6 +629,25 @@ def get_processing_results(
     return [ProcessingResultResponse.model_validate(r) for r in results]
 
 
+def _resolve_active_composed_prompt(db: Session, api_def_id: uuid.UUID) -> str | None:
+    """Return the active OcrPromptVersion.composed_prompt for this API, or None.
+
+    Used by reprocess_document when no explicit prompt is supplied — lets the
+    §6.4 country-template flow drive OCR with the raw yaml prompt stored in v1.
+    """
+    from app.ocr_optimizer.models import OcrPromptVersion, PromptVersionStatus
+
+    v = (
+        db.query(OcrPromptVersion)
+        .filter(
+            OcrPromptVersion.api_definition_id == api_def_id,
+            OcrPromptVersion.status == PromptVersionStatus.active.value,
+        )
+        .first()
+    )
+    return v.composed_prompt if v else None
+
+
 def reprocess_document(
     db: Session,
     document_id: uuid.UUID,
@@ -598,8 +666,15 @@ def reprocess_document(
     # from "mock" to "gemini" takes effect immediately without DB migrations.
     processor = body.processor_type or settings.DEFAULT_PROCESSOR
 
-    # Build prompt: explicit prompt > prompt+extra_fields > extra_fields appended to last prompt > None
+    # Build prompt resolution chain (§13 step 10 in ocr-optimizer-design.md):
+    #   1. explicit body.prompt (extra_fields case handled below)
+    #   2. active OcrPromptVersion.composed_prompt (when doc is bound to an
+    #      ApiDefinition and that API has an active version) — covers the §6.4
+    #      country-template flow where v1.composed_prompt is the raw yaml text.
+    #   3. None → _call_processor uses its generic default instruction
     prompt = body.prompt
+    if prompt is None and doc.api_definition_id:
+        prompt = _resolve_active_composed_prompt(db, doc.api_definition_id)
     if body.extra_fields:
         existing_fields = []
         if latest and latest.structured_data and isinstance(latest.structured_data, dict):

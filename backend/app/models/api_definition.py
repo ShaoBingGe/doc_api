@@ -20,6 +20,7 @@ class ApiDefinitionStatus(str, Enum):
     draft = "draft"
     active = "active"
     deprecated = "deprecated"
+    pending_first_doc = "pending_first_doc"  # §6.4 placeholder API awaiting first doc / save
 
 
 class ApiDefinition(UUIDMixin, TimestampMixin, Base):

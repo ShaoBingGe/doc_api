@@ -22,7 +22,6 @@ from app.schemas.document import (
     ReprocessRequest,
 )
 from app.services import document_service as svc
-from app.services import initial_extraction
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -37,8 +36,14 @@ async def upload_document(
     file: UploadFile = File(...),
     template_id: uuid.UUID | None = Form(default=None),
     processor_type: str | None = Form(default=None),
+    api_definition_id: uuid.UUID | None = Form(default=None),
     db: Session = Depends(get_db),
 ) -> DocumentUploadResponse:
+    """
+    Upload a document. When `api_definition_id` is provided (§6.4 country-template
+    flow), the document is bound to that API and OCR runs automatically using the
+    API's active OcrPromptVersion.composed_prompt.
+    """
     file_data = await file.read()
     doc = svc.upload_document(
         db,
@@ -47,7 +52,12 @@ async def upload_document(
         content_type=file.content_type,
         processor_type=processor_type,
         template_id=template_id,
+        api_definition_id=api_definition_id,
     )
+    if api_definition_id:
+        # Bind & auto-trigger OCR using the API's active prompt version.
+        svc.bind_to_api_and_extract(db, doc, api_definition_id)
+        db.refresh(doc)
     return DocumentUploadResponse.model_validate(doc)
 
 
@@ -195,19 +205,6 @@ def reprocess_document(
     db: Session = Depends(get_db),
 ) -> ProcessingResultResponse:
     return svc.reprocess_document(db, document_id, body)
-
-
-@router.post(
-    "/{document_id}/initial-extract",
-    response_model=ProcessingResultResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="新建定制 API 首次自动 OCR(固定层次化 prompt)",
-)
-def initial_extract(
-    document_id: uuid.UUID,
-    db: Session = Depends(get_db),
-) -> ProcessingResultResponse:
-    return initial_extraction.trigger_initial_extraction(db, document_id)
 
 
 @router.delete(

@@ -11,6 +11,7 @@ import WorkspaceModals from '../components/workspace-v2/WorkspaceModals'
 import InlineUploadPanel from '../components/workspace-v2/InlineUploadPanel'
 import DocumentThumbnailColumn from '../components/workspace-v2/DocumentThumbnailColumn'
 import OptimizationProcessPanel from '../components/workspace-v2/OptimizationProcessPanel'
+import CountryPickerBar from '../components/workspace-v2/CountryPickerBar'
 import apiClient from '../lib/api-client'
 
 export default function Workspace() {
@@ -26,7 +27,6 @@ export default function Workspace() {
     documents,
     selectedDocId,
     loadApiDefinition,
-    triggerInitialExtraction,
     reset,
   } = useWorkspaceStore()
 
@@ -84,9 +84,6 @@ export default function Workspace() {
           // by injecting a synthetic state in the store.
           reset()
           await useWorkspaceStore.getState().loadDocument(documentId)
-          if ((location.state as { fromNewApi?: boolean } | null)?.fromNewApi) {
-            await triggerInitialExtraction(documentId, { isNewApi: true })
-          }
         }
       } catch {
         // network failure — show empty workspace
@@ -134,75 +131,86 @@ export default function Workspace() {
         }}
       />
 
-      <div className="flex-1 flex overflow-hidden pb-12">
-        {/* Thumbnail rail (only in by-API mode) */}
-        {showThumbnailRail && <DocumentThumbnailColumn />}
-
-        {/* Main content: switches by activeTab */}
-        {activeTab === 'optimize' && apiDefinitionId ? (
-          <div className="flex-1">
-            <OptimizationProcessPanel
-              apiDefinitionId={apiDefinitionId}
-              reloadKey={optimizeReloadKey}
-              optimizing={optimizing}
-            />
+      {/* New-API entry: country picker takes over the whole content area.
+          Once the user picks a country, the backend creates a placeholder API +
+          v1 + 30 modules, and we navigate to /workspace/api/<id>. */}
+      {isNewMode ? (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <CountryPickerBar
+            onPicked={(apiDefId) =>
+              navigate(`/workspace/api/${apiDefId}`, { replace: true })
+            }
+          />
+          <div className="flex-1 flex items-center justify-center text-gray-500 text-sm px-8 text-center">
+            <div>
+              <p className="text-gray-300 font-medium mb-1">请先选择一个国家模板</p>
+              <p className="text-gray-500">
+                选中国家后会基于该国家预设 prompt 创建一个占位 API，
+                <br />
+                之后你可以在它的工作台里上传样本、跑 OCR、编辑 Ground Truth。
+              </p>
+            </div>
           </div>
-        ) : (
-          <>
-            {/* Column A: Document Preview / Upload */}
-            <div className="flex-1 min-w-[360px]">
-              {isNewMode ? (
-                <InlineUploadPanel
-                  onUploadComplete={(id) =>
-                    // Legacy: after first upload during "new API" flow, the
-                    // create-API modal saves the ApiDefinition with that doc
-                    // as the first sample, then redirects via apiDefinitionId.
-                    // Until that's wired through, fall back to legacy URL.
-                    navigate('/workspace/' + id, {
-                      replace: true,
-                      state: { fromNewApi: true },
-                    })
-                  }
-                />
-              ) : hasSelectedDoc ? (
-                <DarkDocumentViewer />
-              ) : (
-                <EmptySampleHint />
-              )}
-            </div>
+        </div>
+      ) : (
+        <div className="flex-1 flex overflow-hidden pb-12">
+          {/* Thumbnail rail (only in by-API mode) */}
+          {showThumbnailRail && <DocumentThumbnailColumn />}
 
-            {/* Column B: Field Structure */}
-            <div className="flex-1 min-w-[320px]">
-              {isNewMode ? (
-                <div className="flex items-center justify-center h-full text-gray-500 text-sm">
-                  上传文档后显示字段
-                </div>
-              ) : hasSelectedDoc ? (
-                <DarkFieldViewer activeTab={activeTab === 'fields' ? 'fields' : 'fields'} />
-              ) : (
-                <div className="flex items-center justify-center h-full text-gray-500 text-sm">
-                  选择左侧样本查看字段
-                </div>
-              )}
+          {/* Main content: switches by activeTab */}
+          {activeTab === 'optimize' && apiDefinitionId ? (
+            <div className="flex-1">
+              <OptimizationProcessPanel
+                apiDefinitionId={apiDefinitionId}
+                reloadKey={optimizeReloadKey}
+                optimizing={optimizing}
+              />
             </div>
+          ) : (
+            <>
+              {/* Column A: Document Preview / Upload */}
+              <div className="flex-1 min-w-[360px]">
+                {hasSelectedDoc ? (
+                  <DarkDocumentViewer />
+                ) : apiDefinitionId ? (
+                  <InlineUploadPanel
+                    onUploadComplete={() => {
+                      // After upload, the doc list refresh + selection happens via
+                      // workspace-store; just re-load the API to pick up the new sample.
+                      if (apiDefinitionId) loadApiDefinition(apiDefinitionId)
+                    }}
+                    apiDefinitionId={apiDefinitionId}
+                  />
+                ) : (
+                  <EmptySampleHint />
+                )}
+              </div>
 
-            {/* Column C: JSON Output */}
-            <div className="flex-1 min-w-[320px]">
-              {isNewMode ? (
-                <div className="flex items-center justify-center h-full text-gray-500 text-sm">
-                  上传文档后显示 JSON
-                </div>
-              ) : hasSelectedDoc ? (
-                <DarkJsonViewer />
-              ) : (
-                <div className="flex items-center justify-center h-full text-gray-500 text-sm">
-                  选择左侧样本查看 JSON
-                </div>
-              )}
-            </div>
-          </>
-        )}
-      </div>
+              {/* Column B: Field Structure */}
+              <div className="flex-1 min-w-[320px]">
+                {hasSelectedDoc ? (
+                  <DarkFieldViewer activeTab={activeTab === 'fields' ? 'fields' : 'fields'} />
+                ) : (
+                  <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+                    选择左侧样本查看字段
+                  </div>
+                )}
+              </div>
+
+              {/* Column C: JSON Output */}
+              <div className="flex-1 min-w-[320px]">
+                {hasSelectedDoc ? (
+                  <DarkJsonViewer />
+                ) : (
+                  <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+                    选择左侧样本查看 JSON
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {!isNewMode && hasSelectedDoc && activeTab !== 'optimize' && <AiChat />}
 

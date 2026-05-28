@@ -6,6 +6,10 @@ import { cn } from '../../lib/utils'
 
 interface InlineUploadPanelProps {
   onUploadComplete: (documentId: string) => void
+  /** When provided, the upload is bound to this ApiDefinition and the backend
+   *  auto-runs OCR with that API's active OcrPromptVersion.composed_prompt
+   *  (§6.4 country-template flow). */
+  apiDefinitionId?: string
 }
 
 const ACCEPT = '.pdf,.png,.jpg,.jpeg,.xlsx'
@@ -21,7 +25,7 @@ const MAX_JSON_SIZE = 5 * 1024 * 1024 // 5 MB for the GT json
 
 type UploadMode = 'new' | 'labeled'
 
-export default function InlineUploadPanel({ onUploadComplete }: InlineUploadPanelProps) {
+export default function InlineUploadPanel({ onUploadComplete, apiDefinitionId }: InlineUploadPanelProps) {
   const [mode, setMode] = useState<UploadMode>('new')
 
   return (
@@ -45,9 +49,9 @@ export default function InlineUploadPanel({ onUploadComplete }: InlineUploadPane
       {/* Tab content */}
       <div className="flex-1 flex items-center justify-center overflow-y-auto">
         {mode === 'new' ? (
-          <UploadNewDoc onUploadComplete={onUploadComplete} />
+          <UploadNewDoc onUploadComplete={onUploadComplete} apiDefinitionId={apiDefinitionId} />
         ) : (
-          <UploadLabeledPair onUploadComplete={onUploadComplete} />
+          <UploadLabeledPair onUploadComplete={onUploadComplete} apiDefinitionId={apiDefinitionId} />
         )}
       </div>
     </div>
@@ -87,7 +91,7 @@ function TabButton({
 // Tab A — upload single doc (existing behavior)
 // ──────────────────────────────────────────────────────────────────────────────
 
-function UploadNewDoc({ onUploadComplete }: InlineUploadPanelProps) {
+function UploadNewDoc({ onUploadComplete, apiDefinitionId }: InlineUploadPanelProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -116,13 +120,15 @@ function UploadNewDoc({ onUploadComplete }: InlineUploadPanelProps) {
 
     const formData = new FormData()
     formData.append('file', file)
+    if (apiDefinitionId) formData.append('api_definition_id', apiDefinitionId)
 
     try {
       const res = await apiClient.post('/api/v1/documents/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120_000,  // §6.4 auto-OCR runs synchronously; allow up to 2min
       })
       const documentId: string = res.data.id
-      toast.success('文档上传成功')
+      toast.success(apiDefinitionId ? '文档上传成功，已完成首次识别' : '文档上传成功')
       onUploadComplete(documentId)
     } catch (err: unknown) {
       const msg =
@@ -198,7 +204,10 @@ interface JsonLintResult {
   annotationCount?: number
 }
 
-function UploadLabeledPair({ onUploadComplete }: InlineUploadPanelProps) {
+function UploadLabeledPair({ onUploadComplete, apiDefinitionId: _apiDefinitionId }: InlineUploadPanelProps) {
+  // The labeled-pair upload uses /documents/upload-with-annotations which doesn't
+  // accept api_definition_id (annotations are the GT, not the placeholder API flow).
+  // Prop received to satisfy the typed parent; intentionally unused.
   const fileRef = useRef<HTMLInputElement>(null)
   const jsonRef = useRef<HTMLInputElement>(null)
   const [docFile, setDocFile] = useState<File | null>(null)

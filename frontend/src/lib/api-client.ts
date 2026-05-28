@@ -51,14 +51,30 @@ export function reprocessDocument(
   })
 }
 
-export function initialExtract(docId: string) {
-  return apiClient.post(`/api/v1/documents/${docId}/initial-extract`)
-}
-
 export function uploadDocument(formData: FormData) {
   return apiClient.post('/api/v1/documents/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
+}
+
+// ── Country template (§6.4) ──────────────────────────────────────────────────
+
+export interface CountryTemplateInfo {
+  country: string
+  available: boolean
+}
+
+export function fetchCountryTemplates() {
+  return apiClient.get<CountryTemplateInfo[]>('/api/v1/country-templates')
+}
+
+export function initFromCountryTemplate(country: string) {
+  return apiClient.post<{
+    api_definition_id: string
+    version_id: string
+    redirect_url: string
+    module_count: number
+  }>('/api/v1/api-definitions/from-country-template', { country })
 }
 
 export function activateApiDefinition(apiCode: string) {

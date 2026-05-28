@@ -132,7 +132,7 @@ docs/ocr-optimizer-design.md     # 本文档
 ```
 ApiDefinition ──1:N── OcrPromptVersion
                           │
-                          └──1:N── OcrModule ──N:M── OcrSkill (§17, TODO)
+                          └──1:N── OcrModule ──N:M── OcrSkill (§18, TODO)
 
 ApiDefinition ──1:N── OcrOptimizationRun  (status: running | paused_for_review | completed | failed | aborted)
                           │  ├── starting_version_id  ──► OcrPromptVersion
@@ -157,7 +157,7 @@ ApiDefinition ──1:N── OcrOptimizationRun  (status: running | paused_for_
 | `version` | INT | NOT NULL | 每个 API 内自增（1, 2, 3, ...） |
 | `parent_version_id` | UUID | FK → self, NULLABLE | 演化链上的父版本 |
 | `status` | VARCHAR(16) | NOT NULL, default `'draft'` | `draft` / `active` / `archived` |
-| `composed_prompt` | TEXT | NOT NULL | 所有模块拼接后的最终 prompt 字符串，**生产 OCR 调用就读这个字段** |
+| `composed_prompt` | TEXT | NOT NULL | 所有模块拼接后的最终 prompt 字符串，**生产 OCR 调用就读这个字段**。**例外**：`origin='init'` 且来源是预设国家 yaml（见 §6.4）时直接存 yaml 原文（不走 composer），从 v2 起恢复 composer 拼接 |
 | `composed_schema` | JSON | NULLABLE | 所有模块的 schema_fragment 合并后的最终 JSON Schema |
 | `overall_accuracy` | FLOAT | NULLABLE | 在 Run 评估样本上的 accuracy (0-1) |
 | `origin` | VARCHAR(16) | NOT NULL, default `'init'` | `'init'` / `'round'` / `'manual_edit'`。`manual_edit` 表示用户在 paused_for_review 状态下编辑 suggestions/description 派生的版本（§7.4） |
@@ -186,7 +186,7 @@ ApiDefinition ──1:N── OcrOptimizationRun  (status: running | paused_for_
 | `schema_fragment` | JSON | NOT NULL | 该模块负责的 JSON Schema 子树 |
 | `ocr_suggestions` | JSON | NOT NULL, default `{}` | 字典形式特征提示。结构固定：`{"semantics": "...", "position": "...", "most_common_feature": "...", "extra_features": ["..."]}` |
 | `ocr_prompt` | TEXT | NOT NULL | 该模块的 prompt 片段，会被 composer 拼进 composed_prompt |
-| `skill_ids` | JSON | NOT NULL, default `[]` | 该模块引用的 `OcrSkill.id` 列表（§17，**TODO 占位字段**）。当前未消费，composer 不读取；optimizer 不允许修改 |
+| `skill_ids` | JSON | NOT NULL, default `[]` | 该模块引用的 `OcrSkill.id` 列表（§18，**TODO 占位字段**）。当前未消费，composer 不读取；optimizer 不允许修改 |
 | `order_index` | INT | NOT NULL, default 0 | 拼接顺序 |
 | `status` | VARCHAR(16) | NOT NULL, default `'active'` | `active` / `frozen`（未来扩展） |
 | `module_accuracy` | FLOAT | NULLABLE | 最近一次评估的 accuracy |
@@ -350,6 +350,120 @@ Output a JSON:
 
 LLM 失败时使用 fallback：description = `f"提取 {json_path} 的字段"`，ocr_prompt = `f"识别文档中的 {display_name}，输出为 {schema_fragment}"`。
 
+### 6.4 从预设国家 yaml 拆解（New API 入口的初始化路径）
+
+适用场景：用户在 `/workspace/new` 顶部「选国家」chip 选中一个有 yaml 的国家（如 MY）。此路径**与 §6.1 完全不同**：不读 `ApiDefinition.response_schema`，而是读仓库根目录的 `<COUNTRY>_invoice_prompt.yaml`。yaml 文件**不允许被代码修改**，是模板的唯一来源。
+
+**入口端点**：`POST /api/v1/api-definitions/from-country-template` body `{country: "MY"}`（详见 §12）。
+
+**核心步骤**（在一个事务内完成）：
+
+```
+init_from_country_template(country):
+    1. 加载 <COUNTRY>_invoice_prompt.yaml（仓库根目录）
+       - 校验 yaml 含 prompt_template.prompt_format 和 prompt_template.json_schema
+       - 替换占位符：{tax_categories_text} → "请使用文档中出现的原名"
+    2. 创建占位 ApiDefinition:
+         status='pending_first_doc'
+         name=f"{country}_invoice_{hex6}"
+         api_code=f"{country.lower()}-invoice-{hex6}"
+         response_schema=yaml.json_schema 原文
+         config={"source_country": country, "preset_yaml": "<COUNTRY>_invoice_prompt.yaml"}
+    3. 创建 OcrPromptVersion v1:
+         status='active', origin='init', version='1'
+         composed_prompt = yaml.prompt_format 原文（已替换占位符）  ← §5.2 例外
+         composed_schema = yaml.json_schema 原文
+    4. 拆解 30 个 OcrModule（顺序按 order_index）:
+         order_index=0: 特殊 module global_rules（见下方）
+         order_index=1..26: 26 个标量字段
+         order_index=27..29: 3 个数组字段（line_items / tax_summary / original_invoice_references）
+    5. ApiDefinition.prompt_version_id = v1.id
+    6. 返回 ApiDefinition + Version + Modules
+```
+
+#### 6.4.1 拆解规则（仅取 yaml.json_schema.items.anyOf[0]，即 invoice/receipt 分支）
+
+> yaml 的 `anyOf` 第二分支（other）只有 docType+page；不参与拆解。`doc_type` module 的 enum 保持 `[invoice, receipt]`，与 yaml 分支 1 一致。
+
+**特殊 module — `global_rules`**：
+```
+module_key      : "global_rules"
+display_name    : "全局规则与约束"
+json_path       : "$"
+schema_fragment : {}  ← 空字典，不贡献 schema
+order_index     : 0
+description     : "整张文档级别的提取规则集合：日期、数字格式、税种简称、跨页合并等"
+ocr_suggestions : { semantics: "全局规则不针对单个字段", position: "适用于所有字段", most_common_feature: "—", extra_features: [] }
+ocr_prompt      : <yaml prompt_format 中"提取规则"/"日期处理规则"/"必填字段"/"缺失信息"/"税种简称映射"/"必须全面提取"/"加项减项税种"等全部全局段落原文>
+```
+
+> **保护标记**（与 LLM 优化器隔离）：global_rules module 在 module_optimizer 输入中 **不参与** per-field diff 计算（accuracy 永远 N/A）；meta_optimizer 的 prompt 中明确告知"`module_key='global_rules'` 不可删、不可改名、不可作为孤儿字段所属"。代码层强制保护见 §15。
+
+**26 个标量 module**（每个 module 一份字段；命名为 yaml field 的 snake_case）：
+
+| order | module_key | display_name | json_path | enum/notes |
+|---|---|---|---|---|
+| 1 | doc_type | 票据大类识别 | `$[*].docType` | enum: [invoice, receipt] |
+| 2 | invoice_type | 发票子类型识别 | `$[*].invoiceType` | enum: [Commercial Invoice, Proforma Invoice, Credit Note, Tax Invoice] |
+| 3 | name_of_invoice | 票面标题识别 | `$[*].nameOfInvoice` | |
+| 4 | invoice_number | 发票号码识别 | `$[*].invoiceNumber` | 含 MY 规则 |
+| 5 | invoice_code | 发票代码/序列号识别 | `$[*].invoiceCode` | |
+| 6 | invoice_date | 发票日期识别 | `$[*].invoiceDate` | |
+| 7 | due_date | 付款截止日期识别 | `$[*].dueDate` | |
+| 8 | purchase_order_number | 采购订单号识别 | `$[*].purchaseOrderNumber` | 含 MY 规则 |
+| 9 | sales_order_number | 销售订单号识别 | `$[*].salesOrderNumber` | |
+| 10 | delivery_order_number | 发货单号识别 | `$[*].deliveryOrderNumber` | 含 MY 规则 |
+| 11 | currency | 币种识别 | `$[*].currency` | ISO 4217 |
+| 12 | total_net_amount | 不含税总净额识别 | `$[*].totalNetAmount` | |
+| 13 | total_amount | 含税总金额识别 | `$[*].totalAmount` | |
+| 14 | total_tax_amount | 总税额识别 | `$[*].totalTaxAmount` | |
+| 15 | bill_to_name | 收票方名称识别 | `$[*].billToName` | |
+| 16 | bill_to_composite | 收票方完整地址识别 | `$[*].billToComposite` | |
+| 17 | bill_to_country | 收票方国家识别 | `$[*].billToCountry` | |
+| 18 | bill_to_country_code | 收票方国家代码识别 | `$[*].billToCountryCode` | ISO 3166-1 alpha-2 |
+| 19 | bill_to_tax_id | 收票方税号识别 | `$[*].billToTaxIdentificationNumber` | 含 MY 规则 |
+| 20 | bill_from_name | 开票方名称识别 | `$[*].billFromName` | |
+| 21 | bill_from_composite | 开票方完整地址识别 | `$[*].billFromComposite` | |
+| 22 | bill_from_country | 开票方国家识别 | `$[*].billFromCountry` | |
+| 23 | bill_from_country_code | 开票方国家代码识别 | `$[*].billFromCountryCode` | |
+| 24 | bill_from_tax_id | 开票方税号识别 | `$[*].billFromTaxIdentificationNumber` | |
+| 25 | bill_from_business_reg_no | 开票方商业登记号识别 | `$[*].billFromBusinessRegistrationNumber` | 含 MY 规则 |
+| 26 | page | 页码识别 | `$[*].page` | array of NUMBER |
+
+每个标量 module 的 `ocr_prompt` 模板：
+
+```
+你负责从文档中识别「{display_name}」字段。
+
+输出位置（json_path）：{json_path}
+该字段类型：{schema_fragment.type}{enum 时附 "（枚举：{enum 列表}）"}
+
+# 识别规则
+{yaml 该字段的 description 原文}
+
+# 输出要求
+找不到时输出 null。{type 为 NUMBER 时附加 "金额一律输出纯数字，遵循 global_rules 中的千分位与小数点规则。"}
+```
+
+`schema_fragment` 直接取 yaml 该字段定义的 dict（type 大小写**保留原样**——大写是 Gemini SDK 方言；composer 在 §10 的 `assemble_schema` 中**不再校验** type 字段大小写，仅做合并）。
+
+**3 个数组 module**：
+
+| order | module_key | display_name | json_path | schema_fragment 来源 |
+|---|---|---|---|---|
+| 27 | line_items | 商品/服务明细识别 | `$[*].detailOfGoodsOrServices[*]` | yaml 该数组的 items schema |
+| 28 | tax_summary | 税金汇总识别 | `$[*].detailOfTaxSummary[*]` | 同上 |
+| 29 | original_invoice_references | 原始发票引用识别（Credit Note 专用） | `$[*].originalInvoiceReferences[*]` | 同上 |
+
+数组 module 的 `ocr_prompt` 在标量模板基础上额外加一段"`# 输出形式：JSON 数组，每行一个对象，含字段 [列名列表]`"。
+
+#### 6.4.2 与 §6.1 自动拆分的关系
+
+- §6.1（response_schema 自动拆分 + 标量分组）：用于**用户自定义 schema** 的 API 初始化路径，保留不变
+- §6.4（country yaml 拆分 + 每字段独立）：用于**预设国家模板**入口，每字段一 module，**禁用** §6.1 的 identifiers/temporal/totals 分组
+
+两条路径在 `init_version` 之外的所有后续行为（advance、manual_patch、finalize、composer-from-v2、optimizer）完全相同。
+
 ---
 
 ## 7. 优化流程（核心算法）
@@ -494,7 +608,7 @@ manual_patch(api_def_id, source_version_id, edits=[
          - produced_in_round = Run.current_round_num
     4. 复制每个 OcrModule → 新模块快照:
          - 用户提供的 edits 覆盖对应字段（description / ocr_suggestions）
-         - skill_ids 强制 = source_module.skill_ids.copy()（人工 patch 也不改 skills，需走 §17 专用入口）
+         - skill_ids 强制 = source_module.skill_ids.copy()（人工 patch 也不改 skills，需走 §18 专用入口）
          - ocr_prompt 保持不变（patch 阶段不重生成；将在下一轮 OCR 跑时由 composer 拼接，或在用户下次"再 patch"时手动更新）
     5. composer.assemble_prompt / assemble_schema → 写入 v_new
     6. 返回 v_new（status='draft'）
@@ -714,7 +828,9 @@ new_module = OcrModule(
 {global_self_check}                     # 固定尾：自检清单
 ```
 
-**global_preamble** / **global_output_contract** / **global_self_check** 是模板常量（参考 [`initial_extraction.py:27`](../backend/app/services/initial_extraction.py) 的层次化 prompt），不进入模块迭代。
+**global_preamble** / **global_output_contract** / **global_self_check** 是模板常量，不进入模块迭代。
+
+> **§6.4 例外**：当 `OcrPromptVersion.origin == 'init'` 且来源是预设国家 yaml 时，`composed_prompt` **不**由 composer 生成，直接存 yaml 的 `prompt_format` 原文（已替换占位符）。`module_key='global_rules'` 那个特殊 module 的 `ocr_prompt` 内容即对应 yaml 全局段落的镜像，仅用于后续 v2 起 composer 重新拼接时还原全局规则；不参与 v1 的 OCR 调用。从 v2 起（advance_round 产物），composer 正常拼接所有 modules 包括 global_rules（order_index=0 保证它排在最前）。
 
 ### 10.2 composed_schema 结构
 
@@ -777,11 +893,12 @@ JSON 后端**只用于本地开发**，CI 和生产必须用 SQL。
 
 ## 12. API 端点
 
-挂在现有 `/api/v1` 下，路由前缀 `/api-definitions/{id}/ocr-optimizer`：
+挂在现有 `/api/v1` 下：
 
 | 方法 | 端点 | 说明 |
 |------|------|------|
-| POST | `/api-definitions/{id}/ocr-optimizer/init` | 从 response_schema 自动拆分初始模块，创建首个 OcrPromptVersion (draft, origin='init')。请求体 `{sample_document_ids: [uuid,...]}` |
+| **POST** | `/api/v1/api-definitions/from-country-template` | **新**：从预设国家 yaml 一站式创建占位 ApiDefinition + OcrPromptVersion v1 + 30 modules。请求体 `{country: "MY"}`；返回 `{api_definition_id, version_id, redirect_url: "/workspace/api/<id>"}`。详见 §6.4 |
+| POST | `/api-definitions/{id}/ocr-optimizer/init` | 从 response_schema 自动拆分初始模块（§6.1），创建首个 OcrPromptVersion (draft, origin='init')。请求体 `{sample_document_ids: [uuid,...]}` |
 | GET | `/api-definitions/{id}/ocr-optimizer/versions` | 列出所有版本（含 modules 摘要 + origin 字段） |
 | GET | `/api-definitions/{id}/ocr-optimizer/versions/{version_id}` | 单版本详情（含所有模块全文） |
 | PATCH | `/api-definitions/{id}/ocr-optimizer/versions/{version_id}/activate` | 直接激活某版本（finalize 之外的旁路；通常仅用于回滚） |
@@ -795,7 +912,7 @@ JSON 后端**只用于本地开发**，CI 和生产必须用 SQL。
 | GET | `/api-definitions/{id}/ocr-optimizer/runs/{run_id}/rounds/{round_num}` | 单轮详情（含所有模块的 iteration） |
 | GET | `/api-definitions/{id}/ocr-optimizer/runs/{run_id}/iterations` | Flat 列出本 Run 所有迭代 |
 
-### 12.1 Skill endpoints（TODO — 占位，详见 §17）
+### 12.1 Skill endpoints（TODO — 占位，详见 §18）
 
 | 方法 | 端点 | 说明 |
 |------|------|------|
@@ -843,6 +960,11 @@ JSON 格式（**包装元信息版**，详见 UI_DESIGN §14）：
    - `backend/app/services/extract_service.py:97` — `from app.optimizers import get_active_prompt` 改为 `from app.ocr_optimizer.service import get_active_composed_prompt`；签名相同（接收 `db, api_def_id` 返回字符串）
 5. **数据迁移**：现有 `prompt_versions` 表如果有数据，先 export 一份 prompt_text，待新系统第一次 init 时作为「manual 模块」整体导入（一个 module 包含全部内容）；用户后续手动重构成多模块
 6. **`ApiDefinition.config` 改造**：将 `sample_document_id` (单) 字段迁移成 `sample_document_ids` (list)。读取时双向兼容一段时间：`config.get("sample_document_ids") or [config["sample_document_id"]]`
+7. **`api_definitions` 表加列**：`status VARCHAR(24) NOT NULL DEFAULT 'active'`，取值 `'active'` / `'pending_first_doc'`。alembic 迁移把存量行回填为 `'active'`。`'pending_first_doc'` 行在列表查询中默认过滤（详见 §16.1）
+8. **删除文件**：`backend/app/services/initial_extraction.py` 整个删除；`backend/app/api/v1/documents.py` 中 `POST /{id}/initial-extract` 端点删除（被 §6.4 路径完全替代）
+9. **新增文件**：`backend/app/ocr_optimizer/service/template_loader.py`（解析 yaml + 拆解 30 modules）、`backend/app/ocr_optimizer/service/preset_init.py`（编排 ApiDef + Version + Modules 创建）
+10. **改 reprocess 行为**：`backend/app/services/document_service.py::reprocess_document` 当 `prompt=None` 时改为优先取 `ApiDefinition.prompt_version_id` 对应 `OcrPromptVersion.composed_prompt`；只有完全无 active version 时才用旧 fallback
+11. **新增端点**：`POST /api/v1/api-definitions/from-country-template`，参数 `{country: "MY"}`。endpoint body 详见 §12
 
 ---
 
@@ -871,6 +993,7 @@ JSON 格式（**包装元信息版**，详见 UI_DESIGN §14）：
 4. **module_key 跨版本稳定**，便于追踪同一模块的演化链
 5. **Annotation 是 GT 唯一来源**，优化器禁止读 ProcessingResult 的 structured_data 当 GT
 6. **modules 数量上限 20**（防止 meta optimizer 无限增模块），超过则 Run.status='failed' 提示人工干预
+    - **例外**：§6.4 country yaml 初始化路径**允许首版超过 20**（实测 MY 为 30）。这是用户预设输入，meta_optimizer 后续轮**不得新增** module 越过 20，但允许保持/缩减
 7. **sample_document_ids 至少 3 张**，少于则拒绝触发
 8. **生产部署必须 SQL backend**，JSON backend 仅本地开发
 9. **Run 不自驱动多轮**：每跑完一轮立刻 `paused_for_review`，必须用户显式 advance / finalize / abort（§7）
@@ -880,10 +1003,85 @@ JSON 格式（**包装元信息版**，详见 UI_DESIGN §14）：
     - `manual_patch` 端点也不允许在 edits 中包含 skill_ids（schema 校验拒绝）
     - 修改 skill_ids 的唯一合法途径：§12.1 `/modules/{key}/skills` 端点（MVP TODO）
 11. **manual_edit 版本不自动 activate**。它只是 paused_for_review 状态下的 draft，需通过 §7.6 finalize 显式选定才生效
+12. **`global_rules` module 受保护**（仅 §6.4 路径产生）：
+    - module_key 永远 = `"global_rules"`，跨版本不可改名
+    - `module_optimizer` 不为它计算 diff（accuracy 字段记 NULL，跳过 LLM 调用）
+    - `meta_optimizer.remove_module_keys` 不允许包含 `"global_rules"`；包含则被代码层 strip 并记 warning
+    - composer 在拼接时把 `global_rules.ocr_prompt` 放在 `GLOBAL_PREAMBLE` **之后、其他 module 之前**（依 order_index=0 保证）
+13. **国家 yaml 文件不可被代码修改**（`MY_invoice_prompt.yaml` 等仓库根目录文件）。只读加载；如需迭代该模板必须由用户直接编辑文件。任何 service 不允许调用 `open(path, 'w')` 写 yaml
 
 ---
 
-## 16. 待后续讨论的开放点
+## 16. 占位 ApiDefinition 生命周期（pending_first_doc）
+
+§6.4 在用户选国家的那一刻就创建 `status='pending_first_doc'` 的 ApiDefinition。下面定义这个状态的完整生命周期。
+
+### 16.1 状态转换
+
+```
+[用户在 /workspace/new 点 MY chip]
+        │
+        ▼
+POST /api/v1/api-definitions/from-country-template {country:"MY"}
+        │
+        ▼
+DB 写入: ApiDefinition(status='pending_first_doc', name="MY_invoice_<hex>",
+                       api_code="my-invoice-<hex>", ...)
+        + OcrPromptVersion v1 (active)
+        + 30 个 OcrModule
+        │
+        ▼
+[前端跳 /workspace/api/<id>]
+        │
+        ├─ 用户在 7 天内：
+        │      上传文档 → sample_document_ids 写入 config，doc.api_definition_id 绑定
+        │      编辑 GT → Annotation 行写入
+        │      点「保存并生成 API」→ ApiDefinition.status='active'，
+        │                            用户提交的 name/description/api_code 覆盖默认值
+        │
+        └─ 用户 7 天内无任何上述活动：
+               下次有人 GET /api/v1/api-definitions（或定时任务跑）时
+               lazy 检查 (now() - updated_at) >= 7d AND status='pending_first_doc'
+               → DELETE CASCADE: ApiDefinition + Version + Modules + 关联 Document
+```
+
+### 16.2 字段定义
+
+`api_definitions.status` 列：
+
+| 取值 | 含义 |
+|------|------|
+| `'active'` | 正常 API（默认值；用户已保存生效） |
+| `'pending_first_doc'` | §6.4 创建，等待用户上传/编辑/保存 |
+
+`api_definitions.updated_at` 列：现有字段，用于过期判断。下述操作刷新该字段：
+- 上传文档绑定到该 ApiDef
+- 创建/修改 Annotation
+- 用户在 workspace 内任何动作触发的 PATCH/PUT
+- 不刷新：单纯 GET 查询
+
+### 16.3 列表过滤
+
+`GET /api/v1/api-definitions` 默认 `status='active'`。新增可选 query `?include_pending=true` 暴露占位 API（仅供 debug，前端 ApiList 不传）。
+
+### 16.4 清理策略
+
+**MVP**：lazy cleanup。每次 list 查询前执行一条 `DELETE FROM api_definitions WHERE status='pending_first_doc' AND updated_at < now() - interval '7 days'`。
+
+**未来**：拆出 cron 任务/Celery beat 定时执行（与 list 解耦）。
+
+### 16.5 用户切换国家的处理
+
+§6.4 决策：**不允许切换国家**。前端国家 chip 在跳转后已不可见（用户已离开 /workspace/new 进入 /workspace/api/<id>）。如用户需要换国家，唯一方法：
+
+1. 在 ApiList 页删掉这个占位 API（或等 7 天自动清）
+2. 回首页重新点「定制新 API」→ 选新国家
+
+代码层无需特殊"切换"逻辑。
+
+---
+
+## 17. 待后续讨论的开放点
 
 下面这些是本文档没决定、需要你后续确认的点：
 
@@ -896,7 +1094,7 @@ JSON 格式（**包装元信息版**，详见 UI_DESIGN §14）：
 
 ---
 
-## 17. Skills 子系统（TODO — 占位设计）
+## 18. Skills 子系统（TODO — 占位设计）
 
 > **状态**：仅 design + DB schema + 占位 endpoint + 前端按钮入口。**业务逻辑、composer 集成、LLM 反馈消费均不在 MVP 实现范围。** 所有具体功能点亮前，前端按钮一律 toast `Coming Soon`。
 
