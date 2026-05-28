@@ -1,20 +1,24 @@
 """
-Customer-driven iteration pipeline.
+Customer-driven iteration pipeline (DB-backed v2).
 
 Sequence triggered by `POST /api-definitions/{id}/customize`:
-  1. Receive field diffs from the workspace (edits + adds)
-  2. Run the reflection layer over each diff → ReflectionResult by module_key
-  3. Fork the source ApiDefinition into a new one with its own api_code
-     (so the customer's customized template is independent)
-  4. Clone all OcrModule rows over to the new ApiDefinition, applying
-     description / ocr_suggestions patches derived from the reflection
-  5. Inside the new ApiDefinition: start_optimization → advance_round × 2
-     (3 rounds total) → finalize_run on the best version
-  6. Track job state in an in-memory store (good enough for MVP — survives
-     until process restart)
+  1. Receive field diffs from the workspace (edits + adds).
+  2. Persist a CustomizeJob row (status=queued, diffs stored in JSON column).
+  3. In the background task:
+     a. Run reflection over each diff → ReflectionResult by module_key.
+     b. Fork the source ApiDefinition into a new one with its own api_code.
+     c. Check the new ApiDefinition's sample count:
+        - >= MIN_SAMPLES (3): proceed immediately to 3-round optimization.
+        - < MIN_SAMPLES: park job in `waiting_for_samples`. Customer must
+          upload more docs to the new ApiDefinition. When count crosses the
+          threshold, the upload hook auto-resumes the job.
+     d. After optimization (or skip): mark `completed`, store new_api_code.
 
-The whole thing runs in a FastAPI BackgroundTask. Frontend polls `GET
-/customize-jobs/{job_id}` for progress.
+Recovery on process boot:
+  - Any job in `optimizing` that hasn't updated for STALE_OPTIMIZING_MIN is
+    marked `failed` (the customer can re-trigger by saving again).
+  - `waiting_for_samples` jobs stay parked — sample uploads pick them up.
+  - `reflecting` / `forking` jobs are short-lived; if stuck, marked failed.
 """
 
 from __future__ import annotations
@@ -22,20 +26,20 @@ from __future__ import annotations
 import copy
 import logging
 import re
-import threading
-import time
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.database import SessionLocal
 from app.models.api_definition import ApiDefinition, ApiDefinitionStatus
 
 from ..models import (
+    CustomizeJob,
+    CustomizeJobStatus,
     OcrModule,
     OcrPromptVersion,
     PromptVersionStatus,
@@ -48,100 +52,227 @@ from . import composer, persistence, run_orchestrator
 logger = logging.getLogger(__name__)
 
 
-# ── Job state (in-memory MVP) ────────────────────────────────────────────────
+# ── Constants ────────────────────────────────────────────────────────────────
+
+MIN_SAMPLES_FOR_ITERATION = 3
+MAX_SAMPLES_HINT = 10  # informational only; messaging caps the suggestion at 9 new uploads
+STALE_OPTIMIZING_MIN = 10  # minutes before an "optimizing" job is considered stuck
 
 
-@dataclass
-class CustomizeJob:
-    id: str
-    source_api_definition_id: str
-    new_api_definition_id: str | None = None
-    new_api_code: str | None = None
-    status: str = "queued"   # queued | reflecting | forking | optimizing | completed | failed
-    phase_detail: str = ""
-    rounds_done: int = 0
-    rounds_total: int = 3
-    overall_accuracy: float | None = None
-    error_message: str | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    completed_at: datetime | None = None
-    # Reflection outputs (truncated to bound payload size)
-    reflection_summary: list[dict] = field(default_factory=list)
+# ── DB serialization helpers ────────────────────────────────────────────────
 
 
-_JOBS: dict[str, CustomizeJob] = {}
-_JOBS_LOCK = threading.Lock()
+def _job_to_dict(job: CustomizeJob) -> dict:
+    """Render a CustomizeJob for the HTTP layer."""
+    return {
+        "job_id": str(job.id),
+        "source_api_definition_id": str(job.source_api_definition_id),
+        "new_api_definition_id": str(job.new_api_definition_id) if job.new_api_definition_id else None,
+        "new_api_code": job.new_api_code,
+        "status": job.status,
+        "phase_detail": job.phase_detail or "",
+        "rounds_done": job.rounds_done or 0,
+        "rounds_total": job.rounds_total or 3,
+        "overall_accuracy": job.overall_accuracy,
+        "error_message": job.error_message,
+        "reflection_summary": job.reflection_summary or [],
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+    }
 
 
-def _put_job(job: CustomizeJob) -> None:
-    with _JOBS_LOCK:
-        _JOBS[job.id] = job
+def get_job_dict(db: Session, job_id: uuid.UUID) -> dict | None:
+    job = db.get(CustomizeJob, job_id)
+    if not job:
+        return None
+    return _job_to_dict(job)
 
 
-def get_job(job_id: str) -> CustomizeJob | None:
-    with _JOBS_LOCK:
-        return _JOBS.get(job_id)
+def _update_job(db: Session, job: CustomizeJob, **kwargs) -> None:
+    for k, v in kwargs.items():
+        setattr(job, k, v)
+    job.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(job)
 
 
-def _update(job: CustomizeJob, **kwargs) -> None:
-    with _JOBS_LOCK:
-        for k, v in kwargs.items():
-            setattr(job, k, v)
+def find_waiting_job_for_api(db: Session, api_definition_id: uuid.UUID) -> CustomizeJob | None:
+    """Return the most-recent `waiting_for_samples` job whose new ApiDef = api_definition_id.
+
+    Used by the sample-upload hook to auto-resume.
+    """
+    return (
+        db.query(CustomizeJob)
+        .filter(
+            CustomizeJob.new_api_definition_id == api_definition_id,
+            CustomizeJob.status == CustomizeJobStatus.waiting_for_samples.value,
+        )
+        .order_by(CustomizeJob.created_at.desc())
+        .first()
+    )
 
 
-# ── Entry point ──────────────────────────────────────────────────────────────
+def find_latest_active_job_for_api(db: Session, api_definition_id: uuid.UUID) -> CustomizeJob | None:
+    """Return the most-recent job (any status except completed) tied to this
+    ApiDefinition — either as source OR as fork target.
+
+    Used by the frontend on workspace load to rehydrate the customize banner
+    after a navigation. We exclude `completed` so users don't see stale
+    "✓ 已生成新模板" cards forever. `failed` IS included so the customer can
+    see what went wrong on the failed run.
+    """
+    return (
+        db.query(CustomizeJob)
+        .filter(
+            (CustomizeJob.source_api_definition_id == api_definition_id)
+            | (CustomizeJob.new_api_definition_id == api_definition_id),
+            CustomizeJob.status != CustomizeJobStatus.completed.value,
+        )
+        .order_by(CustomizeJob.created_at.desc())
+        .first()
+    )
+
+
+# ── Public API ───────────────────────────────────────────────────────────────
 
 
 def submit_customize_job(
+    db: Session,
     *,
     source_api_definition_id: uuid.UUID,
     diffs: list[dict],
     user_id: uuid.UUID | None = None,
 ) -> CustomizeJob:
-    """Create a job record and return immediately. Caller schedules
-    `run_customize_job(job.id)` as a background task."""
+    """Persist a job. Caller schedules `run_customize_job(job.id)` after commit."""
     if not diffs:
         raise ValidationError("No field corrections provided")
 
     job = CustomizeJob(
-        id=str(uuid.uuid4()),
-        source_api_definition_id=str(source_api_definition_id),
+        id=uuid.uuid4(),
+        source_api_definition_id=source_api_definition_id,
+        diffs=diffs,
+        status=CustomizeJobStatus.queued.value,
+        phase_detail="排队中...",
+        rounds_total=3,
+        user_id=user_id,
     )
-    _put_job(job)
-    logger.info("Queued customize job %s for API %s with %d diff(s)",
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    logger.info("Created customize job %s for API %s with %d diff(s)",
                 job.id, source_api_definition_id, len(diffs))
-    # Stash inputs on the job so the background runner can read them without
-    # re-receiving them via params.
-    job._diffs = diffs  # type: ignore[attr-defined]
-    job._user_id = user_id  # type: ignore[attr-defined]
     return job
 
 
-def run_customize_job(job_id: str) -> None:
-    """Run the full pipeline. Designed to be called via BackgroundTasks.
-
-    Owns its own DB session (don't reuse request-scoped one in a background
-    thread — SQLite + thread safety).
-    """
-    job = get_job(job_id)
-    if not job:
-        logger.error("run_customize_job: no such job id=%s", job_id)
-        return
-    diffs: list[dict] = getattr(job, "_diffs", [])
-    user_id: uuid.UUID | None = getattr(job, "_user_id", None)
-
+def run_customize_job(job_id: uuid.UUID) -> None:
+    """Background task entry. Owns its own DB session."""
     db: Session = SessionLocal()
     try:
-        _execute_pipeline(db, job, diffs, user_id)
-    except Exception as exc:
-        logger.exception("Customize job %s failed: %s", job.id, exc)
-        _update(
-            job,
-            status="failed",
-            error_message=str(exc)[:1024],
-            completed_at=datetime.now(timezone.utc),
+        job = db.get(CustomizeJob, job_id)
+        if not job:
+            logger.error("run_customize_job: no such job id=%s", job_id)
+            return
+        try:
+            _execute_pipeline(db, job)
+        except Exception as exc:
+            logger.exception("Customize job %s failed: %s", job.id, exc)
+            _update_job(
+                db, job,
+                status=CustomizeJobStatus.failed.value,
+                error_message=str(exc)[:1024],
+                completed_at=datetime.now(timezone.utc),
+            )
+    finally:
+        db.close()
+
+
+def resume_customize_job(job_id: uuid.UUID) -> bool:
+    """Resume a waiting_for_samples job. Returns True if resumption was started.
+
+    Safe to call multiple times (idempotent): if the job is already past
+    `waiting_for_samples`, returns False without doing anything.
+    """
+    db: Session = SessionLocal()
+    try:
+        job = db.get(CustomizeJob, job_id)
+        if not job:
+            logger.warning("resume_customize_job: no such job %s", job_id)
+            return False
+        if job.status != CustomizeJobStatus.waiting_for_samples.value:
+            logger.info("resume_customize_job: job %s not in waiting_for_samples (=%s)",
+                        job.id, job.status)
+            return False
+        if not job.new_api_definition_id:
+            logger.error("resume_customize_job: job %s has no new_api_definition_id", job.id)
+            return False
+        # Verify the new ApiDef now has enough samples
+        new_api = db.get(ApiDefinition, job.new_api_definition_id)
+        if not new_api:
+            _update_job(db, job, status=CustomizeJobStatus.failed.value,
+                        error_message="forked ApiDefinition was deleted",
+                        completed_at=datetime.now(timezone.utc))
+            return False
+        cfg = new_api.config or {}
+        ids = cfg.get("sample_document_ids") or []
+        if len(ids) < MIN_SAMPLES_FOR_ITERATION:
+            logger.info("resume_customize_job: job %s still has %d/%d samples, staying parked",
+                        job.id, len(ids), MIN_SAMPLES_FOR_ITERATION)
+            return False
+        # Transition: kick off optimization
+        _update_job(db, job,
+                    status=CustomizeJobStatus.optimizing.value,
+                    phase_detail="样本就绪，开始 3 轮迭代优化")
+        try:
+            _run_three_rounds(db, job, new_api)
+        except Exception as exc:
+            logger.exception("resume optimization failed for job %s: %s", job.id, exc)
+            _update_job(db, job, status=CustomizeJobStatus.failed.value,
+                        error_message=str(exc)[:1024],
+                        completed_at=datetime.now(timezone.utc))
+            return False
+        return True
+    finally:
+        db.close()
+
+
+def reap_stale_jobs() -> int:
+    """Mark jobs stuck in transient phases as failed.
+
+    Called once on process boot (see app.main lifespan). Counts marked.
+    """
+    db: Session = SessionLocal()
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=STALE_OPTIMIZING_MIN)
+        # SQLite stores naive datetimes; compare via cast at the DB level.
+        stuck_states = {
+            CustomizeJobStatus.optimizing.value,
+            CustomizeJobStatus.reflecting.value,
+            CustomizeJobStatus.forking.value,
+            CustomizeJobStatus.queued.value,
+        }
+        candidates = (
+            db.query(CustomizeJob)
+            .filter(CustomizeJob.status.in_(stuck_states))
+            .all()
         )
-        db.rollback()
+        marked = 0
+        for job in candidates:
+            last_touch = job.updated_at or job.created_at
+            if last_touch and last_touch.tzinfo is None:
+                # Treat naive as UTC
+                last_touch = last_touch.replace(tzinfo=timezone.utc)
+            if last_touch and last_touch < cutoff:
+                prior_status = job.status
+                job.status = CustomizeJobStatus.failed.value
+                job.error_message = (job.error_message or "") + \
+                    f" [reaped: stale {prior_status} > {STALE_OPTIMIZING_MIN}min on boot]"
+                job.completed_at = datetime.now(timezone.utc)
+                marked += 1
+        if marked:
+            db.commit()
+            logger.info("reap_stale_jobs: marked %d stale customize jobs as failed", marked)
+        return marked
     finally:
         db.close()
 
@@ -149,8 +280,9 @@ def run_customize_job(job_id: str) -> None:
 # ── Pipeline ─────────────────────────────────────────────────────────────────
 
 
-def _execute_pipeline(db: Session, job: CustomizeJob, diffs: list[dict], user_id: uuid.UUID | None) -> None:
-    src_id = uuid.UUID(job.source_api_definition_id)
+def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
+    diffs: list[dict] = list(job.diffs or [])
+    src_id = job.source_api_definition_id
     src_api = db.get(ApiDefinition, src_id)
     if not src_api:
         raise NotFoundError(f"ApiDefinition {src_id} not found")
@@ -172,14 +304,16 @@ def _execute_pipeline(db: Session, job: CustomizeJob, diffs: list[dict], user_id
     } for m in src_modules}
 
     # ── Phase 1: reflection ───────────────────────────────────────────────
-    _update(job, status="reflecting", phase_detail="正在为每个字段调用反思 agent")
+    _update_job(db, job,
+                status=CustomizeJobStatus.reflecting.value,
+                phase_detail="正在为每个字段调用反思 agent")
     reflections = reflect_on_diffs(
         diffs,
         modules_by_key=modules_by_key,
         processor_spec=src_api.processor_type or "gemini",
         model_name=src_api.model_name,
     )
-    job.reflection_summary = [
+    reflection_summary = [
         {
             "module_key": r.module_key,
             "kind": r.kind,
@@ -191,48 +325,73 @@ def _execute_pipeline(db: Session, job: CustomizeJob, diffs: list[dict], user_id
     ]
 
     # ── Phase 2: fork ApiDefinition with new api_code ─────────────────────
-    _update(job, status="forking", phase_detail="复制为客户专属模板，分配新 api_code")
-    new_api, new_version, new_modules = _fork_api_definition(
+    _update_job(db, job,
+                status=CustomizeJobStatus.forking.value,
+                phase_detail="复制为客户专属模板，分配新 api_code",
+                reflection_summary=reflection_summary)
+    new_api, new_version, _new_modules = _fork_api_definition(
         db, src_api=src_api, src_version=src_version, src_modules=src_modules,
-        diffs=diffs, reflections=reflections, user_id=user_id,
+        diffs=diffs, reflections=reflections, user_id=job.user_id,
     )
-    _update(job, new_api_definition_id=str(new_api.id), new_api_code=new_api.api_code)
+    _update_job(db, job,
+                new_api_definition_id=new_api.id,
+                new_api_code=new_api.api_code)
 
-    # ── Phase 3: 3-round optimization ─────────────────────────────────────
-    _update(job, status="optimizing", phase_detail="迭代优化 · 第 1 轮", rounds_done=0)
-    try:
-        run = run_orchestrator.start_optimization(
-            db,
-            new_api.id,
-            max_rounds=3,
+    # ── Phase 3: sample gate ──────────────────────────────────────────────
+    # The fork inherits sample_document_ids from source. If the source had at
+    # least MIN_SAMPLES, we proceed; otherwise park the job.
+    cfg = new_api.config or {}
+    ids = cfg.get("sample_document_ids") or []
+    have = len(ids)
+    if have < MIN_SAMPLES_FOR_ITERATION:
+        need = MIN_SAMPLES_FOR_ITERATION - have
+        msg = (
+            f"已生成新模板 {new_api.api_code}。"
+            f"当前 {have}/{MIN_SAMPLES_FOR_ITERATION} 样本，"
+            f"还需上传 {need} 个不同格式的样本以启动 3 轮迭代优化。"
         )
-    except ValidationError as exc:
-        # Most common reason: no GT samples on the new ApiDefinition. We still
-        # fork-and-deliver the new api_code so the customer can upload more
-        # samples + retry, but mark the job partially completed.
-        logger.warning("3-round skipped (no GT yet) for job %s: %s", job.id, exc)
-        _update(
-            job,
-            status="completed",
-            phase_detail=f"已生成新模板（{new_api.api_code}），但样本不足无法迭代：{exc}",
-            completed_at=datetime.now(timezone.utc),
-        )
+        _update_job(db, job,
+                    status=CustomizeJobStatus.waiting_for_samples.value,
+                    phase_detail=msg)
+        logger.info("Job %s parked in waiting_for_samples (%d/%d samples)",
+                    job.id, have, MIN_SAMPLES_FOR_ITERATION)
         return
 
-    _update(job, rounds_done=run.rounds_completed)
+    # ── Phase 4: 3-round optimization ─────────────────────────────────────
+    _update_job(db, job,
+                status=CustomizeJobStatus.optimizing.value,
+                phase_detail="迭代优化 · 第 1 轮")
+    _run_three_rounds(db, job, new_api)
 
-    # Run rounds 2 and 3 if we're still under target & under cap
-    best_version_id = _latest_round_version(db, run.id) or src_version.id
+
+def _run_three_rounds(db: Session, job: CustomizeJob, new_api: ApiDefinition) -> None:
+    """Phase 4: start_optimization + advance_round × 2 + finalize."""
+    try:
+        run = run_orchestrator.start_optimization(db, new_api.id, max_rounds=3)
+    except ValidationError as exc:
+        # Sample gate elsewhere should have prevented this, but guard anyway
+        logger.warning("3-round optimization skipped for job %s: %s", job.id, exc)
+        _update_job(db, job,
+                    status=CustomizeJobStatus.completed.value,
+                    phase_detail=f"已生成新模板（{new_api.api_code}），但跳过迭代：{exc}",
+                    completed_at=datetime.now(timezone.utc))
+        return
+
+    _update_job(db, job, rounds_done=run.rounds_completed,
+                phase_detail=f"迭代优化 · 第 {run.rounds_completed} 轮完成")
+
+    # Rounds 2 & 3
+    best_version_id = _latest_round_version(db, run.id) or None
     for _ in range(2):
-        run = _refresh(db, run)
+        db.refresh(run)
         if run.status != RunStatus.paused_for_review.value:
             break
         if run.current_round_num >= run.max_rounds:
             break
         try:
             run = run_orchestrator.advance_round(db, run.id)
-            _update(job, rounds_done=run.rounds_completed,
-                    phase_detail=f"迭代优化 · 第 {run.rounds_completed} 轮")
+            _update_job(db, job, rounds_done=run.rounds_completed,
+                        phase_detail=f"迭代优化 · 第 {run.rounds_completed} 轮完成")
         except Exception as exc:
             logger.exception("advance_round failed for job %s: %s", job.id, exc)
             break
@@ -240,26 +399,21 @@ def _execute_pipeline(db: Session, job: CustomizeJob, diffs: list[dict], user_id
     best_version_id = _latest_round_version(db, run.id) or best_version_id
 
     # Finalize → activate the best version
-    try:
-        run = run_orchestrator.finalize_run(db, run.id, best_version_id)
-        final_v = db.get(OcrPromptVersion, best_version_id)
-        if final_v:
-            job.overall_accuracy = final_v.overall_accuracy
-    except Exception as exc:
-        logger.exception("finalize_run failed for job %s: %s", job.id, exc)
-        _update(job, error_message=str(exc)[:512])
+    overall_acc: float | None = None
+    if best_version_id:
+        try:
+            run_orchestrator.finalize_run(db, run.id, best_version_id)
+            final_v = db.get(OcrPromptVersion, best_version_id)
+            if final_v:
+                overall_acc = final_v.overall_accuracy
+        except Exception as exc:
+            logger.exception("finalize_run failed for job %s: %s", job.id, exc)
 
-    _update(
-        job,
-        status="completed",
-        phase_detail=f"已完成 3 轮迭代，新模板 api_code = {new_api.api_code}",
-        completed_at=datetime.now(timezone.utc),
-    )
-
-
-def _refresh(db: Session, run):
-    db.refresh(run)
-    return run
+    _update_job(db, job,
+                status=CustomizeJobStatus.completed.value,
+                overall_accuracy=overall_acc,
+                phase_detail=f"已完成 3 轮迭代，新模板 api_code = {new_api.api_code}",
+                completed_at=datetime.now(timezone.utc))
 
 
 def _latest_round_version(db: Session, run_id: uuid.UUID) -> uuid.UUID | None:
@@ -286,14 +440,6 @@ def _fork_api_definition(
     reflections: dict[str, Any],
     user_id: uuid.UUID | None,
 ) -> tuple[ApiDefinition, OcrPromptVersion, list[OcrModule]]:
-    """Clone src_api → new ApiDefinition with derived api_code + new active version.
-
-    Applies reflection-driven patches (description, ocr_suggestions, ocr_prompt)
-    AND adds new modules for `add`-kind diffs.
-
-    Also copies sample_document_ids so the 3-round optimizer has GT samples to
-    work with on the new ApiDefinition.
-    """
     new_api_code = _next_customer_api_code(db, src_api)
     new_name = f"{src_api.name} (自定义)"
 
@@ -315,9 +461,8 @@ def _fork_api_definition(
         config=new_cfg,
     )
     db.add(new_api)
-    db.flush()  # we need new_api.id for the version
+    db.flush()
 
-    # New prompt version: snapshot of source v1 with patches.
     new_version = OcrPromptVersion(
         id=uuid.uuid4(),
         api_definition_id=new_api.id,
@@ -331,7 +476,6 @@ def _fork_api_definition(
         activated_at=datetime.now(timezone.utc),
     )
 
-    # Build patched modules
     edits_by_key: dict[str, dict] = {}
     add_specs: list[dict] = []
     for d in diffs:
@@ -340,19 +484,15 @@ def _fork_api_definition(
             if not mk:
                 continue
             patch: dict[str, Any] = {}
-            # description: prefer the LLM-suggested patch; fall back to a generic note.
             r = reflections.get(mk)
             if r and r.description_patch:
                 patch["description"] = r.description_patch
-            # Append the LLM fix_suggestions to ocr_prompt rather than replacing it.
             fix_text = "\n\n".join(r.fix_suggestions) if r else ""
             if fix_text:
                 patch["__prompt_suffix"] = fix_text
-            # Always note the customer's actual corrected value as a hint
             if d.get("corrected_value"):
                 hint = f"客户在样本中提供的正确值示例：{d['corrected_value']}"
                 patch["__prompt_suffix"] = (patch.get("__prompt_suffix", "") + "\n" + hint).strip()
-            # Format change → schema patch
             if d.get("corrected_format") and d.get("corrected_format") != d.get("original_format"):
                 patch["__schema_type"] = d["corrected_format"]
             if patch:
@@ -365,7 +505,6 @@ def _fork_api_definition(
         patch = edits_by_key.get(m.module_key, {})
         new_modules.append(_clone_module(m, new_version_id=new_version.id, patch=patch))
 
-    # Append "add" modules
     order_start = max((m.order_index for m in new_modules), default=-1) + 1
     for i, d in enumerate(add_specs):
         new_modules.append(_module_from_add_diff(
@@ -373,7 +512,6 @@ def _fork_api_definition(
             reflection_outputs=reflections.get(f"_new_{diffs.index(d)}"),
         ))
 
-    # Compose new prompt + schema
     try:
         new_version.composed_schema = composer.assemble_schema(new_modules)
         new_version.composed_prompt = composer.assemble_prompt(new_modules)
@@ -403,7 +541,6 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
     schema_type = patch.get("__schema_type")
     if schema_type:
         new_schema = dict(src.schema_fragment or {})
-        # Map UI format strings (string/number/date/...) to schema types.
         type_map = {
             "string": "STRING", "text": "STRING",
             "number": "NUMBER", "integer": "INTEGER",
@@ -435,7 +572,6 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
 def _module_from_add_diff(
     diff: dict, *, new_version_id: uuid.UUID, order_index: int, reflection_outputs,
 ) -> OcrModule:
-    """Create a brand-new module for an 'add'-kind diff."""
     new_name = diff.get("corrected_name") or "new_field"
     module_key = _to_snake(new_name)
     format_str = (diff.get("corrected_format") or "string").lower()
@@ -449,7 +585,6 @@ def _module_from_add_diff(
     if format_str == "date":
         schema_fragment["format"] = "date"
 
-    # Pull ocr_prompt from the LLM reflection (new_field skill) if available.
     corrected_value_hint = ""
     if diff.get("corrected_value"):
         corrected_value_hint = f"客户提供的样例值：{diff['corrected_value']}"
@@ -509,11 +644,6 @@ def _to_snake(name: str) -> str:
 
 
 def _next_customer_api_code(db: Session, src_api: ApiDefinition) -> str:
-    """Generate a unique api_code derived from the source.
-
-    Strategy: `<src_code>-c<n>` where n increments. If the source code already
-    matches this pattern we strip the suffix and bump.
-    """
     base = src_api.api_code or "api"
     m = re.match(r"^(.*)-c(\d+)$", base)
     if m:
@@ -527,5 +657,4 @@ def _next_customer_api_code(db: Session, src_api: ApiDefinition) -> str:
             return candidate
         n += 1
         if n > 9999:
-            # Fall back to uuid suffix
             return f"{base}-c{uuid.uuid4().hex[:8]}"

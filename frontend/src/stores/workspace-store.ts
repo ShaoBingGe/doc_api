@@ -68,9 +68,18 @@ export interface FieldEditDraft {
   correctedFormat: string
 }
 
+export type CustomizeJobPhase =
+  | 'queued'
+  | 'waiting_for_samples'
+  | 'reflecting'
+  | 'forking'
+  | 'optimizing'
+  | 'completed'
+  | 'failed'
+
 export interface CustomizeJobStatus {
   jobId: string
-  status: 'queued' | 'reflecting' | 'forking' | 'optimizing' | 'completed' | 'failed'
+  status: CustomizeJobPhase
   phaseDetail: string
   roundsDone: number
   roundsTotal: number
@@ -619,6 +628,38 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         })
       } catch {
         // non-fatal — header just shows placeholder
+      }
+
+      // 1b. Rehydrate any active customize job for this ApiDef so the
+      // sample-upload banner / progress UI carries across navigations.
+      try {
+        const jobRes = await apiClient.get(
+          '/api/v1/api-definitions/' + apiDefId + '/active-customize-job',
+        )
+        const d = jobRes.data
+        if (d && d.job_id) {
+          const rehydrated: CustomizeJobStatus = {
+            jobId: d.job_id,
+            status: d.status,
+            phaseDetail: d.phase_detail || '',
+            roundsDone: d.rounds_done ?? 0,
+            roundsTotal: d.rounds_total ?? 3,
+            overallAccuracy: d.overall_accuracy,
+            newApiDefinitionId: d.new_api_definition_id,
+            newApiCode: d.new_api_code,
+            errorMessage: d.error_message,
+            reflectionSummary: d.reflection_summary,
+          }
+          set({ customizeJob: rehydrated })
+          // Keep polling alive
+          if (rehydrated.status !== 'completed' && rehydrated.status !== 'failed') {
+            setTimeout(() => void get().pollCustomizeJob(), 2000)
+          }
+        } else {
+          set({ customizeJob: null })
+        }
+      } catch {
+        // No active job — fine
       }
 
       // 2. fetch sample set

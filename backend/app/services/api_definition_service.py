@@ -4,8 +4,11 @@ ApiDefinitionService — API 定义 CRUD、状态管理、统计查询。
 
 from __future__ import annotations
 
+import logging
 import math
 import uuid
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -284,7 +287,14 @@ def add_sample_document(
     content_type: str | None,
 ):
     """Upload a file, bind it to the API, run OCR using the API's active prompt,
-    and append the new Document.id to config.sample_document_ids."""
+    and append the new Document.id to config.sample_document_ids.
+
+    Also auto-triggers any parked CustomizeJob in `waiting_for_samples` once
+    this upload brings the sample count to MIN_SAMPLES_FOR_ITERATION.
+    """
+    from threading import Thread
+
+    from app.ocr_optimizer.service import customer_iteration
     from app.services.document_service import (
         bind_to_api_and_extract,
         upload_document,
@@ -298,11 +308,36 @@ def add_sample_document(
         content_type=content_type,
         api_definition_id=api_def_id,
     )
-    # Trigger OCR using the API's active OcrPromptVersion.composed_prompt
-    # (§6.4 country-template flow). This also appends doc.id to
-    # config.sample_document_ids; nothing more for us to do here.
     bind_to_api_and_extract(db, doc, api_def_id)
     db.refresh(doc)
+
+    # ── Auto-resume any waiting customize job for this ApiDef ───────────
+    #
+    # After bind_to_api_and_extract, sample_document_ids has been updated.
+    # We check synchronously whether a parked job can now proceed, then
+    # kick off the resume in a background thread so this HTTP request
+    # returns immediately. The resume itself owns its own DB session.
+    try:
+        waiting = customer_iteration.find_waiting_job_for_api(db, api_def_id)
+        if waiting:
+            api_def = _get_or_404(db, api_def_id)
+            cfg = api_def.config or {}
+            ids = cfg.get("sample_document_ids") or []
+            if len(ids) >= customer_iteration.MIN_SAMPLES_FOR_ITERATION:
+                logger.info("Auto-resuming customize job %s (samples %d/%d)",
+                            waiting.id, len(ids),
+                            customer_iteration.MIN_SAMPLES_FOR_ITERATION)
+                # Background daemon thread — fire-and-forget. The job uses
+                # its own SessionLocal so cross-thread access is safe.
+                Thread(
+                    target=customer_iteration.resume_customize_job,
+                    args=(waiting.id,),
+                    daemon=True,
+                    name=f"customize-resume-{waiting.id}",
+                ).start()
+    except Exception:
+        logger.exception("Failed to evaluate customize job auto-resume")
+
     return doc
 
 

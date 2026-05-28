@@ -73,6 +73,17 @@ class RoundPhase(str, Enum):
     failed = "failed"
 
 
+class CustomizeJobStatus(str, Enum):
+    """Lifecycle of a customer customize job (see customer_iteration.py)."""
+    queued = "queued"
+    waiting_for_samples = "waiting_for_samples"
+    reflecting = "reflecting"
+    forking = "forking"
+    optimizing = "optimizing"
+    completed = "completed"
+    failed = "failed"
+
+
 # ── 1. ocr_prompt_versions ────────────────────────────────────────────────────
 
 class OcrPromptVersion(UUIDMixin, Base):
@@ -257,7 +268,51 @@ class OcrModuleIteration(UUIDMixin, Base):
     )
 
 
-# ── 6. ocr_skills (TODO — placeholder for §17) ────────────────────────────────
+# ── 6. customize_jobs (persistent state for the customer iteration pipeline) ──
+#
+# Replaces the in-memory job dict from MVP. A job tracks one "save my edits →
+# fork + 3-round" lifecycle. Persistence enables:
+#   - Crash recovery: surviving rows can be resumed or marked failed on boot.
+#   - Sample gating: a job parked in `waiting_for_samples` lives in the DB
+#     until the customer uploads enough samples, at which point we transition
+#     it to `optimizing`.
+
+
+class CustomizeJob(UUIDMixin, Base):
+    __tablename__ = "customize_jobs"
+
+    source_api_definition_id: Mapped[uuid.UUID] = mapped_column(
+        nullable=False, index=True,
+        comment="原始 ApiDefinition（客户在其上编辑字段）"
+    )
+    new_api_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        nullable=True, index=True,
+        comment="fork 出来的新 ApiDefinition（带客户专属 api_code）"
+    )
+    new_api_code: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=CustomizeJobStatus.queued.value
+    )
+    phase_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    diffs: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    reflection_summary: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    rounds_done: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rounds_total: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    overall_accuracy: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, onupdate=func.now()
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+# ── 7. ocr_skills (TODO — placeholder for §17) ────────────────────────────────
 
 class OcrSkill(UUIDMixin, Base):
     """

@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     DEFAULT_PROCESSOR: str = "mock"         # mock | gemini | openai
     GEMINI_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
+    # Failover chain for reflection / optimizer LLM calls. Semicolon-separated
+    # `provider|model` entries; first one that succeeds wins. The chain ONLY
+    # applies to text-completion calls (reflection, module_optimizer,
+    # meta_optimizer), NOT to the production OCR call (which uses the
+    # ApiDefinition's configured processor).
+    # Example: "gemini|gemini-2.5-flash;openai|gpt-4o-mini;mock|"
+    LLM_FALLBACK_CHAIN: str = ""
 
     # ── Security ──────────────────────────────────────────────────────────
     SECRET_KEY: str = "CHANGE-ME-IN-PRODUCTION-32-bytes!!"

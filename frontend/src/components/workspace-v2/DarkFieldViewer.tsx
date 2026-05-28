@@ -850,7 +850,57 @@ function CustomizeBar() {
   const addCount = addFieldDrafts.filter((d) => d.correctedName.trim().length > 0).length
   const totalCount = editCount + addCount
 
-  // Live job display
+  // ── Waiting for samples — show the verbatim instruction ─────────────
+  if (customizeJob && customizeJob.status === 'waiting_for_samples') {
+    const apiDefinitionId = useWorkspaceStore.getState().apiDefinitionId
+    const onNewWorkspace = apiDefinitionId && customizeJob.newApiDefinitionId === apiDefinitionId
+    return (
+      <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-2.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0" />
+            <span className="text-sm text-amber-200 font-medium">
+              等待上传样本以启动迭代优化
+            </span>
+          </div>
+          <button
+            onClick={clearCustomizeJob}
+            className="p-0.5 rounded text-gray-400 hover:text-white hover:bg-white/10 flex-shrink-0"
+            title="关闭提醒"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        {customizeJob.newApiCode && (
+          <div className="text-xs text-amber-100/80">
+            新 api_code: <code className="bg-black/40 px-1.5 py-0.5 rounded text-amber-200">{customizeJob.newApiCode}</code>
+          </div>
+        )}
+        <p className="text-xs text-amber-100/80 leading-relaxed">
+          系统将启动识别优化程序，为保证识别能力能够适应更多不同的场景，请上传至少 2 个（最多 9 个）不同格式的样本，要求：
+          一是识别结果，必须与当前样本文件需要识别的字段/内容/格式和输出完全一致，
+          二是在内容的布局和式样上，尽量与当前样本完全不一致，且相互之间也完全不一致。
+        </p>
+        {!onNewWorkspace && customizeJob.newApiDefinitionId && (
+          <button
+            onClick={() => {
+              navigate(`/workspace/api/${customizeJob.newApiDefinitionId}`)
+            }}
+            className="w-full px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-sm rounded transition-colors"
+          >
+            前往新模板工作区上传样本 →
+          </button>
+        )}
+        {onNewWorkspace && (
+          <p className="text-xs text-amber-200/70">
+            ↑ 在左侧"样本"栏使用 + 按钮上传，达到 3 个后自动启动 3 轮迭代。
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  // ── Other in-flight phases (reflecting/forking/optimizing) ──────────
   if (customizeJob && customizeJob.status !== 'completed' && customizeJob.status !== 'failed') {
     return (
       <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3 space-y-2">

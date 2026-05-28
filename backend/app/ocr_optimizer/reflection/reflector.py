@@ -16,7 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..service.llm_call import llm_text_completion
+from ..service.llm_failover import llm_text_completion_failover
 from .master import route
 from .skills_loader import Skill
 
@@ -135,7 +135,7 @@ def _invoke_skill(
     """Render the skill prompt + call LLM. Returns parsed JSON or None on failure."""
     user_prompt = skill.render(diff, ctx)
     try:
-        result = llm_text_completion(
+        result = llm_text_completion_failover(
             processor_spec=processor_spec,
             model_name=model_name,
             system_instruction=_REFLECTION_SYSTEM,

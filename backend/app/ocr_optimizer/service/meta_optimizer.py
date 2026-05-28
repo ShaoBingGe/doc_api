@@ -17,7 +17,7 @@ import logging
 from typing import Any
 
 from . import slicer
-from .llm_call import llm_text_completion
+from .llm_failover import llm_text_completion_failover as llm_text_completion
 
 logger = logging.getLogger(__name__)
 

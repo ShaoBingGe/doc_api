@@ -13,6 +13,7 @@ from .api_key import ApiKey
 from .usage_record import UsageRecord
 # OCR optimizer subsystem tables — imported here so Base.metadata sees them
 from app.ocr_optimizer.models import (  # noqa: E402,F401
+    CustomizeJob,
     OcrModule,
     OcrModuleIteration,
     OcrOptimizationRound,
@@ -51,4 +52,5 @@ __all__ = [
     "OcrOptimizationRun",
     "OcrOptimizationRound",
     "OcrModuleIteration",
+    "CustomizeJob",
 ]

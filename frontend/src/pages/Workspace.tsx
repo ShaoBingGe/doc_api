@@ -121,9 +121,10 @@ export default function Workspace() {
 
   const showThumbnailRail = !isNewMode && !!apiDefinitionId
   const hasSelectedDoc = !!selectedDocId
-  // When the user is editing a field (double-click) or a customize job is in
-  // flight, the JSON column slides out and the field column takes its space.
-  const jsonCollapsed = !!editingFieldId || (!!customizeJob && customizeJob.status !== 'completed' && customizeJob.status !== 'failed')
+  // When the user is editing a field (double-click) the JSON column slides
+  // out. We DO NOT collapse during waiting_for_samples / optimizing — the
+  // customer needs the full 3-column layout to upload samples and review.
+  const jsonCollapsed = !!editingFieldId
 
   return (
     <div className="flex flex-col h-screen bg-[#18181c] text-white font-sans overflow-hidden">

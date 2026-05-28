@@ -31,6 +31,20 @@ async def lifespan(app: FastAPI):
     # Startup: ensure DB tables exist (development convenience)
     from app.core.database import create_tables
     create_tables()
+    # Reap any customize jobs that were stuck in transient states when the
+    # process died (no progress for >STALE_OPTIMIZING_MIN minutes). Failures
+    # here are non-fatal; we log and continue.
+    try:
+        from app.ocr_optimizer.service.customer_iteration import reap_stale_jobs
+        reaped = reap_stale_jobs()
+        if reaped:
+            import logging
+            logging.getLogger(__name__).info(
+                "Reaped %d stale customize jobs on boot", reaped,
+            )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("reap_stale_jobs failed on boot")
     yield
     # Shutdown: nothing to clean up in sync mode
 

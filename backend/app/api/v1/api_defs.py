@@ -235,18 +235,18 @@ def customize_api_definition(
     diffs = body.get("diffs") or []
     if not isinstance(diffs, list) or not diffs:
         raise HTTPException(status_code=400, detail="diffs must be a non-empty list")
-    # Validate quickly
     for i, d in enumerate(diffs):
         if not isinstance(d, dict) or d.get("kind") not in ("edit", "add"):
             raise HTTPException(status_code=400, detail=f"diff[{i}] has invalid 'kind'")
 
     job = customer_iteration.submit_customize_job(
+        db,
         source_api_definition_id=api_def_id,
         diffs=diffs,
     )
     background.add_task(customer_iteration.run_customize_job, job.id)
     return {
-        "job_id": job.id,
+        "job_id": str(job.id),
         "status": job.status,
         "source_api_definition_id": str(api_def_id),
     }
@@ -256,21 +256,44 @@ def customize_api_definition(
     "/customize-jobs/{job_id}",
     summary="查询客户定制 job 进度",
 )
-def get_customize_job(job_id: str) -> dict:
-    job = customer_iteration.get_job(job_id)
-    if not job:
+def get_customize_job(
+    job_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    out = customer_iteration.get_job_dict(db, job_id)
+    if not out:
         raise HTTPException(status_code=404, detail="job not found")
-    return {
-        "job_id": job.id,
-        "status": job.status,
-        "phase_detail": job.phase_detail,
-        "rounds_done": job.rounds_done,
-        "rounds_total": job.rounds_total,
-        "overall_accuracy": job.overall_accuracy,
-        "new_api_definition_id": job.new_api_definition_id,
-        "new_api_code": job.new_api_code,
-        "error_message": job.error_message,
-        "reflection_summary": job.reflection_summary,
-        "created_at": job.created_at.isoformat(),
-        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
-    }
+    return out
+
+
+@router.post(
+    "/customize-jobs/{job_id}/resume",
+    summary="客户上传完所需样本后，手动触发 / 自动恢复 3 轮迭代",
+)
+def resume_customize_job_endpoint(
+    job_id: uuid.UUID,
+    background: BackgroundTasks,
+) -> dict:
+    """Mostly called automatically by the sample-upload hook, but exposed
+    so the customer can manually retry if auto-resume failed."""
+    # We schedule the resume in the background to avoid blocking the request
+    # (it can run a full 3-round iteration which takes 1-3 minutes).
+    background.add_task(customer_iteration.resume_customize_job, job_id)
+    return {"job_id": str(job_id), "resume_scheduled": True}
+
+
+@router.get(
+    "/{api_def_id}/active-customize-job",
+    summary="若该 API 上有正在进行（非已完成）的客户定制 job，返回它；否则 204",
+)
+def get_active_customize_job(
+    api_def_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict | None:
+    """Used by the frontend on workspace load: if there's an in-flight job
+    (queued / waiting_for_samples / reflecting / forking / optimizing /
+    failed), return it so the customize banner can be rehydrated."""
+    job = customer_iteration.find_latest_active_job_for_api(db, api_def_id)
+    if not job:
+        return None
+    return customer_iteration.get_job_dict(db, job.id)
