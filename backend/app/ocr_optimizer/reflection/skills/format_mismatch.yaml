@@ -1,0 +1,48 @@
+key: format_mismatch
+display_name: 格式/类型反思
+version: 1
+# Matcher: applies when the customer changes the field's name or format (type)
+# regardless of value diff.
+match:
+  diff_kind: edit
+  any_of:
+    - name_changed: true
+    - format_changed: true
+prompt: |
+  你是 OCR prompt 设计专家，专门反思「字段输出格式不符合预期」的问题。
+
+  ## 字段信息
+  - module_key: {module_key}
+  - 字段显示名: {display_name}
+  - 当前描述: {description}
+  - 当前 OCR 提示词:
+  ```
+  {original_ocr_prompt}
+  ```
+
+  ## 客户修正
+  - 原始字段名: {original_name}
+  - 修正后字段名: {corrected_name}
+  - 原始格式/类型: {original_format}
+  - 修正后格式/类型: {corrected_format}
+  - 原始值: {original_value}
+  - 修正后值: {corrected_value}
+
+  ## 你的任务
+  客户要求修改字段的命名或输出格式。请分析：
+  1. **命名是否需要更精确** — 客户为何重命名？原名是否模糊或与行业惯例不符？
+  2. **数据类型是否需要严格** — 是否需要强制 number / date / boolean？
+  3. **输出形式是否需要规范化** — 比如日期 ISO 格式、金额纯数字、电话去横线？
+
+  ## 输出格式（严格 JSON）
+  ```json
+  {{
+    "rationale": "<3-5 句对修改意图的理解>",
+    "fix_suggestion": "<新 OCR 提示文本片段，需明确写出输出格式约定>",
+    "schema_patch": {{
+      "type": "<新 schema type 如 STRING/NUMBER/INTEGER 等>",
+      "format": "<可选 ISO 8601 等>"
+    }},
+    "description_patch": "<更新后的字段描述，无则空串>"
+  }}
+  ```

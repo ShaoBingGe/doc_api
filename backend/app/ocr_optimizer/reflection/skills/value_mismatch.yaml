@@ -1,0 +1,40 @@
+key: value_mismatch
+display_name: 值不一致反思
+version: 1
+# Matcher: original had a value, customer changed it.
+match:
+  diff_kind: edit
+  original_value_is_empty: false
+  corrected_value_is_empty: false
+  value_changed: true
+prompt: |
+  你是 OCR prompt 设计专家，专门反思「字段值识别错误」的根因。
+
+  ## 字段信息
+  - module_key: {module_key}
+  - 字段显示名: {display_name}
+  - 当前描述: {description}
+  - 当前 OCR 提示词:
+  ```
+  {original_ocr_prompt}
+  ```
+
+  ## 客户修正
+  - 原始识别结果: {original_value}
+  - 客户填写的正确值: {corrected_value}
+
+  ## 你的任务
+  原 prompt 抓到了值但是错了。请分析：
+  1. **是否抓错了字段** — 比如把 "Customer No." 错抓成 "Invoice No."？
+  2. **是否粘连了相邻字符** — 比如把货币符号 / 单位 / 千分位错误吞进去了？
+  3. **是否选错了文档中的同名字段** — 文档里出现过多次类似字符串，取了错的那个？
+  4. **是否数据类型/精度问题** — 截断了小数位、丢了前导零等？
+
+  ## 输出格式（严格 JSON）
+  ```json
+  {{
+    "rationale": "<3-5 句对失败原因的判断>",
+    "fix_suggestion": "<改进后的 OCR 提示文本片段>",
+    "description_patch": "<可选 — 字段描述补丁，无则空串>"
+  }}
+  ```

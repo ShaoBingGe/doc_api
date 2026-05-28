@@ -50,6 +50,37 @@ export interface PendingField {
   fieldType: 'text' | 'number' | 'date' | 'boolean' | 'array'
 }
 
+// ─── Customer customize flow ──────────────────────────────────────────────────
+//
+// When the user double-clicks a field, we record a draft edit (original vs
+// corrected) here. When they save, all drafts (edits + adds) get sent to the
+// /customize endpoint which kicks off reflection + 3-round optimization.
+
+export interface FieldEditDraft {
+  /** module_key — undefined for new fields (kind=add) */
+  moduleKey?: string
+  kind: 'edit' | 'add'
+  originalName?: string
+  correctedName: string
+  originalValue?: string | number | boolean | null
+  correctedValue: string
+  originalFormat?: string
+  correctedFormat: string
+}
+
+export interface CustomizeJobStatus {
+  jobId: string
+  status: 'queued' | 'reflecting' | 'forking' | 'optimizing' | 'completed' | 'failed'
+  phaseDetail: string
+  roundsDone: number
+  roundsTotal: number
+  overallAccuracy?: number | null
+  newApiDefinitionId?: string | null
+  newApiCode?: string | null
+  errorMessage?: string | null
+  reflectionSummary?: Array<Record<string, unknown>>
+}
+
 /**
  * Lightweight summary of a sample document in the batch sample set.
  * Comes from GET /api-definitions/{id}/documents.
@@ -77,6 +108,13 @@ interface WorkspaceStore {
   pendingFields: PendingField[]
   drawingFieldId: string | null
   reprocessing: boolean
+
+  // ── Customize / field-edit flow ──────────────────────────────────────────
+  editingFieldId: string | null              // when set, middle column expands and JSON column slides out
+  fieldEditDrafts: Record<string, FieldEditDraft>  // keyed by moduleKey (or tempId for adds)
+  addFieldDrafts: FieldEditDraft[]           // separate list for "add new field" rows
+  customizeJob: CustomizeJobStatus | null
+  customizeSubmitting: boolean
 
   setStep: (step: WorkspaceStep) => void
   setSelectedFieldId: (id: string | null) => void
@@ -113,6 +151,17 @@ interface WorkspaceStore {
   selectDocument: (docId: string) => Promise<void>
   addSampleDocument: (file: File) => Promise<SampleDoc | null>
   removeSampleDocument: (docId: string) => Promise<void>
+
+  // ── Customize / field-edit actions ──────────────────────────────────────
+  startEditingField: (annotationId: string) => void
+  cancelEditingField: () => void
+  updateEditDraft: (key: string, patch: Partial<FieldEditDraft>) => void
+  addNewFieldDraft: () => void
+  updateAddDraft: (idx: number, patch: Partial<FieldEditDraft>) => void
+  removeAddDraft: (idx: number) => void
+  submitCustomize: () => Promise<string | null>
+  pollCustomizeJob: () => Promise<void>
+  clearCustomizeJob: () => void
 }
 
 // ─── Structured data parser ───────────────────────────────────────────────────
@@ -264,6 +313,13 @@ const initialState = {
   selectedDocId: null as string | null,
   samplesLoading: false,
   uploadingSample: false,
+
+  // ── Customize / field-edit ─────────────────────────────────────────────────
+  editingFieldId: null as string | null,
+  fieldEditDrafts: {} as Record<string, FieldEditDraft>,
+  addFieldDrafts: [] as FieldEditDraft[],
+  customizeJob: null as CustomizeJobStatus | null,
+  customizeSubmitting: false,
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -658,6 +714,164 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       set({ uploadingSample: false })
     }
   },
+
+  // ── Customize / field-edit ──────────────────────────────────────────────
+  //
+  // Double-click a field row → middle column expands (Column C in Workspace.tsx
+  // collapses) and shows a side-by-side "原始 / 修正后" form. The draft is keyed
+  // by module_key. The draft is sent in batch when the user hits "保存为自定义模板".
+
+  startEditingField: (annotationId) => {
+    const { annotations, processingResults, fieldEditDrafts } = get()
+    const ann = annotations.find((a) => a.id === annotationId)
+    if (!ann) return
+    const r = processingResults.find((rr) => rr.annotationId === annotationId)
+    const value = r?.value ?? ann.value ?? ''
+    // module_key is conventionally the snake_case of label up to the first '['
+    const labelBase = ann.label.split('[')[0]
+    const moduleKey = labelBase
+      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .toLowerCase()
+    // Seed the draft if there isn't one already
+    if (!fieldEditDrafts[moduleKey]) {
+      const draft: FieldEditDraft = {
+        moduleKey,
+        kind: 'edit',
+        originalName: ann.label,
+        correctedName: ann.label,
+        originalValue: value as string | number | boolean | null,
+        correctedValue: value === null || value === undefined ? '' : String(value),
+        originalFormat: ann.fieldType,
+        correctedFormat: ann.fieldType,
+      }
+      set({
+        editingFieldId: annotationId,
+        fieldEditDrafts: { ...fieldEditDrafts, [moduleKey]: draft },
+      })
+    } else {
+      set({ editingFieldId: annotationId })
+    }
+  },
+
+  cancelEditingField: () => set({ editingFieldId: null }),
+
+  updateEditDraft: (key, patch) =>
+    set((s) => ({
+      fieldEditDrafts: {
+        ...s.fieldEditDrafts,
+        [key]: { ...(s.fieldEditDrafts[key] ?? { kind: 'edit', correctedName: '', correctedValue: '', correctedFormat: 'string' }), ...patch },
+      },
+    })),
+
+  addNewFieldDraft: () =>
+    set((s) => ({
+      addFieldDrafts: [
+        ...s.addFieldDrafts,
+        { kind: 'add', correctedName: '', correctedValue: '', correctedFormat: 'string' },
+      ],
+    })),
+
+  updateAddDraft: (idx, patch) =>
+    set((s) => ({
+      addFieldDrafts: s.addFieldDrafts.map((d, i) => (i === idx ? { ...d, ...patch } : d)),
+    })),
+
+  removeAddDraft: (idx) =>
+    set((s) => ({ addFieldDrafts: s.addFieldDrafts.filter((_, i) => i !== idx) })),
+
+  submitCustomize: async () => {
+    const { apiDefinitionId, fieldEditDrafts, addFieldDrafts } = get()
+    if (!apiDefinitionId) {
+      toast.error('未绑定 API，无法保存')
+      return null
+    }
+    // Only include edits where corrected differs from original (and adds with a name)
+    const editDiffs = Object.values(fieldEditDrafts).filter((d) => {
+      const nameChanged = (d.originalName || '') !== d.correctedName
+      const valueChanged = String(d.originalValue ?? '') !== d.correctedValue
+      const fmtChanged = (d.originalFormat || '') !== d.correctedFormat
+      return nameChanged || valueChanged || fmtChanged
+    })
+    const addDiffs = addFieldDrafts.filter((d) => d.correctedName.trim().length > 0)
+    if (editDiffs.length === 0 && addDiffs.length === 0) {
+      toast.info('没有可保存的字段修改')
+      return null
+    }
+    const payload = {
+      diffs: [...editDiffs, ...addDiffs].map((d) => ({
+        kind: d.kind,
+        module_key: d.moduleKey ?? null,
+        original_name: d.originalName ?? null,
+        corrected_name: d.correctedName,
+        original_value: d.originalValue ?? null,
+        corrected_value: d.correctedValue,
+        original_format: d.originalFormat ?? null,
+        corrected_format: d.correctedFormat,
+      })),
+    }
+    set({ customizeSubmitting: true })
+    try {
+      const res = await apiClient.post(
+        `/api/v1/api-definitions/${apiDefinitionId}/customize`,
+        payload,
+      )
+      const jobId = res.data?.job_id as string
+      if (!jobId) throw new Error('No job_id returned')
+      set({
+        customizeJob: {
+          jobId,
+          status: 'queued',
+          phaseDetail: '已提交，等待处理...',
+          roundsDone: 0,
+          roundsTotal: 3,
+        },
+        editingFieldId: null,
+      })
+      // Kick off polling
+      void get().pollCustomizeJob()
+      return jobId
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(typeof msg === 'string' ? msg : '保存失败')
+      return null
+    } finally {
+      set({ customizeSubmitting: false })
+    }
+  },
+
+  pollCustomizeJob: async () => {
+    const job = get().customizeJob
+    if (!job) return
+    try {
+      const res = await apiClient.get(
+        `/api/v1/api-definitions/customize-jobs/${job.jobId}`,
+      )
+      const d = res.data
+      const updated: CustomizeJobStatus = {
+        jobId: d.job_id,
+        status: d.status,
+        phaseDetail: d.phase_detail || '',
+        roundsDone: d.rounds_done ?? 0,
+        roundsTotal: d.rounds_total ?? 3,
+        overallAccuracy: d.overall_accuracy,
+        newApiDefinitionId: d.new_api_definition_id,
+        newApiCode: d.new_api_code,
+        errorMessage: d.error_message,
+        reflectionSummary: d.reflection_summary,
+      }
+      set({ customizeJob: updated })
+      if (updated.status !== 'completed' && updated.status !== 'failed') {
+        setTimeout(() => void get().pollCustomizeJob(), 2000)
+      }
+    } catch {
+      // swallow; retry
+      setTimeout(() => void get().pollCustomizeJob(), 4000)
+    }
+  },
+
+  clearCustomizeJob: () =>
+    set({ customizeJob: null, fieldEditDrafts: {}, addFieldDrafts: [] }),
 
   removeSampleDocument: async (docId) => {
     const apiDefId = get().apiDefinitionId

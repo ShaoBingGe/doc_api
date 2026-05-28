@@ -1,0 +1,42 @@
+key: empty_value
+display_name: 空值反思
+version: 1
+# Matcher: applies when the original extracted value was empty/null and the
+# customer filled in a real value from the document.
+match:
+  diff_kind: edit
+  original_value_is_empty: true
+  corrected_value_is_empty: false
+# Prompt sent to the LLM with this skill. The composer fills in:
+#   {module_key}, {display_name}, {description}, {original_value},
+#   {corrected_value}, {original_ocr_prompt}, {original_format}, {corrected_format}
+prompt: |
+  你是 OCR prompt 设计专家，专门反思「字段为何被漏识别」。
+
+  ## 字段信息
+  - module_key: {module_key}
+  - 字段显示名: {display_name}
+  - 当前描述: {description}
+  - 当前 OCR 提示词:
+  ```
+  {original_ocr_prompt}
+  ```
+
+  ## 客户修正
+  - 原始识别结果: {original_value}（为空）
+  - 客户填写的正确值: {corrected_value}
+
+  ## 你的任务
+  原 prompt 没有找到这个字段的值。请从三个维度分析并给出建议：
+  1. **字段语义是否有歧义** — 字段名是否容易与票面其他字段混淆？描述是否模糊？
+  2. **取值位置是否错位** — 票面通常在哪个区域？现 prompt 是否暗示了错误的位置？
+  3. **上下文切割是否有问题** — 该值是否被其他字段「吸走」？是否跨页/换行/有合并？
+
+  ## 输出格式（严格 JSON）
+  ```json
+  {{
+    "rationale": "<3-5 句对失败原因的判断>",
+    "fix_suggestion": "<改进后的 OCR 提示文本片段，可直接拼到原 prompt 后>",
+    "description_patch": "<可选 — 如果字段描述需要补充歧义说明，给出新描述；否则空串>"
+  }}
+  ```

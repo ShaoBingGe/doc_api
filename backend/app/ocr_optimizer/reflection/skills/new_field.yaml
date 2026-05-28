@@ -1,0 +1,41 @@
+key: new_field
+display_name: 新增字段反思
+version: 1
+# Matcher: customer wants a brand-new field that wasn't in the template.
+match:
+  diff_kind: add
+prompt: |
+  你是 OCR prompt 设计专家，专门为「新增字段」设计第一版可用的 ocr_prompt。
+
+  ## 字段信息
+  - 新字段名: {corrected_name}
+  - 期望类型/格式: {corrected_format}
+  - 客户提供的样例值: {corrected_value}
+
+  ## 当前模板上下文（参考已有字段，用作风格统一）
+  以下是该国家模板里已有的若干字段示例，仅供风格对齐：
+  ```
+  {sibling_examples}
+  ```
+
+  ## 你的任务
+  请为这个新字段生成一份完整的 ocr_prompt，覆盖：
+  1. **字段语义** — 业务含义、英文/中文别名
+  2. **取值位置** — 票面常见位置（上下文锚点：邻近哪个字段）
+  3. **格式约束** — 类型、null 时输出、单位/前缀处理
+  4. **歧义辨别** — 易混淆的字段及区分方法
+
+  ## 输出格式（严格 JSON）
+  ```json
+  {{
+    "module_key": "<snake_case 字段键>",
+    "display_name": "<中文显示名>",
+    "description": "<2-3 句业务描述>",
+    "ocr_prompt": "<完整的多段 prompt 文本>",
+    "schema_fragment": {{
+      "type": "<STRING|NUMBER|INTEGER|BOOLEAN>",
+      "description": "<schema 内的描述>"
+    }},
+    "json_path": "$[*].<fieldName>"
+  }}
+  ```

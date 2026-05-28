@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   ChevronDown,
   ChevronRight,
@@ -18,8 +19,10 @@ import {
   Table as TableIcon,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
-import { useWorkspaceStore, type Annotation, type ProcessingResult } from '../../stores/workspace-store'
+import { useWorkspaceStore, type Annotation, type FieldEditDraft, type ProcessingResult } from '../../stores/workspace-store'
 import { toast } from '../../lib/toast'
+
+const FORMAT_OPTIONS = ['string', 'number', 'date', 'boolean', 'array'] as const
 
 const LOW_CONFIDENCE_THRESHOLD = 85
 
@@ -215,6 +218,7 @@ function FieldRow({
   isSelected,
   onHover,
   onSelect,
+  onStartEdit,
   onDeleteField,
   onSaveLabel,
   onSaveValue,
@@ -229,6 +233,7 @@ function FieldRow({
   isSelected: boolean
   onHover: (id: string | null) => void
   onSelect: (id: string | null) => void
+  onStartEdit: (id: string) => void
   onDeleteField: (id: string) => void
   onSaveLabel: (id: string, label: string) => void
   onSaveValue: (id: string, value: string) => void
@@ -254,25 +259,28 @@ function FieldRow({
           : 'hover:bg-white/5',
       )}
       onClick={() => onSelect(isSelected ? null : annotation.id)}
+      onDoubleClick={(e) => {
+        // Double-click triggers the customer-edit panel. We swallow it so the
+        // EditableCell's own dblclick (inline rename) doesn't also fire.
+        e.stopPropagation()
+        onStartEdit(annotation.id)
+      }}
       onMouseEnter={() => onHover(annotation.id)}
       onMouseLeave={() => onHover(null)}
+      title="点击聚焦，双击进入字段编辑面板"
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
-        {/* Label (double-click to edit) */}
-        <EditableCell
-          value={annotation.label}
-          onSave={(v) => onSaveLabel(annotation.id, v)}
-          className="text-gray-400 text-sm w-28 flex-shrink-0 truncate"
-          placeholder="字段名"
-        />
+        {/* Label */}
+        <span className="text-gray-400 text-sm w-28 flex-shrink-0 truncate">
+          {annotation.label}
+        </span>
 
-        {/* Value (double-click to edit) */}
-        <EditableCell
-          value={value === null || value === undefined ? '' : String(value)}
-          onSave={(v) => onSaveValue(annotation.id, v)}
-          className="text-gray-200 text-sm truncate max-w-[140px]"
-          placeholder="输入值"
-        />
+        {/* Value */}
+        <span className="text-gray-200 text-sm truncate max-w-[140px]">
+          {value === null || value === undefined || value === ''
+            ? <span className="text-gray-600">—</span>
+            : String(value)}
+        </span>
       </div>
 
       <div className="flex items-center gap-2 flex-shrink-0">
@@ -628,6 +636,316 @@ function PendingFieldsBar() {
   )
 }
 
+// ─── Field edit panel (shown when editingFieldId is set) ──────────────────
+//
+// Renders a side-by-side "原始" / "修正后" form for the currently-editing
+// field. Edits get written to fieldEditDrafts in the store; user saves all
+// drafts at once via the customize bar below the field list.
+
+function FieldEditPanel({
+  annotation,
+  result,
+  draft,
+  onUpdate,
+  onCancel,
+}: {
+  annotation: Annotation
+  result?: ProcessingResult
+  draft: FieldEditDraft
+  onUpdate: (patch: Partial<FieldEditDraft>) => void
+  onCancel: () => void
+}) {
+  const origValue = result?.value ?? annotation.value ?? ''
+  const origValueStr = origValue === null || origValue === undefined ? '' : String(origValue)
+  return (
+    <div className="bg-[#2a2a32] rounded-lg border border-purple-500/30 overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 bg-purple-500/10 border-b border-purple-500/20">
+        <div className="flex items-center gap-2">
+          <span className="px-2 py-0.5 rounded-full bg-purple-500/30 text-purple-200 text-xs font-medium">
+            字段编辑
+          </span>
+          <span className="text-sm text-gray-200">{draft.originalName || annotation.label}</span>
+        </div>
+        <button
+          onClick={onCancel}
+          className="p-1 rounded text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+          title="返回字段列表"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      <div className="p-4 space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          {/* Original column */}
+          <div className="space-y-3">
+            <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">原始</div>
+            <div>
+              <div className="text-xs text-gray-500 mb-1">字段名</div>
+              <div className="text-sm text-gray-300 bg-[#1e1e24] border border-white/5 rounded px-2 py-1.5">
+                {draft.originalName || annotation.label}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 mb-1">识别值</div>
+              <div className="text-sm text-gray-300 bg-[#1e1e24] border border-white/5 rounded px-2 py-1.5 min-h-[32px]">
+                {origValueStr || <span className="text-gray-600">（空）</span>}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 mb-1">格式</div>
+              <div className="text-sm text-gray-300 bg-[#1e1e24] border border-white/5 rounded px-2 py-1.5">
+                {draft.originalFormat || annotation.fieldType}
+              </div>
+            </div>
+          </div>
+
+          {/* Corrected column */}
+          <div className="space-y-3">
+            <div className="text-xs font-medium text-purple-300 uppercase tracking-wide">修正后</div>
+            <div>
+              <div className="text-xs text-purple-300/70 mb-1">字段名</div>
+              <input
+                value={draft.correctedName}
+                onChange={(e) => onUpdate({ correctedName: e.target.value })}
+                className="w-full bg-[#1e1e24] border border-purple-500/30 focus:border-purple-400 rounded px-2 py-1.5 text-sm text-white outline-none transition-colors"
+                placeholder="修正后的字段名"
+              />
+            </div>
+            <div>
+              <div className="text-xs text-purple-300/70 mb-1">正确值</div>
+              <textarea
+                value={draft.correctedValue}
+                onChange={(e) => onUpdate({ correctedValue: e.target.value })}
+                className="w-full bg-[#1e1e24] border border-purple-500/30 focus:border-purple-400 rounded px-2 py-1.5 text-sm text-white outline-none transition-colors min-h-[32px] resize-y"
+                placeholder="从票面上读出的正确值"
+                rows={1}
+              />
+            </div>
+            <div>
+              <div className="text-xs text-purple-300/70 mb-1">格式</div>
+              <select
+                value={draft.correctedFormat}
+                onChange={(e) => onUpdate({ correctedFormat: e.target.value })}
+                className="w-full bg-[#1e1e24] border border-purple-500/30 focus:border-purple-400 rounded px-2 py-1.5 text-sm text-white outline-none transition-colors"
+              >
+                {FORMAT_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <p className="text-xs text-gray-500 leading-relaxed">
+          保存后将自动生成该字段的反思（为何原 prompt 未取到正确值），并在新模板中迭代优化。
+          原模板不变，会另外 fork 出一个带新 api_code 的客户专属模板。
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// ─── Add field list (4-column: # / name / value / format) ─────────────────
+//
+// Replaces the simple inline NewFieldRow. Each row is one new field the
+// customer wants the prompt to learn. The customize bar saves them all.
+
+function AddFieldList() {
+  const { addFieldDrafts, addNewFieldDraft, updateAddDraft, removeAddDraft } = useWorkspaceStore()
+
+  return (
+    <div className="bg-[#2a2a32] rounded-lg border border-white/5 overflow-hidden">
+      <div className="flex items-center justify-between p-3 bg-white/5">
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 rounded bg-blue-500/20 flex items-center justify-center text-blue-400">
+            <Plus className="w-3.5 h-3.5" />
+          </div>
+          <span className="text-sm font-medium text-gray-200">新增识别字段</span>
+          <span className="text-xs text-gray-500 ml-2">{addFieldDrafts.length} 行</span>
+        </div>
+        <button
+          onClick={addNewFieldDraft}
+          className="text-xs text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-2 py-1 rounded transition-colors flex items-center gap-1"
+        >
+          <Plus className="w-3 h-3" /> 加一行
+        </button>
+      </div>
+      {addFieldDrafts.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="bg-[#1e1e24] text-gray-400">
+                <th className="px-2 py-2 text-left font-medium border-b border-white/10 w-8">#</th>
+                <th className="px-2 py-2 text-left font-medium border-b border-white/10">字段名</th>
+                <th className="px-2 py-2 text-left font-medium border-b border-white/10">值</th>
+                <th className="px-2 py-2 text-left font-medium border-b border-white/10 w-24">格式</th>
+                <th className="px-2 py-2 text-left font-medium border-b border-white/10 w-10"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {addFieldDrafts.map((row, idx) => (
+                <tr key={idx} className="hover:bg-white/5 transition-colors">
+                  <td className="px-2 py-1.5 text-gray-500 border-b border-white/5">{idx + 1}</td>
+                  <td className="px-2 py-1.5 border-b border-white/5">
+                    <input
+                      value={row.correctedName}
+                      onChange={(e) => updateAddDraft(idx, { correctedName: e.target.value })}
+                      className="w-full bg-transparent border-b border-white/10 focus:border-blue-400 text-gray-200 outline-none px-1 py-0.5"
+                      placeholder="字段名"
+                    />
+                  </td>
+                  <td className="px-2 py-1.5 border-b border-white/5">
+                    <input
+                      value={row.correctedValue}
+                      onChange={(e) => updateAddDraft(idx, { correctedValue: e.target.value })}
+                      className="w-full bg-transparent border-b border-white/10 focus:border-blue-400 text-gray-200 outline-none px-1 py-0.5"
+                      placeholder="样例值（从票面读出，可空）"
+                    />
+                  </td>
+                  <td className="px-2 py-1.5 border-b border-white/5">
+                    <select
+                      value={row.correctedFormat}
+                      onChange={(e) => updateAddDraft(idx, { correctedFormat: e.target.value })}
+                      className="w-full bg-[#1e1e24] border border-white/10 focus:border-blue-400 rounded text-gray-200 outline-none px-1 py-0.5 text-xs"
+                    >
+                      {FORMAT_OPTIONS.map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-2 py-1.5 border-b border-white/5 text-center">
+                    <button
+                      onClick={() => removeAddDraft(idx)}
+                      className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Customize bar (save button + job progress) ───────────────────────────
+
+function CustomizeBar() {
+  const navigate = useNavigate()
+  const {
+    fieldEditDrafts, addFieldDrafts, submitCustomize, customizeSubmitting,
+    customizeJob, clearCustomizeJob,
+  } = useWorkspaceStore()
+
+  const editCount = Object.values(fieldEditDrafts).filter((d) => {
+    const nameChanged = (d.originalName || '') !== d.correctedName
+    const valueChanged = String(d.originalValue ?? '') !== d.correctedValue
+    const fmtChanged = (d.originalFormat || '') !== d.correctedFormat
+    return nameChanged || valueChanged || fmtChanged
+  }).length
+  const addCount = addFieldDrafts.filter((d) => d.correctedName.trim().length > 0).length
+  const totalCount = editCount + addCount
+
+  // Live job display
+  if (customizeJob && customizeJob.status !== 'completed' && customizeJob.status !== 'failed') {
+    return (
+      <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <Loader2 className="w-4 h-4 text-purple-400 animate-spin" />
+          <span className="text-sm text-purple-200 font-medium">{customizeJob.phaseDetail || customizeJob.status}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className={cn(
+                'h-1.5 flex-1 rounded-full transition-colors',
+                customizeJob.roundsDone > i ? 'bg-emerald-500' : 'bg-white/10',
+              )}
+            />
+          ))}
+        </div>
+        <p className="text-xs text-purple-300/80">
+          完成 {customizeJob.roundsDone} / {customizeJob.roundsTotal} 轮迭代
+        </p>
+      </div>
+    )
+  }
+  if (customizeJob && (customizeJob.status === 'completed' || customizeJob.status === 'failed')) {
+    return (
+      <div
+        className={cn(
+          'rounded-lg p-3 space-y-2 border',
+          customizeJob.status === 'completed'
+            ? 'bg-emerald-500/10 border-emerald-500/30'
+            : 'bg-red-500/10 border-red-500/30',
+        )}
+      >
+        <div className="flex items-center justify-between">
+          <span className={cn(
+            'text-sm font-medium',
+            customizeJob.status === 'completed' ? 'text-emerald-300' : 'text-red-300',
+          )}>
+            {customizeJob.status === 'completed' ? '✓ 已生成新模板' : '✗ 生成失败'}
+          </span>
+          <button
+            onClick={clearCustomizeJob}
+            className="p-0.5 rounded text-gray-400 hover:text-white hover:bg-white/10"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        {customizeJob.newApiCode && (
+          <div className="text-xs text-gray-300">
+            新 api_code: <code className="bg-black/40 px-1.5 py-0.5 rounded text-emerald-300">{customizeJob.newApiCode}</code>
+          </div>
+        )}
+        {customizeJob.overallAccuracy !== null && customizeJob.overallAccuracy !== undefined && (
+          <div className="text-xs text-gray-400">
+            综合准确率：<span className="text-emerald-400">{Math.round((customizeJob.overallAccuracy || 0) * 100)}%</span>
+          </div>
+        )}
+        {customizeJob.errorMessage && (
+          <div className="text-xs text-red-300/80">{customizeJob.errorMessage}</div>
+        )}
+        {customizeJob.status === 'completed' && customizeJob.newApiDefinitionId && (
+          <button
+            onClick={() => {
+              navigate(`/workspace/api/${customizeJob.newApiDefinitionId}`)
+              clearCustomizeJob()
+            }}
+            className="w-full px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded transition-colors"
+          >
+            打开新模板工作区 →
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  if (totalCount === 0) return null
+  return (
+    <button
+      onClick={() => void submitCustomize()}
+      disabled={customizeSubmitting}
+      className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-md bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 hover:to-purple-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-all shadow-lg shadow-purple-500/20"
+    >
+      {customizeSubmitting ? (
+        <><Loader2 className="w-4 h-4 animate-spin" /> 提交中...</>
+      ) : (
+        <><Sparkles className="w-4 h-4" /> 保存并生成客户专属模板（{totalCount} 处改动）</>
+      )}
+    </button>
+  )
+}
+
+// (CustomizeBar uses useNavigate directly; the workspace is always rendered
+// inside a Router, so no fallback needed.)
+
 // ─── Fields view ─────────────────────────────────────────────────────────────
 
 function FieldsView() {
@@ -637,6 +955,8 @@ function FieldsView() {
     documentInfo, removeAnnotation, updateFieldValue,
     saveAnnotation, deleteAnnotationRemote,
     addPendingField, drawingFieldId, setDrawingFieldId,
+    editingFieldId, fieldEditDrafts, startEditingField, cancelEditingField,
+    updateEditDraft, addNewFieldDraft, addFieldDrafts,
   } = useWorkspaceStore()
   const resultMap = useMemo(
     () => new Map(processingResults.map((r) => [r.annotationId, r])),
@@ -716,12 +1036,49 @@ function FieldsView() {
     toast.info('在左侧文档上点击字段位置，按 Esc 取消')
   }, [setDrawingFieldId])
 
+  // Find the currently-editing annotation + its draft, if any
+  const editingAnnotation = editingFieldId
+    ? annotations.find((a) => a.id === editingFieldId)
+    : null
+  const editingDraftKey = editingAnnotation
+    ? (() => {
+        const labelBase = editingAnnotation.label.split('[')[0]
+        return labelBase
+          .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+          .replace(/[^a-zA-Z0-9]+/g, '_')
+          .toLowerCase()
+      })()
+    : null
+  const editingDraft = editingDraftKey ? fieldEditDrafts[editingDraftKey] : undefined
+
+  // ── Edit-mode view: show the panel + customize bar + nothing else ─────
+  if (editingAnnotation && editingDraft) {
+    return (
+      <div className="flex-1 overflow-auto p-4 space-y-4">
+        <FieldEditPanel
+          annotation={editingAnnotation}
+          result={resultMap.get(editingAnnotation.id)}
+          draft={editingDraft}
+          onUpdate={(patch) => updateEditDraft(editingDraftKey!, patch)}
+          onCancel={cancelEditingField}
+        />
+        <CustomizeBar />
+      </div>
+    )
+  }
+
   return (
     <div className="flex-1 overflow-auto p-4 space-y-4">
+      {/* Customize job progress / save CTA — lives at the top so it's always visible */}
+      <CustomizeBar />
+
+      {/* Add field list (4-column) */}
+      {addFieldDrafts.length > 0 && <AddFieldList />}
+
       {/* Add field + Skill bar */}
       <div className="flex gap-2">
         <button
-          onClick={() => setAddingField(true)}
+          onClick={() => { addNewFieldDraft(); setAddingField(false) }}
           className="flex-1 flex items-center gap-2 px-3 py-1.5 text-sm text-purple-400 bg-purple-500/10 border border-purple-500/20 rounded-md hover:bg-purple-500/20 transition-colors justify-center"
         >
           <Plus className="w-4 h-4" />
@@ -780,6 +1137,7 @@ function FieldsView() {
                   isSelected={selectedFieldId === ann.id}
                   onHover={setHoveredFieldId}
                   onSelect={setSelectedFieldId}
+                  onStartEdit={startEditingField}
                   onDeleteField={handleDeleteField}
                   onSaveLabel={handleSaveLabel}
                   onSaveValue={handleSaveValue}

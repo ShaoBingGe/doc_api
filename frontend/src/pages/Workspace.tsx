@@ -13,6 +13,7 @@ import DocumentThumbnailColumn from '../components/workspace-v2/DocumentThumbnai
 import OptimizationProcessPanel from '../components/workspace-v2/OptimizationProcessPanel'
 import CountryPickerBar from '../components/workspace-v2/CountryPickerBar'
 import apiClient from '../lib/api-client'
+import { cn } from '../lib/utils'
 
 export default function Workspace() {
   const { apiDefinitionId, documentId } = useParams<{
@@ -95,6 +96,11 @@ export default function Workspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId, apiDefinitionId, isNewMode])
 
+  // ⚠️ All useWorkspaceStore calls must sit ABOVE any conditional `return`
+  // to keep hook ordering stable across renders.
+  const editingFieldId = useWorkspaceStore((s) => s.editingFieldId)
+  const customizeJob = useWorkspaceStore((s) => s.customizeJob)
+
   // Loading state — only while we're actually loading
   const showLoading =
     !isNewMode &&
@@ -115,6 +121,9 @@ export default function Workspace() {
 
   const showThumbnailRail = !isNewMode && !!apiDefinitionId
   const hasSelectedDoc = !!selectedDocId
+  // When the user is editing a field (double-click) or a customize job is in
+  // flight, the JSON column slides out and the field column takes its space.
+  const jsonCollapsed = !!editingFieldId || (!!customizeJob && customizeJob.status !== 'completed' && customizeJob.status !== 'failed')
 
   return (
     <div className="flex flex-col h-screen bg-[#18181c] text-white font-sans overflow-hidden">
@@ -186,8 +195,13 @@ export default function Workspace() {
                 )}
               </div>
 
-              {/* Column B: Field Structure */}
-              <div className="flex-1 min-w-[320px]">
+              {/* Column B: Field Structure — expands when JSON column is collapsed */}
+              <div
+                className={cn(
+                  'min-w-[320px] transition-[flex] duration-500 ease-in-out',
+                  jsonCollapsed ? 'flex-[2]' : 'flex-1',
+                )}
+              >
                 {hasSelectedDoc ? (
                   <DarkFieldViewer activeTab={activeTab === 'fields' ? 'fields' : 'fields'} />
                 ) : (
@@ -197,8 +211,22 @@ export default function Workspace() {
                 )}
               </div>
 
-              {/* Column C: JSON Output */}
-              <div className="flex-1 min-w-[320px]">
+              {/* Column C: JSON Output — slides out to the right when editing */}
+              <div
+                className={cn(
+                  'min-w-0 overflow-hidden transition-all duration-500 ease-in-out',
+                  jsonCollapsed
+                    ? 'flex-[0] opacity-0 translate-x-8 pointer-events-none'
+                    : 'flex-1 opacity-100 translate-x-0',
+                )}
+                style={{
+                  // When collapsed we want flex-basis 0 + width 0 so it
+                  // genuinely vacates the space (Tailwind's flex-[0] alone
+                  // doesn't zero width on all browsers).
+                  flexBasis: jsonCollapsed ? 0 : undefined,
+                  maxWidth: jsonCollapsed ? 0 : undefined,
+                }}
+              >
                 {hasSelectedDoc ? (
                   <DarkJsonViewer />
                 ) : (
