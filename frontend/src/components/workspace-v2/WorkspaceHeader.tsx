@@ -41,12 +41,33 @@ export default function WorkspaceHeader({
     apiDefinition,
     documents,
     apiDefinitionId,
+    fieldEditDrafts,
+    addFieldDrafts,
+    editingFieldId,
+    customizeJob,
   } = useWorkspaceStore()
   const navigate = useNavigate()
   const [optimizing, setOptimizing] = useState(false)
 
   const sampleCount = documents.length
   const hasEnoughSamples = sampleCount >= MIN_SAMPLES
+
+  // ── Dirty-draft detection ────────────────────────────────────────────────
+  // While the customer is editing fields, the legacy "save as-is" path is
+  // hidden behind the customize flow. We disable "保存并生成 API" to steer
+  // them toward "开始优化" (or the in-panel "保存并生成客户专属模板" CTA).
+  const dirtyEditCount = Object.values(fieldEditDrafts).filter((d) => {
+    const nameChanged = (d.originalName || '') !== d.correctedName
+    const valueChanged = String(d.originalValue ?? '') !== d.correctedValue
+    const fmtChanged = (d.originalFormat || '') !== d.correctedFormat
+    return nameChanged || valueChanged || fmtChanged
+  }).length
+  const dirtyAddCount = addFieldDrafts.filter((d) => d.correctedName.trim().length > 0).length
+  const inFlightJob =
+    !!customizeJob &&
+    customizeJob.status !== 'completed' &&
+    customizeJob.status !== 'failed'
+  const hasDirtyEdits = dirtyEditCount + dirtyAddCount > 0 || !!editingFieldId || inFlightJob
 
   const handleOptimize = async () => {
     if (!apiDefinitionId) {
@@ -191,10 +212,15 @@ export default function WorkspaceHeader({
         </button>
         <button
           onClick={onOpenModal}
-          disabled={isNewMode}
+          disabled={isNewMode || hasDirtyEdits}
+          title={
+            hasDirtyEdits
+              ? '有待暂存的字段修改 — 请点"开始优化"走客户定制流程'
+              : undefined
+          }
           className={cn(
             'flex items-center gap-2 px-4 py-1.5 text-sm rounded-md transition-colors font-medium',
-            isNewMode
+            isNewMode || hasDirtyEdits
               ? 'bg-purple-600/50 text-white/50 cursor-not-allowed'
               : 'bg-purple-600 hover:bg-purple-700 text-white',
           )}

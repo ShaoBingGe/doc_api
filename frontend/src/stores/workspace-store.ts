@@ -171,6 +171,13 @@ interface WorkspaceStore {
   submitCustomize: () => Promise<string | null>
   pollCustomizeJob: () => Promise<void>
   clearCustomizeJob: () => void
+
+  // ── Document viewer pan tool ───────────────────────────────────────────
+  fieldPanOffsets: Record<string, { dx: number; dy: number }>
+  panMode: boolean
+  setPanMode: (on: boolean) => void
+  setFieldPanOffset: (annotationId: string, offset: { dx: number; dy: number }) => void
+  clearFieldPanOffset: (annotationId: string) => void
 }
 
 // ─── Structured data parser ───────────────────────────────────────────────────
@@ -329,6 +336,12 @@ const initialState = {
   addFieldDrafts: [] as FieldEditDraft[],
   customizeJob: null as CustomizeJobStatus | null,
   customizeSubmitting: false,
+  // Per-annotation pan offset (extra translate on top of the focus zoom).
+  // Updated while the user pans the document with the hand tool, replayed
+  // next time that field is focused.
+  fieldPanOffsets: {} as Record<string, { dx: number; dy: number }>,
+  // Hand tool active state (drives cursor + drag-to-pan in the doc viewer).
+  panMode: false as boolean,
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -913,6 +926,21 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   clearCustomizeJob: () =>
     set({ customizeJob: null, fieldEditDrafts: {}, addFieldDrafts: [] }),
+
+  // ── Pan tool ───────────────────────────────────────────────────────────
+  setPanMode: (on) => set({ panMode: on }),
+
+  setFieldPanOffset: (annotationId, offset) =>
+    set((s) => ({
+      fieldPanOffsets: { ...s.fieldPanOffsets, [annotationId]: offset },
+    })),
+
+  clearFieldPanOffset: (annotationId) =>
+    set((s) => {
+      const next = { ...s.fieldPanOffsets }
+      delete next[annotationId]
+      return { fieldPanOffsets: next }
+    }),
 
   removeSampleDocument: async (docId) => {
     const apiDefId = get().apiDefinitionId

@@ -216,6 +216,7 @@ function FieldRow({
   result,
   isHovered,
   isSelected,
+  hasDirtyDraft,
   onHover,
   onSelect,
   onStartEdit,
@@ -231,6 +232,8 @@ function FieldRow({
   result?: ProcessingResult
   isHovered: boolean
   isSelected: boolean
+  /** True when this field has a pending customer edit not yet submitted. */
+  hasDirtyDraft: boolean
   onHover: (id: string | null) => void
   onSelect: (id: string | null) => void
   onStartEdit: (id: string) => void
@@ -252,22 +255,25 @@ function FieldRow({
     <div
       className={cn(
         'group flex items-center justify-between py-2 px-3 -mx-3 rounded cursor-pointer transition-colors',
+        // Border-left strip + amber tint when this field has an unsaved
+        // customer edit. Selection / hover state still wins for the bg.
+        hasDirtyDraft && 'border-l-2 border-amber-400 pl-[10px]',
         isSelected
           ? 'bg-purple-500/30 ring-1 ring-purple-500/40'
           : isHovered
           ? 'bg-purple-500/20'
+          : hasDirtyDraft
+          ? 'bg-amber-500/10 hover:bg-amber-500/15'
           : 'hover:bg-white/5',
       )}
       onClick={() => onSelect(isSelected ? null : annotation.id)}
       onDoubleClick={(e) => {
-        // Double-click triggers the customer-edit panel. We swallow it so the
-        // EditableCell's own dblclick (inline rename) doesn't also fire.
         e.stopPropagation()
         onStartEdit(annotation.id)
       }}
       onMouseEnter={() => onHover(annotation.id)}
       onMouseLeave={() => onHover(null)}
-      title="点击聚焦，双击进入字段编辑面板"
+      title={hasDirtyDraft ? '已有待提交修改，双击查看' : '点击聚焦，双击进入字段编辑面板'}
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
         {/* Label */}
@@ -276,11 +282,19 @@ function FieldRow({
         </span>
 
         {/* Value */}
-        <span className="text-gray-200 text-sm truncate max-w-[140px]">
+        <span className={cn(
+          'text-sm truncate max-w-[140px]',
+          hasDirtyDraft ? 'text-amber-200' : 'text-gray-200',
+        )}>
           {value === null || value === undefined || value === ''
             ? <span className="text-gray-600">—</span>
             : String(value)}
         </span>
+        {hasDirtyDraft && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-medium flex-shrink-0">
+            已暂存
+          </span>
+        )}
       </div>
 
       <div className="flex items-center gap-2 flex-shrink-0">
@@ -669,7 +683,7 @@ function FieldEditPanel({
         <button
           onClick={onCancel}
           className="p-1 rounded text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
-          title="返回字段列表"
+          title="返回字段列表（修改自动暂存）"
         >
           <X className="w-4 h-4" />
         </button>
@@ -738,9 +752,16 @@ function FieldEditPanel({
         </div>
 
         <p className="text-xs text-gray-500 leading-relaxed">
-          保存后将自动生成该字段的反思（为何原 prompt 未取到正确值），并在新模板中迭代优化。
+          修改自动暂存。继续编辑其他字段，全部完成后点字段列表底部的"保存并生成客户专属模板"按钮统一启动迭代优化。
           原模板不变，会另外 fork 出一个带新 api_code 的客户专属模板。
         </p>
+        <button
+          onClick={onCancel}
+          className="w-full px-3 py-2 rounded-md bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-100 text-sm font-medium transition-colors flex items-center justify-center gap-2"
+        >
+          <Check className="w-4 h-4" />
+          暂存修改并返回字段列表
+        </button>
       </div>
     </div>
   )
@@ -1178,25 +1199,39 @@ function FieldsView() {
             {scalars.length === 0 ? (
               <p className="text-xs text-gray-500 text-center py-4">暂无字段，等待文档处理完成</p>
             ) : (
-              scalars.map((ann) => (
-                <FieldRow
-                  key={ann.id}
-                  annotation={ann}
-                  result={resultMap.get(ann.id)}
-                  isHovered={hoveredFieldId === ann.id}
-                  isSelected={selectedFieldId === ann.id}
-                  onHover={setHoveredFieldId}
-                  onSelect={setSelectedFieldId}
-                  onStartEdit={startEditingField}
-                  onDeleteField={handleDeleteField}
-                  onSaveLabel={handleSaveLabel}
-                  onSaveValue={handleSaveValue}
-                  onSaveType={handleSaveType}
-                  onConfirmConfidence={handleConfirmConfidence}
-                  onStartDrawing={handleStartDrawing}
-                  isDrawingThis={drawingFieldId === ann.id}
-                />
-              ))
+              scalars.map((ann) => {
+                const moduleKey = ann.label
+                  .split('[')[0]
+                  .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+                  .replace(/[^a-zA-Z0-9]+/g, '_')
+                  .toLowerCase()
+                const d = fieldEditDrafts[moduleKey]
+                const hasDirtyDraft = !!d && (
+                  (d.originalName || '') !== d.correctedName ||
+                  String(d.originalValue ?? '') !== d.correctedValue ||
+                  (d.originalFormat || '') !== d.correctedFormat
+                )
+                return (
+                  <FieldRow
+                    key={ann.id}
+                    annotation={ann}
+                    result={resultMap.get(ann.id)}
+                    isHovered={hoveredFieldId === ann.id}
+                    isSelected={selectedFieldId === ann.id}
+                    hasDirtyDraft={hasDirtyDraft}
+                    onHover={setHoveredFieldId}
+                    onSelect={setSelectedFieldId}
+                    onStartEdit={startEditingField}
+                    onDeleteField={handleDeleteField}
+                    onSaveLabel={handleSaveLabel}
+                    onSaveValue={handleSaveValue}
+                    onSaveType={handleSaveType}
+                    onConfirmConfidence={handleConfirmConfidence}
+                    onStartDrawing={handleStartDrawing}
+                    isDrawingThis={drawingFieldId === ann.id}
+                  />
+                )
+              })
             )}
           </div>
         )}

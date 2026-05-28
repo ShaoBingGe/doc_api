@@ -199,7 +199,7 @@ export default function Workspace() {
               {/* Column B: Field Structure — expands when JSON column is collapsed */}
               <div
                 className={cn(
-                  'min-w-[320px] transition-[flex] duration-500 ease-in-out',
+                  'min-w-[320px] transition-[flex] duration-1000 ease-in-out',
                   jsonCollapsed ? 'flex-[2]' : 'flex-1',
                 )}
               >
@@ -215,7 +215,7 @@ export default function Workspace() {
               {/* Column C: JSON Output — slides out to the right when editing */}
               <div
                 className={cn(
-                  'min-w-0 overflow-hidden transition-all duration-500 ease-in-out',
+                  'min-w-0 overflow-hidden transition-all duration-1000 ease-in-out',
                   jsonCollapsed
                     ? 'flex-[0] opacity-0 translate-x-8 pointer-events-none'
                     : 'flex-1 opacity-100 translate-x-0',
