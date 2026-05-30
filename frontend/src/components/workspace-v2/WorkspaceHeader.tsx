@@ -45,12 +45,18 @@ export default function WorkspaceHeader({
     addFieldDrafts,
     editingFieldId,
     customizeJob,
+    samplesReview,
   } = useWorkspaceStore()
   const navigate = useNavigate()
   const [optimizing, setOptimizing] = useState(false)
 
+  // ── Sample-readiness gate (design v3) ────────────────────────────────────
+  // Iteration requires N samples whose OCR result the customer marked as GT
+  // ("已审视"). Raw upload count is irrelevant.
   const sampleCount = documents.length
-  const hasEnoughSamples = sampleCount >= MIN_SAMPLES
+  const confirmedCount = samplesReview?.confirmedCount ?? 0
+  const requiredCount = samplesReview?.requiredCount ?? MIN_SAMPLES
+  const hasEnoughSamples = confirmedCount >= requiredCount
 
   // ── Dirty-draft detection ────────────────────────────────────────────────
   // While the customer is editing fields, the legacy "save as-is" path is
@@ -74,10 +80,11 @@ export default function WorkspaceHeader({
       toast.info('请先保存 API 后再开始优化')
       return
     }
-    // Gate 1: sample count
+    // Gate 1: confirmed-sample count (not raw)
     if (!hasEnoughSamples) {
       toast.error(
-        `样本量过少（当前 ${sampleCount} 张），请继续添加至 ${MIN_SAMPLES} 张或以上`,
+        `已审视样本不足（${confirmedCount} / ${requiredCount}）—— `
+        + `打开每个样本检查 OCR 结果，点工具栏"待审视"切到"已审视"`,
       )
       return
     }
@@ -123,7 +130,7 @@ export default function WorkspaceHeader({
   const optimizeDisabledReason = isNewMode
     ? '请先保存 API'
     : !hasEnoughSamples
-      ? `至少需要 ${MIN_SAMPLES} 张样本（当前 ${sampleCount}）`
+      ? `至少需要 ${requiredCount} 个已审视的样本（当前 ${confirmedCount}/${sampleCount}）`
       : null
 
   return (

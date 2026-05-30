@@ -170,15 +170,22 @@ def advance_round(
     if not api_def:
         raise NotFoundError(f"ApiDefinition {run.api_definition_id} not found")
 
-    sample_ids = [_to_uuid(x) for x in (run.sample_document_ids or [])]
+    # advance_round uses the same sample list the run was started with —
+    # those samples WERE confirmed at start time. If any have since lost
+    # GT (rare: customer un-confirmed), skip them silently rather than abort.
+    raw_sample_ids = [_to_uuid(x) for x in (run.sample_document_ids or [])]
     ground_truths: dict[str, dict] = {}
-    for sid in sample_ids:
+    sample_ids: list[uuid.UUID] = []
+    for sid in raw_sample_ids:
         gt = ground_truth.build(db, sid)
-        if not gt:
-            raise ValidationError(
-                f"Sample document {sid} has no ground-truth annotations"
-            )
-        ground_truths[str(sid)] = gt
+        if gt:
+            sample_ids.append(sid)
+            ground_truths[str(sid)] = gt
+    if len(sample_ids) < MIN_SAMPLES:
+        raise ValidationError(
+            f"Run lost ground-truth coverage: only {len(sample_ids)}/{len(raw_sample_ids)} "
+            f"samples remain confirmed (need {MIN_SAMPLES})."
+        )
 
     # Resolve starting version for this round
     if use_version_id:
@@ -435,36 +442,42 @@ def _resolve_run_inputs(
     api_definition_id: uuid.UUID,
     sample_document_ids_override: list[uuid.UUID] | None,
 ) -> tuple[ApiDefinition, list[uuid.UUID], dict[str, dict]]:
-    """Shared validation: api def, sample list, GT preload."""
+    """Shared validation: api def, sample list, GT preload.
+
+    Per design v3 we only use samples the customer has confirmed as GT
+    ("已审视"). Samples without GT are silently dropped from the run; the
+    customer can confirm them later and re-trigger. We still require
+    at least MIN_SAMPLES *confirmed* samples to proceed.
+    """
     api_def: ApiDefinition | None = db.get(ApiDefinition, api_definition_id)
     if not api_def:
         raise NotFoundError(f"ApiDefinition {api_definition_id} not found")
 
     if sample_document_ids_override is not None:
-        sample_ids = list(sample_document_ids_override)
+        raw_sample_ids = list(sample_document_ids_override)
     else:
         cfg = api_def.config or {}
         raw = cfg.get("sample_document_ids") or cfg.get("sample_document_id")
         if isinstance(raw, str):
             raw = [raw]
-        sample_ids = [_to_uuid(x) for x in (raw or [])]
+        raw_sample_ids = [_to_uuid(x) for x in (raw or [])]
 
-    if len(sample_ids) < MIN_SAMPLES:
+    # Filter to samples with GT only — silently drop "待审视" ones
+    ground_truths: dict[str, dict] = {}
+    confirmed_ids: list[uuid.UUID] = []
+    for sid in raw_sample_ids:
+        gt = ground_truth.build(db, sid)
+        if gt:
+            confirmed_ids.append(sid)
+            ground_truths[str(sid)] = gt
+
+    if len(confirmed_ids) < MIN_SAMPLES:
         raise ValidationError(
-            f"At least {MIN_SAMPLES} sample documents are required (got {len(sample_ids)})"
+            f"至少需要 {MIN_SAMPLES} 个已审视的样本才能启动迭代 "
+            f"（当前共 {len(raw_sample_ids)} 个样本，仅 {len(confirmed_ids)} 个已审视）"
         )
 
-    ground_truths: dict[str, dict] = {}
-    for sid in sample_ids:
-        gt = ground_truth.build(db, sid)
-        if not gt:
-            raise ValidationError(
-                f"Sample document {sid} has no ground-truth annotations "
-                "(need at least one annotation with is_corrected=True or source=manual)"
-            )
-        ground_truths[str(sid)] = gt
-
-    return api_def, sample_ids, ground_truths
+    return api_def, confirmed_ids, ground_truths
 
 
 def _resolve_starting_version(
