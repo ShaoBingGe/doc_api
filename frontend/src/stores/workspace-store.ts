@@ -781,14 +781,18 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     if (!ann) return
     const r = processingResults.find((rr) => rr.annotationId === annotationId)
     const value = r?.value ?? ann.value ?? ''
-    // module_key is conventionally the snake_case of label up to the first '['
+    // Draft key = the full annotation label (so each array cell gets its own
+    // draft, e.g. `details[0].quantity` ≠ `details[1].quantity`). The backend
+    // module_key (the parent OcrModule) is the snake_case of the path up to
+    // the first `[` so multiple array-cell diffs route to the same module
+    // and the reflection / fork logic accumulates them.
+    const draftKey = ann.label
     const labelBase = ann.label.split('[')[0]
     const moduleKey = labelBase
       .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
       .replace(/[^a-zA-Z0-9]+/g, '_')
       .toLowerCase()
-    // Seed the draft if there isn't one already
-    if (!fieldEditDrafts[moduleKey]) {
+    if (!fieldEditDrafts[draftKey]) {
       const draft: FieldEditDraft = {
         moduleKey,
         kind: 'edit',
@@ -801,7 +805,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       }
       set({
         editingFieldId: annotationId,
-        fieldEditDrafts: { ...fieldEditDrafts, [moduleKey]: draft },
+        fieldEditDrafts: { ...fieldEditDrafts, [draftKey]: draft },
       })
     } else {
       set({ editingFieldId: annotationId })

@@ -438,16 +438,18 @@ function ArrayTable({
   group,
   hoveredFieldId,
   selectedFieldId,
+  fieldEditDrafts,
   onHover,
   onSelect,
-  onSaveValue,
+  onStartEdit,
 }: {
   group: ArrayGroup
   hoveredFieldId: string | null
   selectedFieldId: string | null
+  fieldEditDrafts: Record<string, FieldEditDraft>
   onHover: (id: string | null) => void
   onSelect: (id: string | null) => void
-  onSaveValue: (id: string, value: string) => void
+  onStartEdit: (annotationId: string) => void
 }) {
   const [expanded, setExpanded] = useState(true)
   const sortedIndices = useMemo(
@@ -526,15 +528,26 @@ function ArrayTable({
                       const isLow = confidence < LOW_CONFIDENCE_THRESHOLD
                       const isHovered = hoveredFieldId === annotation.id
                       const isSelected = selectedFieldId === annotation.id
+                      // Dirty when this cell has its own draft (keyed by
+                      // full label, e.g. `details[0].quantity`).
+                      const cellDraft = fieldEditDrafts[annotation.label]
+                      const hasDirtyDraft = !!cellDraft && (
+                        (cellDraft.originalName || '') !== cellDraft.correctedName ||
+                        String(cellDraft.originalValue ?? '') !== cellDraft.correctedValue ||
+                        (cellDraft.originalFormat || '') !== cellDraft.correctedFormat
+                      )
                       return (
                         <td
                           key={col}
                           className={cn(
                             'px-2 py-1.5 border-b border-white/5 cursor-pointer transition-colors',
+                            hasDirtyDraft && 'border-l-2 border-l-amber-400',
                             isSelected
                               ? 'bg-purple-500/30'
                               : isHovered
                               ? 'bg-purple-500/15'
+                              : hasDirtyDraft
+                              ? 'bg-amber-500/10'
                               : '',
                           )}
                           onMouseEnter={() => onHover(annotation.id)}
@@ -542,25 +555,28 @@ function ArrayTable({
                           onClick={() =>
                             onSelect(isSelected ? null : annotation.id)
                           }
-                          title={`置信度 ${Math.round(confidence)}%`}
+                          onDoubleClick={(e) => {
+                            // Replaces the old window.prompt — opens the
+                            // same side-by-side edit panel as scalars,
+                            // keyed by full label `details[N].col` so each
+                            // cell gets its own draft.
+                            e.stopPropagation()
+                            onStartEdit(annotation.id)
+                          }}
+                          title={
+                            hasDirtyDraft
+                              ? '已暂存修改 — 双击查看'
+                              : `置信度 ${Math.round(confidence)}% · 双击编辑`
+                          }
                         >
                           <div className="flex items-center gap-1.5 min-w-0">
                             <div
                               className={cn(
                                 'flex-1 min-w-0 max-w-[180px] truncate',
-                                isLow ? 'text-amber-300' : 'text-gray-200',
+                                hasDirtyDraft ? 'text-amber-200'
+                                : isLow ? 'text-amber-300'
+                                : 'text-gray-200',
                               )}
-                              onDoubleClick={(e) => {
-                                e.stopPropagation()
-                                const next = window.prompt(
-                                  `编辑 ${col}`,
-                                  value === null || value === undefined
-                                    ? ''
-                                    : String(value),
-                                )
-                                if (next !== null) onSaveValue(annotation.id, next)
-                              }}
-                              title="双击编辑"
                             >
                               {value === null ||
                               value === undefined ||
@@ -568,7 +584,12 @@ function ArrayTable({
                                 ? <span className="text-gray-600">—</span>
                                 : String(value)}
                             </div>
-                            {isLow && (
+                            {hasDirtyDraft && (
+                              <span className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-medium">
+                                已暂存
+                              </span>
+                            )}
+                            {isLow && !hasDirtyDraft && (
                               <span className="flex-shrink-0 text-[10px] text-amber-400">
                                 {Math.round(confidence)}%
                               </span>
@@ -855,6 +876,258 @@ function AddFieldList() {
 
 // ─── Customize bar (save button + job progress) ───────────────────────────
 
+// ─── Waiting-for-samples banner ───────────────────────────────────────────
+//
+// Shown inside the customize bar slot when the job is parked because the
+// new (forked) ApiDefinition has < MIN_SAMPLES_FOR_ITERATION samples. The
+// banner is the single upload entry point — clicking 上传样本 pops the OS
+// file picker directly; multiple files can be selected at once. Each file
+// uploads independently and we keep a per-file status so the customer can
+// retry just the failures.
+
+const MIN_NEW_SAMPLES = 2  // matches user's spec: "至少 2 个（最多 9 个）"
+const MAX_NEW_SAMPLES = 9
+
+interface PerFileUpload {
+  id: string
+  file: File
+  status: 'pending' | 'uploading' | 'success' | 'failed'
+  error?: string
+}
+
+function WaitingForSamplesBanner({
+  customizeJob,
+  onClose,
+  navigate,
+}: {
+  customizeJob: CustomizeJobStatus
+  onClose: () => void
+  navigate: ReturnType<typeof useNavigate>
+}) {
+  const apiDefinitionId = useWorkspaceStore((s) => s.apiDefinitionId)
+  const documents = useWorkspaceStore((s) => s.documents)
+  const addSampleDocument = useWorkspaceStore((s) => s.addSampleDocument)
+  const onNewWorkspace = !!apiDefinitionId && customizeJob.newApiDefinitionId === apiDefinitionId
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [uploads, setUploads] = useState<PerFileUpload[]>([])
+
+  // On the source workspace, surface a single CTA to navigate to the new fork
+  if (!onNewWorkspace && customizeJob.newApiDefinitionId) {
+    return (
+      <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-2.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0" />
+            <span className="text-sm text-amber-200 font-medium">等待上传样本以启动迭代优化</span>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-0.5 rounded text-gray-400 hover:text-white hover:bg-white/10 flex-shrink-0"
+            title="关闭提醒"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        {customizeJob.newApiCode && (
+          <div className="text-xs text-amber-100/80">
+            新 api_code: <code className="bg-black/40 px-1.5 py-0.5 rounded text-amber-200">{customizeJob.newApiCode}</code>
+          </div>
+        )}
+        <button
+          onClick={() => navigate(`/workspace/api/${customizeJob.newApiDefinitionId}`)}
+          className="w-full px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-sm rounded transition-colors"
+        >
+          前往新模板工作区上传样本 →
+        </button>
+      </div>
+    )
+  }
+
+  // ── Live progress numbers ─────────────────────────────────────────────
+  // documents.length = persisted samples on this ApiDef (already uploaded +
+  // bound). It can include the inherited samples from the source. We surface
+  // both the absolute count and the deficit vs MIN_SAMPLES_FOR_ITERATION.
+  const persisted = documents.length
+  const requiredTotal = 3  // backend MIN_SAMPLES_FOR_ITERATION
+  const stillNeeded = Math.max(0, requiredTotal - persisted)
+  const successUploads = uploads.filter((u) => u.status === 'success').length
+  const failedUploads = uploads.filter((u) => u.status === 'failed')
+  const uploadingNow = uploads.some((u) => u.status === 'uploading')
+  // Quota: how many new samples the customer should still pick. We hint at
+  // 2..9 per the verbatim spec, capped by remaining quota.
+  const remainingMinQuota = Math.max(0, MIN_NEW_SAMPLES - successUploads)
+  const remainingMaxQuota = Math.max(0, MAX_NEW_SAMPLES - successUploads)
+
+  const triggerFilePicker = () => fileInputRef.current?.click()
+
+  const handleFilesChosen = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    const next: PerFileUpload[] = Array.from(files).map((f) => ({
+      id: `${f.name}-${f.size}-${f.lastModified}-${Math.random().toString(36).slice(2, 6)}`,
+      file: f,
+      status: 'pending',
+    }))
+    setUploads((prev) => [...prev, ...next])
+    // Sequentially upload — addSampleDocument is synchronous (triggers OCR);
+    // running them sequentially keeps backend load reasonable and lets us
+    // surface progress per file.
+    for (const item of next) {
+      await uploadOne(item)
+    }
+    // Reset the input so picking the same file again re-fires the change.
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const uploadOne = async (item: PerFileUpload) => {
+    setUploads((prev) => prev.map((u) => u.id === item.id ? { ...u, status: 'uploading' } : u))
+    try {
+      const result = await addSampleDocument(item.file)
+      setUploads((prev) => prev.map((u) =>
+        u.id === item.id
+          ? { ...u, status: result ? 'success' : 'failed', error: result ? undefined : '上传失败' }
+          : u,
+      ))
+    } catch (err: unknown) {
+      const msg = (err as { message?: string })?.message || '上传失败'
+      setUploads((prev) => prev.map((u) =>
+        u.id === item.id ? { ...u, status: 'failed', error: msg } : u,
+      ))
+    }
+  }
+
+  const retryFailed = async () => {
+    for (const u of failedUploads) {
+      await uploadOne(u)
+    }
+  }
+
+  const dismissFailure = (id: string) =>
+    setUploads((prev) => prev.filter((u) => u.id !== id))
+
+  return (
+    <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0" />
+          <span className="text-sm text-amber-200 font-medium">等待上传样本以启动迭代优化</span>
+          <span
+            className={cn(
+              'ml-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium',
+              stillNeeded === 0 ? 'bg-emerald-500/30 text-emerald-200' : 'bg-amber-500/30 text-amber-100',
+            )}
+            title="当前样本数 / 启动迭代所需最低样本数"
+          >
+            {persisted}/{requiredTotal}
+          </span>
+        </div>
+        <button
+          onClick={onClose}
+          className="p-0.5 rounded text-gray-400 hover:text-white hover:bg-white/10 flex-shrink-0"
+          title="关闭提醒"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {customizeJob.newApiCode && (
+        <div className="text-xs text-amber-100/80">
+          新 api_code: <code className="bg-black/40 px-1.5 py-0.5 rounded text-amber-200">{customizeJob.newApiCode}</code>
+        </div>
+      )}
+
+      <p className="text-xs text-amber-100/80 leading-relaxed">
+        系统将启动识别优化程序，为保证识别能力能够适应更多不同的场景，请上传至少 2 个（最多 9 个）不同格式的样本，要求：
+        一是识别结果，必须与当前样本文件需要识别的字段/内容/格式和输出完全一致，
+        二是在内容的布局和式样上，尽量与当前样本完全不一致，且相互之间也完全不一致。
+      </p>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept="application/pdf,image/png,image/jpeg,image/webp"
+        onChange={(e) => void handleFilesChosen(e.target.files)}
+        className="hidden"
+      />
+
+      <button
+        onClick={triggerFilePicker}
+        disabled={uploadingNow}
+        className={cn(
+          'w-full px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2',
+          uploadingNow
+            ? 'bg-amber-700/40 text-amber-200/60 cursor-not-allowed'
+            : 'bg-amber-600 hover:bg-amber-700 text-white',
+        )}
+      >
+        {uploadingNow ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+        {uploadingNow ? '上传中...' : '上传样本（可多选）'}
+      </button>
+
+      {(uploads.length > 0 || failedUploads.length > 0) && (
+        <div className="space-y-1">
+          {uploads.map((u) => (
+            <div
+              key={u.id}
+              className={cn(
+                'flex items-center justify-between gap-2 px-2 py-1 rounded text-xs',
+                u.status === 'success' ? 'bg-emerald-500/10 text-emerald-200'
+                : u.status === 'failed' ? 'bg-red-500/10 text-red-200'
+                : u.status === 'uploading' ? 'bg-amber-500/15 text-amber-100'
+                : 'bg-white/5 text-gray-300',
+              )}
+            >
+              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                {u.status === 'uploading' && <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />}
+                {u.status === 'success' && <Check className="w-3 h-3 flex-shrink-0" />}
+                {u.status === 'failed' && <AlertCircle className="w-3 h-3 flex-shrink-0" />}
+                <span className="truncate">{u.file.name}</span>
+              </div>
+              {u.status === 'failed' && (
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <button
+                    onClick={() => uploadOne(u)}
+                    className="px-1.5 py-0.5 rounded bg-amber-500/30 hover:bg-amber-500/50 text-amber-100 transition-colors"
+                  >
+                    重试
+                  </button>
+                  <button
+                    onClick={() => dismissFailure(u.id)}
+                    className="p-0.5 rounded hover:bg-white/10"
+                    title="忽略"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+          {failedUploads.length > 1 && (
+            <button
+              onClick={retryFailed}
+              className="w-full px-2 py-1 text-xs text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 rounded transition-colors"
+            >
+              一键重试 {failedUploads.length} 个失败的上传
+            </button>
+          )}
+        </div>
+      )}
+
+      <p className="text-xs text-amber-200/70">
+        {stillNeeded === 0
+          ? '✓ 样本已就绪，迭代将自动启动'
+          : `还需 ${stillNeeded} 个不同格式的样本启动 3 轮迭代`}
+        {remainingMinQuota > 0 && stillNeeded > 0 && (
+          <>
+            （建议上传 {remainingMinQuota}–{remainingMaxQuota} 个）
+          </>
+        )}
+      </p>
+    </div>
+  )
+}
+
 function CustomizeBar() {
   const navigate = useNavigate()
   const {
@@ -871,53 +1144,10 @@ function CustomizeBar() {
   const addCount = addFieldDrafts.filter((d) => d.correctedName.trim().length > 0).length
   const totalCount = editCount + addCount
 
-  // ── Waiting for samples — show the verbatim instruction ─────────────
+  // ── Waiting for samples — verbatim instruction + inline upload ──────
   if (customizeJob && customizeJob.status === 'waiting_for_samples') {
-    const apiDefinitionId = useWorkspaceStore.getState().apiDefinitionId
-    const onNewWorkspace = apiDefinitionId && customizeJob.newApiDefinitionId === apiDefinitionId
     return (
-      <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-2.5">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0" />
-            <span className="text-sm text-amber-200 font-medium">
-              等待上传样本以启动迭代优化
-            </span>
-          </div>
-          <button
-            onClick={clearCustomizeJob}
-            className="p-0.5 rounded text-gray-400 hover:text-white hover:bg-white/10 flex-shrink-0"
-            title="关闭提醒"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        {customizeJob.newApiCode && (
-          <div className="text-xs text-amber-100/80">
-            新 api_code: <code className="bg-black/40 px-1.5 py-0.5 rounded text-amber-200">{customizeJob.newApiCode}</code>
-          </div>
-        )}
-        <p className="text-xs text-amber-100/80 leading-relaxed">
-          系统将启动识别优化程序，为保证识别能力能够适应更多不同的场景，请上传至少 2 个（最多 9 个）不同格式的样本，要求：
-          一是识别结果，必须与当前样本文件需要识别的字段/内容/格式和输出完全一致，
-          二是在内容的布局和式样上，尽量与当前样本完全不一致，且相互之间也完全不一致。
-        </p>
-        {!onNewWorkspace && customizeJob.newApiDefinitionId && (
-          <button
-            onClick={() => {
-              navigate(`/workspace/api/${customizeJob.newApiDefinitionId}`)
-            }}
-            className="w-full px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-sm rounded transition-colors"
-          >
-            前往新模板工作区上传样本 →
-          </button>
-        )}
-        {onNewWorkspace && (
-          <p className="text-xs text-amber-200/70">
-            ↑ 在左侧"样本"栏使用 + 按钮上传，达到 3 个后自动启动 3 轮迭代。
-          </p>
-        )}
-      </div>
+      <WaitingForSamplesBanner customizeJob={customizeJob} onClose={clearCustomizeJob} navigate={navigate} />
     )
   }
 
@@ -1111,15 +1341,8 @@ function FieldsView() {
   const editingAnnotation = editingFieldId
     ? annotations.find((a) => a.id === editingFieldId)
     : null
-  const editingDraftKey = editingAnnotation
-    ? (() => {
-        const labelBase = editingAnnotation.label.split('[')[0]
-        return labelBase
-          .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-          .replace(/[^a-zA-Z0-9]+/g, '_')
-          .toLowerCase()
-      })()
-    : null
+  // Draft key = full label (same as startEditingField).
+  const editingDraftKey = editingAnnotation ? editingAnnotation.label : null
   const editingDraft = editingDraftKey ? fieldEditDrafts[editingDraftKey] : undefined
 
   // ── Edit-mode view: show the panel + customize bar + nothing else ─────
@@ -1200,12 +1423,8 @@ function FieldsView() {
               <p className="text-xs text-gray-500 text-center py-4">暂无字段，等待文档处理完成</p>
             ) : (
               scalars.map((ann) => {
-                const moduleKey = ann.label
-                  .split('[')[0]
-                  .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-                  .replace(/[^a-zA-Z0-9]+/g, '_')
-                  .toLowerCase()
-                const d = fieldEditDrafts[moduleKey]
+                // Draft keyed by full label (matches startEditingField).
+                const d = fieldEditDrafts[ann.label]
                 const hasDirtyDraft = !!d && (
                   (d.originalName || '') !== d.correctedName ||
                   String(d.originalValue ?? '') !== d.correctedValue ||
@@ -1244,9 +1463,10 @@ function FieldsView() {
           group={group}
           hoveredFieldId={hoveredFieldId}
           selectedFieldId={selectedFieldId}
+          fieldEditDrafts={fieldEditDrafts}
           onHover={setHoveredFieldId}
           onSelect={setSelectedFieldId}
-          onSaveValue={handleSaveValue}
+          onStartEdit={startEditingField}
         />
       ))}
 

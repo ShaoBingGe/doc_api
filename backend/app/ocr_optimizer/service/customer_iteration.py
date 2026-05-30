@@ -480,6 +480,10 @@ def _fork_api_definition(
         activated_at=datetime.now(timezone.utc),
     )
 
+    # Multiple diffs may share the same module_key — e.g. several array-cell
+    # corrections on `detailOfGoodsOrServices[0..N].field` all route to module
+    # `detail_of_goods_or_services`. We accumulate their prompt suffixes so no
+    # correction gets dropped; description and schema_type take last-wins.
     edits_by_key: dict[str, dict] = {}
     add_specs: list[dict] = []
     for d in diffs:
@@ -487,20 +491,36 @@ def _fork_api_definition(
             mk = d.get("module_key")
             if not mk:
                 continue
-            patch: dict[str, Any] = {}
+            existing = edits_by_key.get(mk, {})
             r = reflections.get(mk)
-            if r and r.description_patch:
-                patch["description"] = r.description_patch
-            fix_text = "\n\n".join(r.fix_suggestions) if r else ""
-            if fix_text:
-                patch["__prompt_suffix"] = fix_text
-            if d.get("corrected_value"):
-                hint = f"客户在样本中提供的正确值示例：{d['corrected_value']}"
-                patch["__prompt_suffix"] = (patch.get("__prompt_suffix", "") + "\n" + hint).strip()
+            # Description: first non-empty reflection patch wins
+            if r and r.description_patch and not existing.get("description"):
+                existing["description"] = r.description_patch
+            # Schema type: last non-empty wins
             if d.get("corrected_format") and d.get("corrected_format") != d.get("original_format"):
-                patch["__schema_type"] = d["corrected_format"]
-            if patch:
-                edits_by_key[mk] = patch
+                existing["__schema_type"] = d["corrected_format"]
+            # Suffix: accumulate per-cell hints + reflection fix_suggestions
+            suffix_parts: list[str] = []
+            if r:
+                suffix_parts.extend(s for s in r.fix_suggestions if s)
+            field_label = d.get("original_name") or d.get("corrected_name") or ""
+            corrected_value = d.get("corrected_value")
+            if corrected_value:
+                if field_label and "[" in field_label:
+                    suffix_parts.append(
+                        f"客户在样本上修正 `{field_label}` 的值为：{corrected_value}"
+                    )
+                else:
+                    suffix_parts.append(
+                        f"客户在样本中提供的正确值示例：{corrected_value}"
+                    )
+            if suffix_parts:
+                merged = "\n".join(suffix_parts)
+                existing["__prompt_suffix"] = (
+                    (existing.get("__prompt_suffix", "") + ("\n" if existing.get("__prompt_suffix") else "") + merged).strip()
+                )
+            if existing:
+                edits_by_key[mk] = existing
         elif d.get("kind") == "add":
             add_specs.append(d)
 
