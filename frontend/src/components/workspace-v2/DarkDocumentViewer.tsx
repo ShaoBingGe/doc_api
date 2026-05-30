@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
-import { Search, ZoomIn, ZoomOut, Upload, ChevronLeft, ChevronRight, FileText, AlertCircle, Hand, RotateCcw, CheckCircle2, CircleSlash } from 'lucide-react'
+import { Search, ZoomIn, ZoomOut, Upload, ChevronLeft, ChevronRight, FileText, AlertCircle, Hand, RotateCcw, CheckCircle2, CircleSlash, RefreshCw } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useWorkspaceStore, type Annotation, type ProcessingResult } from '../../stores/workspace-store'
 
@@ -166,10 +166,15 @@ export default function DarkDocumentViewer() {
     clearFieldPanOffset,
     samplesReview,
     confirmSampleGT,
+    retrySampleOCR,
   } = useWorkspaceStore()
 
   const isCurrentSampleConfirmed =
     !!documentInfo && (samplesReview?.confirmedDocIds ?? []).includes(documentInfo.id)
+  // Doc.status comes from the document detail load; "failed" means OCR
+  // errored at upload time. We surface a "重试 OCR" CTA in that case.
+  const isCurrentSampleFailed = documentInfo?.status === 'failed'
+  const [retryingOcr, setRetryingOcr] = useState(false)
 
   const [numPages, setNumPages] = useState<number>(0)
   const [page, setPage] = useState(1)
@@ -410,20 +415,45 @@ export default function DarkDocumentViewer() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {/* GT confirmation toggle for the current sample. Disabled when
-              there's no document loaded. When confirmed, button shows the
-              green pill state; clicking again revokes (mark uncorrected). */}
+          {/* Retry OCR button — only shown when current sample's upload-time
+              OCR failed. Customer can click this once Gemini/proxy is back. */}
+          {isCurrentSampleFailed && documentInfo && (
+            <button
+              onClick={async () => {
+                setRetryingOcr(true)
+                try { await retrySampleOCR(documentInfo.id) } finally { setRetryingOcr(false) }
+              }}
+              disabled={retryingOcr}
+              title="对该样本重新跑 OCR（之前因网络/上游故障失败）"
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors',
+                retryingOcr
+                  ? 'bg-white/5 text-gray-500 cursor-not-allowed'
+                  : 'bg-red-500/20 text-red-200 hover:bg-red-500/30 border border-red-500/40',
+              )}
+            >
+              <RefreshCw className={cn('w-3.5 h-3.5', retryingOcr && 'animate-spin')} />
+              {retryingOcr ? '重试中...' : '重试 OCR'}
+            </button>
+          )}
+          {/* GT confirmation toggle — disabled when OCR hasn't completed
+              (annotations empty), since confirm-gt would no-op. */}
           {documentInfo && (
             <button
               onClick={() => void confirmSampleGT(documentInfo.id, !isCurrentSampleConfirmed)}
+              disabled={isCurrentSampleFailed}
               title={
-                isCurrentSampleConfirmed
+                isCurrentSampleFailed
+                  ? '该样本 OCR 失败，请先点"重试 OCR"生成标注'
+                  : isCurrentSampleConfirmed
                   ? '已确认该样本的 OCR 结果作为 GT — 点击撤销'
                   : '将该样本的当前 OCR 结果整体确认为 GT，纳入迭代'
               }
               className={cn(
                 'flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors',
-                isCurrentSampleConfirmed
+                isCurrentSampleFailed
+                  ? 'bg-white/5 text-gray-500 cursor-not-allowed border border-white/10'
+                  : isCurrentSampleConfirmed
                   ? 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/40'
                   : 'border border-white/20 text-gray-300 hover:bg-white/5',
               )}

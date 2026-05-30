@@ -169,21 +169,31 @@ def set_sample_gt_confirmed(
     """Toggle whether ALL annotations on a document are treated as GT.
 
     confirmed=True: bulk-set is_corrected=True on every annotation tied to
-    the document (idempotent).
-    confirmed=False: bulk-set is_corrected=False (only useful for testing
-    or undoing an over-eager confirmation).
+    the document.
+    confirmed=False: bulk-set is_corrected=False (undo).
 
-    Returns {"document_id": str, "confirmed": bool, "annotations_total": int}.
-    Caller is responsible for triggering downstream auto-resume.
+    Raises ValidationError when confirmed=True is requested but the document
+    has zero annotations — typically because OCR failed during upload
+    (Gemini outage). The customer should retry OCR before confirming.
     """
+    from app.core.exceptions import ValidationError as _VE
     from app.models.annotation import Annotation
+    from app.models.document import Document, DocumentStatus
     from sqlalchemy import func
 
     total = db.query(func.count(Annotation.id)).filter(
         Annotation.document_id == document_id
     ).scalar() or 0
-    if total == 0:
-        logger.warning("set_sample_gt_confirmed: doc %s has 0 annotations", document_id)
+    if confirmed and total == 0:
+        doc = db.get(Document, document_id)
+        # Document.status is a plain str column (not Enum); guard accordingly.
+        status_str = str(doc.status) if doc and doc.status else "unknown"
+        status_hint = (
+            f"该样本 OCR 状态为 {status_str}；"
+            "请先在文档工具栏点击「重试 OCR」生成标注，再确认 GT。"
+        )
+        raise _VE(f"无法确认空样本（标注数 = 0）。{status_hint}")
+
     db.query(Annotation).filter(
         Annotation.document_id == document_id
     ).update({Annotation.is_corrected: confirmed}, synchronize_session=False)
@@ -192,6 +202,46 @@ def set_sample_gt_confirmed(
         "document_id": str(document_id),
         "confirmed": confirmed,
         "annotations_total": int(total),
+    }
+
+
+def retry_ocr_on_sample(
+    db: Session, *, api_definition_id: uuid.UUID, document_id: uuid.UUID
+) -> dict:
+    """Re-run OCR on a previously-failed sample using the ApiDef's current
+    active prompt. Used when the original upload-time OCR failed (e.g. proxy
+    outage) and the customer wants to retry.
+
+    Returns {"document_id", "status", "annotations_created"}.
+    """
+    from app.models.api_definition import ApiDefinition
+    from app.models.annotation import Annotation
+    from app.models.document import Document
+    from app.schemas.document import ReprocessRequest
+    from app.services.document_service import reprocess_document
+    from sqlalchemy import func
+
+    api_def = db.get(ApiDefinition, api_definition_id)
+    if not api_def:
+        raise NotFoundError(f"ApiDefinition {api_definition_id} not found")
+    doc = db.get(Document, document_id)
+    if not doc:
+        raise NotFoundError(f"Document {document_id} not found")
+
+    # reprocess_document re-runs extraction with the current active prompt
+    # and creates new annotations (replacing prior ai_detected ones).
+    body = ReprocessRequest(prompt=None)
+    reprocess_document(db, document_id, body)
+    db.refresh(doc)
+
+    total = db.query(func.count(Annotation.id)).filter(
+        Annotation.document_id == document_id
+    ).scalar() or 0
+
+    return {
+        "document_id": str(document_id),
+        "status": str(doc.status) if doc.status else "unknown",
+        "annotations_created": int(total),
     }
 
 

@@ -114,18 +114,28 @@ export default function DocumentThumbnailColumn() {
                     {doc.filename}
                   </span>
                 </button>
-                {/* GT review badge — top-left of the thumbnail.
-                    Green ✓ = confirmed, amber ◯ = pending. */}
+                {/* Status badge top-left:
+                      ✓ green  = confirmed GT
+                      ! red    = OCR failed (need retry)
+                      ? amber  = pending review */}
                 <div
                   className={cn(
                     'absolute -top-1 -left-1 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold border',
                     confirmed
                       ? 'bg-emerald-500 text-white border-emerald-300/50'
+                      : doc.status === 'failed'
+                      ? 'bg-red-500 text-white border-red-300/50'
                       : 'bg-amber-500/80 text-white border-amber-300/50',
                   )}
-                  title={confirmed ? '已审视（OCR 结果作为 GT）' : '待审视 — 打开样本后点"已审视"'}
+                  title={
+                    confirmed
+                      ? '已审视（OCR 结果作为 GT）'
+                      : doc.status === 'failed'
+                      ? 'OCR 失败 — 打开后点"重试 OCR"'
+                      : '待审视 — 打开样本后点"已审视"'
+                  }
                 >
-                  {confirmed ? '✓' : '?'}
+                  {confirmed ? '✓' : doc.status === 'failed' ? '!' : '?'}
                 </div>
                 {/* Delete button — visible on hover */}
                 <button

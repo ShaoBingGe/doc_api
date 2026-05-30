@@ -194,6 +194,7 @@ interface WorkspaceStore {
   samplesReview: SamplesReviewStatus | null
   loadSamplesReview: () => Promise<void>
   confirmSampleGT: (docId: string, confirmed: boolean) => Promise<void>
+  retrySampleOCR: (docId: string) => Promise<void>
 }
 
 // ─── Structured data parser ───────────────────────────────────────────────────
@@ -940,12 +941,14 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         reflectionSummary: d.reflection_summary,
       }
       set({ customizeJob: updated })
-      if (updated.status !== 'completed' && updated.status !== 'failed') {
-        setTimeout(() => void get().pollCustomizeJob(), 2000)
-      }
+      if (updated.status === 'completed' || updated.status === 'failed') return
+      // Adaptive cadence: waiting_for_samples just sits there until the user
+      // confirms more samples — no need to hammer the backend every 2s. Live
+      // phases (reflecting/forking/optimizing) update fast, poll quickly.
+      const delay = updated.status === 'waiting_for_samples' ? 10_000 : 2_000
+      setTimeout(() => void get().pollCustomizeJob(), delay)
     } catch {
-      // swallow; retry
-      setTimeout(() => void get().pollCustomizeJob(), 4000)
+      setTimeout(() => void get().pollCustomizeJob(), 6_000)
     }
   },
 
@@ -1000,15 +1003,43 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         `/api/v1/api-definitions/${apiDefId}/samples/${docId}/confirm-gt`,
         { confirmed },
       )
-      // Refresh review state to reflect the change + may auto-resume a job
       await get().loadSamplesReview()
-      // Also refresh the active customize job in case the gate just opened
       const job = get().customizeJob
       if (job) void get().pollCustomizeJob()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })
-        ?.response?.data?.detail
-      toast.error(typeof msg === 'string' ? msg : '保存确认失败')
+      const e = err as { response?: { data?: { error?: { message?: string }; detail?: string } } }
+      const msg = e?.response?.data?.error?.message
+        ?? e?.response?.data?.detail
+        ?? '保存确认失败'
+      toast.error(msg)
+    }
+  },
+
+  retrySampleOCR: async (docId) => {
+    const apiDefId = get().apiDefinitionId
+    if (!apiDefId) return
+    toast.info('正在重新跑 OCR...')
+    try {
+      const res = await apiClient.post(
+        `/api/v1/api-definitions/${apiDefId}/samples/${docId}/retry-ocr`,
+      )
+      const { status, annotations_created } = res.data
+      if (status === 'completed' && annotations_created > 0) {
+        toast.success(`OCR 完成 · 生成 ${annotations_created} 个标注`)
+        // Reload the sample so the new annotations show up immediately
+        if (get().selectedDocId === docId) {
+          await get().loadDocument(docId)
+        }
+        await get().loadSamplesReview()
+      } else {
+        toast.error(`OCR 状态: ${status}`)
+      }
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: { message?: string }; detail?: string } } }
+      const msg = e?.response?.data?.error?.message
+        ?? e?.response?.data?.detail
+        ?? 'OCR 重试失败（可能上游服务不可达）'
+      toast.error(msg)
     }
   },
 

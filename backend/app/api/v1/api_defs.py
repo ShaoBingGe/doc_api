@@ -263,6 +263,23 @@ def confirm_sample_gt(
     return out
 
 
+@router.post(
+    "/{api_def_id}/samples/{document_id}/retry-ocr",
+    summary="对该样本重新跑 OCR（用于 OCR 失败后的恢复）",
+)
+def retry_sample_ocr(
+    api_def_id: uuid.UUID,
+    document_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.ocr_optimizer.service import customer_iteration as ci
+
+    svc._get_or_404(db, api_def_id)
+    return ci.retry_ocr_on_sample(
+        db, api_definition_id=api_def_id, document_id=document_id,
+    )
+
+
 # ── Customer-driven customization (reflection + 3-round + fork) ──────────────
 
 
