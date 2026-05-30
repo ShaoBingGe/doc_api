@@ -289,18 +289,26 @@ def add_sample_document(
     """Upload a file, bind it to the API, run OCR using the API's active prompt,
     and append the new Document.id to config.sample_document_ids.
 
+    On forked (customer-customize) ApiDefs, the resulting AI annotations are
+    auto-marked is_corrected=True so the 3-round optimizer sees them as GT.
+    This matches the customer's stated intent: uploaded samples are expected
+    to produce results consistent with the customized template; if any field
+    is wrong, the customer can correct it through the edit panel, which will
+    fold into the next round.
+
     Also auto-triggers any parked CustomizeJob in `waiting_for_samples` once
     this upload brings the sample count to MIN_SAMPLES_FOR_ITERATION.
     """
     from threading import Thread
 
+    from app.models.annotation import Annotation
     from app.ocr_optimizer.service import customer_iteration
     from app.services.document_service import (
         bind_to_api_and_extract,
         upload_document,
     )
 
-    _get_or_404(db, api_def_id)  # 404 guard
+    api_def = _get_or_404(db, api_def_id)
     doc = upload_document(
         db,
         filename=filename,
@@ -310,6 +318,28 @@ def add_sample_document(
     )
     bind_to_api_and_extract(db, doc, api_def_id)
     db.refresh(doc)
+
+    # ── Auto-mark AI annotations as GT on forked ApiDefs ────────────────
+    cfg = api_def.config or {}
+    if cfg.get("fork_origin") == "customer_customize":
+        try:
+            updated = (
+                db.query(Annotation)
+                .filter(
+                    Annotation.document_id == doc.id,
+                    Annotation.is_corrected.is_(False),
+                )
+                .update({Annotation.is_corrected: True}, synchronize_session=False)
+            )
+            if updated:
+                db.commit()
+                logger.info(
+                    "Auto-marked %d annotations as GT on forked ApiDef %s, doc %s",
+                    updated, api_def_id, doc.id,
+                )
+        except Exception:
+            db.rollback()
+            logger.exception("Auto-GT marking failed (non-fatal)")
 
     # ── Auto-resume any waiting customize job for this ApiDef ───────────
     #

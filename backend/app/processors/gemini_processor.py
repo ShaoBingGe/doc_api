@@ -145,6 +145,11 @@ class GeminiProcessor(DocumentProcessor):
             ".png": "image/png",
             ".jpg": "image/jpeg",
             ".jpeg": "image/jpeg",
+            # Plain text — used by llm_text_completion for reflection /
+            # optimizer prompts (writes the prompt to a temp .txt and uploads
+            # it as the "document"). Without this entry Gemini rejects with
+            # "Unsupported MIME type: application/octet-stream".
+            ".txt": "text/plain",
         }
         mime_type = mime_map.get(suffix, "application/octet-stream")
 

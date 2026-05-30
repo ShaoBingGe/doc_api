@@ -114,20 +114,24 @@ def find_waiting_job_for_api(db: Session, api_definition_id: uuid.UUID) -> Custo
 
 
 def find_latest_active_job_for_api(db: Session, api_definition_id: uuid.UUID) -> CustomizeJob | None:
-    """Return the most-recent job (any status except completed) tied to this
-    ApiDefinition — either as source OR as fork target.
+    """Return the most-recent in-flight job tied to this ApiDefinition —
+    either as source OR as fork target.
 
-    Used by the frontend on workspace load to rehydrate the customize banner
-    after a navigation. We exclude `completed` so users don't see stale
-    "✓ 已生成新模板" cards forever. `failed` IS included so the customer can
-    see what went wrong on the failed run.
+    Used by the frontend on workspace load to rehydrate the customize banner.
+    We exclude both `completed` and `failed` so:
+      - completed jobs don't show "✓ 已生成新模板" cards forever
+      - failed jobs (especially the reaped ones from boot) don't auto-resurface
+        across sessions; a user can still find them by job_id if needed.
     """
     return (
         db.query(CustomizeJob)
         .filter(
             (CustomizeJob.source_api_definition_id == api_definition_id)
             | (CustomizeJob.new_api_definition_id == api_definition_id),
-            CustomizeJob.status != CustomizeJobStatus.completed.value,
+            CustomizeJob.status.notin_([
+                CustomizeJobStatus.completed.value,
+                CustomizeJobStatus.failed.value,
+            ]),
         )
         .order_by(CustomizeJob.created_at.desc())
         .first()
@@ -525,6 +529,36 @@ def _fork_api_definition(
     new_api.prompt_version_id = new_version.id
     new_api.status = ApiDefinitionStatus.draft
     db.commit()
+
+    # ── Inherit-as-GT: mark all annotations on inherited sample docs ──
+    # The forked ApiDef inherits the source's sample_document_ids. Those
+    # docs' AI-detected annotations become the implicit ground truth so
+    # the 3-round optimizer has signal to work with. The customer's edit
+    # diffs already influenced the prompt that goes INTO round 1 (via
+    # _clone_module's prompt_suffix); the GT here drives round-over-round
+    # accuracy measurement.
+    inherited_ids = (new_cfg.get("sample_document_ids") or [])
+    if inherited_ids:
+        from app.models.annotation import Annotation as _Annotation
+        try:
+            doc_uuids = [uuid.UUID(x) for x in inherited_ids]
+            marked = (
+                db.query(_Annotation)
+                .filter(
+                    _Annotation.document_id.in_(doc_uuids),
+                    _Annotation.is_corrected.is_(False),
+                )
+                .update({_Annotation.is_corrected: True}, synchronize_session=False)
+            )
+            db.commit()
+            logger.info(
+                "Fork %s: auto-marked %d inherited sample annotations as GT",
+                new_api.api_code, marked,
+            )
+        except Exception:
+            db.rollback()
+            logger.exception("Fork auto-GT marking failed (non-fatal)")
+
     db.refresh(new_api)
     db.refresh(new_version)
     return new_api, new_version, new_modules
