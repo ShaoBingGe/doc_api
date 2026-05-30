@@ -41,6 +41,7 @@ from ..models import (
     CustomizeJob,
     CustomizeJobStatus,
     OcrModule,
+    OcrOptimizationRound,
     OcrPromptVersion,
     PromptVersionStatus,
     RunStatus,
@@ -513,9 +514,9 @@ def _run_three_rounds(db: Session, job: CustomizeJob, new_api: ApiDefinition) ->
         return
 
     _update_job(db, job, rounds_done=run.rounds_completed,
-                phase_detail=f"迭代优化 · 第 {run.rounds_completed} 轮完成")
+                phase_detail=f"第 {run.rounds_completed} 轮（分拆→局部验证→重组）完成")
 
-    # Rounds 2 & 3
+    # Rounds 2 & 3 — with early stop on 100% accuracy
     best_version_id = _latest_round_version(db, run.id) or None
     for _ in range(2):
         db.refresh(run)
@@ -523,10 +524,29 @@ def _run_three_rounds(db: Session, job: CustomizeJob, new_api: ApiDefinition) ->
             break
         if run.current_round_num >= run.max_rounds:
             break
+        # ── Early stop ────────────────────────────────────────────────
+        # Look at the version we just produced. If the round delivered
+        # 100% on all samples, we're done — running more rounds risks
+        # regression (meta could over-mutate a perfect prompt).
+        last_round = (
+            db.query(OcrOptimizationRound)
+            .filter(OcrOptimizationRound.run_id == run.id)
+            .order_by(OcrOptimizationRound.round_num.desc())
+            .first()
+        )
+        last_acc = (last_round.overall_accuracy if last_round else None)
+        if last_acc is not None and last_acc >= 0.999:
+            logger.info(
+                "early-stop: job %s round %d hit %.2f%% accuracy; skipping further rounds",
+                job.id, run.rounds_completed, last_acc * 100,
+            )
+            _update_job(db, job,
+                        phase_detail=f"第 {run.rounds_completed} 轮已达 100% 准确率 · 提前完成")
+            break
         try:
             run = run_orchestrator.advance_round(db, run.id)
             _update_job(db, job, rounds_done=run.rounds_completed,
-                        phase_detail=f"迭代优化 · 第 {run.rounds_completed} 轮完成")
+                        phase_detail=f"第 {run.rounds_completed} 轮（分拆→局部验证→重组）完成")
         except Exception as exc:
             logger.exception("advance_round failed for job %s: %s", job.id, exc)
             break
@@ -661,10 +681,19 @@ def _fork_api_definition(
         new_modules.append(_clone_module(m, new_version_id=new_version.id, patch=patch))
 
     order_start = max((m.order_index for m in new_modules), default=-1) + 1
+    # Build a compact sibling-example block once, reuse across all add diffs.
+    # Helps the LLM align style with the rest of the template.
+    sibling_examples = "\n".join(
+        f"- {m.module_key} ({m.display_name or ''}): {(m.description or '')[:80]}"
+        for m in src_modules[:5]
+    )
     for i, d in enumerate(add_specs):
         new_modules.append(_module_from_add_diff(
             d, new_version_id=new_version.id, order_index=order_start + i,
             reflection_outputs=reflections.get(f"_new_{diffs.index(d)}"),
+            sibling_examples=sibling_examples,
+            processor_spec=src_api.processor_type or "gemini",
+            model_name=src_api.model_name,
         ))
 
     try:
@@ -730,9 +759,68 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
     )
 
 
+_NEW_FIELD_LLM_SYSTEM = (
+    "你是一个 OCR prompt 设计专家。给定一个客户新增字段（仅有名称、期望"
+    "类型、可能的样例值，以及同模板里已有字段作风格参考），请输出一份"
+    "完整、可直接生效的字段提取指令。返回纯 JSON，键必须包含：description"
+    "（2~3 句业务含义）、ocr_prompt（多段：语义/位置锚点/格式约束/歧义"
+    "辨别/找不到时怎么办）、ocr_suggestions（对象，键 semantics/position/"
+    "most_common_feature/extra_features）。不要 markdown 围栏。"
+)
+
+
+def _llm_expand_new_field(
+    *,
+    diff: dict,
+    schema_type: str,
+    sibling_examples: str,
+    processor_spec: str,
+    model_name: str | None,
+) -> dict | None:
+    """Call an LLM to flesh out a customer-added field's prompt material.
+
+    The customer only gives us {name, value, format}; we want a much richer
+    description so the very first round has a fighting chance instead of
+    relying on the optimizer to backfill the field's meaning later.
+    """
+    from .llm_failover import llm_text_completion_failover as _llm
+
+    user_prompt = (
+        f"# 新增字段\n"
+        f"- 名称: {diff.get('corrected_name') or 'new_field'}\n"
+        f"- 期望类型: {schema_type}\n"
+        f"- 客户样例值: {diff.get('corrected_value') or '(未提供)'}\n\n"
+        f"# 模板里已有字段（仅供风格对齐）\n"
+        f"{sibling_examples or '(无)'}\n\n"
+        f"按 JSON 输出：description / ocr_prompt / ocr_suggestions"
+    )
+    try:
+        result = _llm(
+            processor_spec=processor_spec,
+            model_name=model_name,
+            system_instruction=_NEW_FIELD_LLM_SYSTEM,
+            user_prompt=user_prompt,
+            as_json=True,
+        )
+        if isinstance(result, dict):
+            return result
+    except Exception as exc:
+        logger.warning("LLM expansion for new field %s failed: %s",
+                       diff.get('corrected_name'), exc)
+    return None
+
+
 def _module_from_add_diff(
     diff: dict, *, new_version_id: uuid.UUID, order_index: int, reflection_outputs,
+    sibling_examples: str = "", processor_spec: str = "gemini",
+    model_name: str | None = None,
 ) -> OcrModule:
+    """Build a new OcrModule for a customer-added field.
+
+    Per design v4 ("分拆-局部验证-重组"): kick off an LLM call to flesh out
+    description + ocr_prompt + ocr_suggestions BEFORE the first iteration
+    round. Falls back to a static skeleton if the LLM is unreachable.
+    """
     new_name = diff.get("corrected_name") or "new_field"
     module_key = _to_snake(new_name)
     format_str = (diff.get("corrected_format") or "string").lower()
@@ -746,6 +834,7 @@ def _module_from_add_diff(
     if format_str == "date":
         schema_fragment["format"] = "date"
 
+    # Static skeleton (used as fallback)
     corrected_value_hint = ""
     if diff.get("corrected_value"):
         corrected_value_hint = f"客户提供的样例值：{diff['corrected_value']}"
@@ -758,6 +847,32 @@ def _module_from_add_diff(
         f"# 输出要求\n"
         f"找不到时输出 null。"
     )
+    description = f"客户新增字段：{new_name}"
+    ocr_suggestions = {
+        "semantics": "客户新增 — 待优化器学习",
+        "position": "客户新增 — 待优化器学习",
+        "most_common_feature": "—",
+        "extra_features": [],
+    }
+
+    # Try LLM expansion first
+    expanded = _llm_expand_new_field(
+        diff=diff,
+        schema_type=schema_type,
+        sibling_examples=sibling_examples,
+        processor_spec=processor_spec,
+        model_name=model_name,
+    )
+    if expanded:
+        if isinstance(expanded.get("description"), str) and expanded["description"].strip():
+            description = expanded["description"].strip()
+        if isinstance(expanded.get("ocr_prompt"), str) and expanded["ocr_prompt"].strip():
+            ocr_prompt = expanded["ocr_prompt"].strip()
+        if isinstance(expanded.get("ocr_suggestions"), dict):
+            ocr_suggestions = {**ocr_suggestions, **expanded["ocr_suggestions"]}
+
+    # Reflection-skill outputs (new_field skill) take priority — they had
+    # the most context (sibling examples + customer intent)
     if reflection_outputs and reflection_outputs.skill_outputs:
         for so in reflection_outputs.skill_outputs:
             out = so.get("output") or {}
@@ -768,19 +883,18 @@ def _module_from_add_diff(
                     schema_fragment = out["schema_fragment"]
                 if isinstance(out.get("module_key"), str) and out["module_key"]:
                     module_key = _to_snake(out["module_key"])
+                if isinstance(out.get("description"), str) and out["description"].strip():
+                    description = out["description"]
 
     return OcrModule(
         id=uuid.uuid4(),
         prompt_version_id=new_version_id,
         module_key=module_key,
         display_name=new_name,
-        description=f"客户新增字段：{new_name}",
+        description=description,
         json_path=f"$[*].{new_name}",
         schema_fragment=schema_fragment,
-        ocr_suggestions={"semantics": "客户新增 — 待优化器学习",
-                         "position": "客户新增 — 待优化器学习",
-                         "most_common_feature": "—",
-                         "extra_features": []},
+        ocr_suggestions=ocr_suggestions,
         ocr_prompt=ocr_prompt,
         skill_ids=[],
         order_index=order_index,

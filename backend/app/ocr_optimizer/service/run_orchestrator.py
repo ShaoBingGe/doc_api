@@ -698,6 +698,33 @@ def _run_one_round(
             model_name=_split_provider(run.llm_provider)[1],
         )
         metrics["total_llm_calls"] += 1
+
+        # ── Local self-verify (design v4 "局部验证") ──────────────────
+        # Before accepting the mutation, ask the verifier judge whether
+        # the new prompt actually fixes the failing samples. A `reject`
+        # verdict makes us drop the mutation and keep the old module
+        # prompt for this round.
+        if result and (result.get("new_ocr_prompt") or result.get("new_description")):
+            verdict = module_optimizer.verify_module_fix(
+                module=mod,
+                iteration=it,
+                proposed=result,
+                processor_spec=_split_provider(run.llm_provider)[0],
+                model_name=_split_provider(run.llm_provider)[1],
+            )
+            metrics["total_llm_calls"] += 1
+            if verdict.get("verdict") == "reject":
+                logger.info(
+                    "round %d: verifier rejected mutation for %s — keeping old prompt. reason: %s",
+                    round_num, mod.module_key, verdict.get("reasoning", "")[:120],
+                )
+                # Persist the rejected attempt in the iteration for audit
+                it.optimization_suggestion = (
+                    (result.get("optimization_suggestion") or "")
+                    + f"\n\n[VERIFIER REJECT] {verdict.get('reasoning', '')[:200]}"
+                )
+                result = None  # discard the mutation
+
         if result:
             it.aggregate_diff = result.get("aggregate_diff")
             it.optimization_suggestion = result.get("optimization_suggestion")
@@ -733,9 +760,42 @@ def _run_one_round(
     db.commit()
 
     # ── Step 5: Compose next version ─────────────────────────────────────
-    keep_keys = {m.module_key for m in modules} - set(meta.get("remove_module_keys") or [])
-    renames = {r["old"]: r["new"] for r in meta.get("rename", []) if isinstance(r, dict) and "old" in r and "new" in r}
+    requested_removes = set(meta.get("remove_module_keys") or [])
+    all_keys = {m.module_key for m in modules}
+    # ── Module preservation guard ────────────────────────────────────────
+    # Past runs showed meta_optimizer aggressively requesting removal of
+    # most modules, collapsing the prompt to a near-empty schema and tanking
+    # accuracy from ~98% to 0. Enforce two safeguards:
+    #
+    #   1. Never remove a module that was scoring ≥ 0.5 in this round.
+    #      Removing well-performing fields is almost always a mistake.
+    #   2. After applying removals + adds, the projected module count must
+    #      keep at least MIN_MODULES_AFTER_META modules; otherwise we drop
+    #      the entire remove set for this round.
+    well_performing = {
+        it.module_key for it in iterations
+        if (it.aggregate_accuracy or 0) >= 0.5
+    }
+    blocked_removes = requested_removes & well_performing
+    safe_removes = requested_removes - well_performing
+    if blocked_removes:
+        logger.info(
+            "round %d: meta wanted to remove %d well-performing module(s) — blocked: %s",
+            round_num, len(blocked_removes), sorted(blocked_removes),
+        )
+
+    keep_keys = all_keys - safe_removes
     add_specs = meta.get("add_modules") or []
+    projected = len(keep_keys) + len(add_specs)
+    MIN_MODULES_AFTER_META = max(MIN_SAMPLES, len(all_keys) // 2)  # at least half survive
+    if projected < MIN_MODULES_AFTER_META:
+        logger.warning(
+            "round %d: meta projected only %d modules (min %d) — ignoring all removes",
+            round_num, projected, MIN_MODULES_AFTER_META,
+        )
+        safe_removes = set()
+        keep_keys = all_keys
+    renames = {r["old"]: r["new"] for r in meta.get("rename", []) if isinstance(r, dict) and "old" in r and "new" in r}
 
     # Enforce hard module limit (silently truncate adds)
     projected_count = len(keep_keys) + len(add_specs)

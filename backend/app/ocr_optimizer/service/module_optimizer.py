@@ -139,6 +139,85 @@ def optimize_module(
     }
 
 
+# ── Local self-verify (design v4 "局部验证") ─────────────────────────────────
+#
+# After optimize_module proposes a new prompt for a failing field, ask a
+# second LLM call to act as a judge: given the original failure samples and
+# the proposed fix, is the fix likely to solve the issue?
+#
+# Returns:
+#   {"verdict": "accept" | "reject", "reasoning": str}
+#
+# Caller decides whether to apply the mutation. On LLM error we default to
+# "accept" (fail-open) so a flaky LLM doesn't block progress.
+
+VERIFIER_SYSTEM = (
+    "你是一个 OCR prompt 修改的审查员。给定一个字段当前 prompt 提取失败的样本，"
+    "以及一个 LLM 提议的新 prompt，请判断这个新 prompt 是否真的能解决这些样本上的"
+    "失败。仅当你确信新 prompt 显著改进了取值准确度时，返回 verdict='accept'；"
+    "否则返回 'reject'。务必返回纯 JSON，键为 verdict 和 reasoning。"
+)
+
+
+def verify_module_fix(
+    *,
+    module: Any,
+    iteration: Any,
+    proposed: dict,
+    processor_spec: str,
+    model_name: str | None,
+) -> dict:
+    """Self-verify a proposed module mutation against the failing samples.
+
+    `proposed` is the dict returned by optimize_module (must include
+    new_ocr_prompt or new_description).
+    """
+    new_prompt = proposed.get("new_ocr_prompt") or module.ocr_prompt or ""
+    failing = [
+        p for p in (iteration.per_sample_results or [])
+        if not p.get("matched")
+    ]
+    if not failing:
+        # No failures to verify against — accept by default
+        return {"verdict": "accept", "reasoning": "no failing samples to test"}
+
+    failing_block = json.dumps(failing[:3], ensure_ascii=False, indent=2)
+    user_prompt = (
+        f"# Field\n"
+        f"- module_key: {module.module_key}\n"
+        f"- display_name: {module.display_name}\n\n"
+        f"# Current ocr_prompt (failed)\n```\n{module.ocr_prompt or ''}\n```\n\n"
+        f"# Proposed new ocr_prompt\n```\n{new_prompt}\n```\n\n"
+        f"# Failing samples (OCR slice vs ground truth)\n"
+        f"```json\n{failing_block}\n```\n\n"
+        "请判断新 prompt 是否会让这些样本提取正确。"
+    )
+    try:
+        result = llm_text_completion(
+            processor_spec=processor_spec,
+            model_name=model_name,
+            system_instruction=VERIFIER_SYSTEM,
+            user_prompt=user_prompt,
+            as_json=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "verify_module_fix LLM failed for %s: %s — accepting by default",
+            module.module_key, exc,
+        )
+        return {"verdict": "accept", "reasoning": f"verifier error: {exc}"}
+
+    if not isinstance(result, dict):
+        return {"verdict": "accept", "reasoning": "non-dict response, defaulting accept"}
+    verdict = str(result.get("verdict", "accept")).lower()
+    if verdict not in ("accept", "reject"):
+        verdict = "accept"
+    return {
+        "verdict": verdict,
+        "reasoning": str(result.get("reasoning", ""))[:500],
+    }
+
+
 def _build_user_prompt(module: Any, iteration: Any, history: list[dict]) -> str:
     per_sample_table = _format_per_sample(iteration.per_sample_results)
     history_block = _format_history(history)
