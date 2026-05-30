@@ -1023,16 +1023,21 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const res = await apiClient.post(
         `/api/v1/api-definitions/${apiDefId}/samples/${docId}/retry-ocr`,
       )
-      const { status, annotations_created } = res.data
+      const { status, annotations_created, error } = res.data
+      if (error) {
+        // OCR failed but the endpoint succeeded (degraded mode)
+        const short = String(error).split('\n')[0].slice(0, 160)
+        toast.error(`OCR 仍然失败：${short}`)
+        return
+      }
       if (status === 'completed' && annotations_created > 0) {
         toast.success(`OCR 完成 · 生成 ${annotations_created} 个标注`)
-        // Reload the sample so the new annotations show up immediately
         if (get().selectedDocId === docId) {
           await get().loadDocument(docId)
         }
         await get().loadSamplesReview()
       } else {
-        toast.error(`OCR 状态: ${status}`)
+        toast.error(`OCR 未完成 · 状态: ${status}`)
       }
     } catch (err: unknown) {
       const e = err as { response?: { data?: { error?: { message?: string }; detail?: string } } }

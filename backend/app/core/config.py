@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     # ── AI Processors ─────────────────────────────────────────────────────
     DEFAULT_PROCESSOR: str = "mock"         # mock | gemini | openai
     GEMINI_API_KEY: str = ""
+    # Default Gemini model used when an ApiDefinition's model_name is null
+    # (production OCR) and as the first chain step's model when
+    # LLM_FALLBACK_CHAIN isn't configured. Sensible Q2-2026 default.
+    GEMINI_MODEL: str = "gemini-2.5-flash"
     OPENAI_API_KEY: str = ""
     # Failover chain for reflection / optimizer LLM calls. Semicolon-separated
     # `provider|model` entries; first one that succeeds wins. The chain ONLY

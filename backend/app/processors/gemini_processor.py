@@ -45,7 +45,7 @@ class GeminiLMModelParams(BaseModel):
 class GeminiProcessor(DocumentProcessor):
     """Gemini-based document processor."""
 
-    def __init__(self, model_name: str = "gemini-3.1-pro-preview"):
+    def __init__(self, model_name: str | None = None):
         if not GEMINI_AVAILABLE:
             raise ImportError("google-genai package is required for GeminiProcessor")
 
@@ -58,7 +58,10 @@ class GeminiProcessor(DocumentProcessor):
             api_key = os.environ.get("API_KEY", "")
 
         self.client = genai.Client(api_key=api_key)
-        self.model_name = model_name
+        # Fallback chain: explicit ctor arg → settings.GEMINI_MODEL → a
+        # safe default. Previous hardcoded "gemini-3.1-pro-preview" is no
+        # longer a published Gemini model and would 404.
+        self.model_name = model_name or settings.GEMINI_MODEL or "gemini-2.5-flash"
         self.llm_param_config = self._build_param_config({})
 
     def _build_param_config(self, custom_config: dict) -> dict:

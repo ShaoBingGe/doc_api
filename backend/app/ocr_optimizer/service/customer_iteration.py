@@ -210,14 +210,17 @@ def retry_ocr_on_sample(
     db: Session, *, api_definition_id: uuid.UUID, document_id: uuid.UUID
 ) -> dict:
     """Re-run OCR on a previously-failed sample using the ApiDef's current
-    active prompt. Used when the original upload-time OCR failed (e.g. proxy
-    outage) and the customer wants to retry.
+    active prompt.
 
-    Returns {"document_id", "status", "annotations_created"}.
+    The underlying Gemini call may still fail (proxy outage etc.). We
+    catch that, mark the doc failed, and return a structured payload so
+    the HTTP layer can return 200 with an error field instead of 500.
+
+    Returns: {document_id, status, annotations_created, error?}
     """
     from app.models.api_definition import ApiDefinition
     from app.models.annotation import Annotation
-    from app.models.document import Document
+    from app.models.document import Document, DocumentStatus
     from app.schemas.document import ReprocessRequest
     from app.services.document_service import reprocess_document
     from sqlalchemy import func
@@ -229,12 +232,25 @@ def retry_ocr_on_sample(
     if not doc:
         raise NotFoundError(f"Document {document_id} not found")
 
-    # reprocess_document re-runs extraction with the current active prompt
-    # and creates new annotations (replacing prior ai_detected ones).
+    error_msg: str | None = None
     body = ReprocessRequest(prompt=None)
-    reprocess_document(db, document_id, body)
-    db.refresh(doc)
+    try:
+        reprocess_document(db, document_id, body)
+    except Exception as exc:
+        logger.warning(
+            "retry_ocr_on_sample: reprocess failed for doc=%s — %s",
+            document_id, exc,
+        )
+        # _run_extraction has set doc.status=failed and rolled back its own
+        # txn; refresh and capture the message for the response.
+        db.rollback()
+        db.refresh(doc)
+        doc.status = DocumentStatus.failed
+        doc.error_message = (str(exc) or "OCR retry failed")[:1024]
+        db.commit()
+        error_msg = (str(exc) or "OCR retry failed")[:300]
 
+    db.refresh(doc)
     total = db.query(func.count(Annotation.id)).filter(
         Annotation.document_id == document_id
     ).scalar() or 0
@@ -243,6 +259,7 @@ def retry_ocr_on_sample(
         "document_id": str(document_id),
         "status": str(doc.status) if doc.status else "unknown",
         "annotations_created": int(total),
+        "error": error_msg,
     }
 
 
