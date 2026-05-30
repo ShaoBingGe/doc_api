@@ -79,6 +79,7 @@ def start_optimization(
     target_accuracy: float | None = None,
     sample_document_ids_override: list[uuid.UUID] | None = None,
     llm_provider_override: str | None = None,
+    enable_meta: bool = True,
 ) -> OcrOptimizationRun:
     """
     Create a new Run, execute Round 1, leave Run in `paused_for_review`.
@@ -120,6 +121,7 @@ def start_optimization(
             sample_ids=sample_ids,
             ground_truths=ground_truths,
             metrics=dict(run.metrics or {}),
+            enable_meta=enable_meta,
         )
         run.rounds_completed = 1
         run.current_round_num = 1
@@ -142,6 +144,7 @@ def advance_round(
     run_id: uuid.UUID,
     *,
     use_version_id: uuid.UUID | None = None,
+    enable_meta: bool = True,
 ) -> OcrOptimizationRun:
     """
     Run the next round of an existing Run.
@@ -221,6 +224,7 @@ def advance_round(
             sample_ids=sample_ids,
             ground_truths=ground_truths,
             metrics=dict(run.metrics or {}),
+            enable_meta=enable_meta,
         )
         run.rounds_completed = next_round_num
         run.current_round_num = next_round_num
@@ -577,6 +581,7 @@ def _run_one_round(
     sample_ids: list[uuid.UUID],
     ground_truths: dict[str, dict],
     metrics: dict,
+    enable_meta: bool = True,
 ) -> OcrOptimizationRound:
     start_ms = int(time.time() * 1000)
 
@@ -676,6 +681,25 @@ def _run_one_round(
         mean(it.aggregate_accuracy for it in iterations) if iterations else 0.0, 4
     )
     rnd.per_sample_accuracy = per_sample_accuracy
+
+    # ── Round-start early stop (design v4) ───────────────────────────────
+    # If the OCR+eval at the start of this round already matches GT on
+    # EVERY field across EVERY sample, the previous prompt is already
+    # correct — no need to mutate it. Skip steps 3-5, reuse the current
+    # version as the round's "next" version (idempotent).
+    if rnd.overall_accuracy >= 0.999:
+        logger.info(
+            "round %d: round-start eval shows %.2f%% — skipping all mutations",
+            round_num, rnd.overall_accuracy * 100,
+        )
+        rnd.phase = RoundPhase.completed.value
+        rnd.next_version_id = current_version.id
+        rnd.duration_ms = int(time.time() * 1000) - start_ms
+        rnd.completed_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(rnd)
+        return rnd
+
     rnd.phase = RoundPhase.optimizing.value
     db.commit()
 
@@ -744,17 +768,28 @@ def _run_one_round(
     db.commit()
 
     # ── Step 4: Meta optimizer (1 LLM call) ──────────────────────────────
-    meta = meta_optimizer.run_meta_optimization(
-        api_def=api_def,
-        modules=modules,
-        iterations=iterations,
-        ocr_outputs=ocr_outputs,
-        ground_truths=ground_truths,
-        processor_spec=_split_provider(run.llm_provider)[0],
-        model_name=_split_provider(run.llm_provider)[1],
-    )
-    if meta.get("rationale") and not meta["rationale"].startswith(("no unclaimed", "meta optimizer skipped")):
-        metrics["total_llm_calls"] += 1
+    # When `enable_meta=False` (the customer-iteration path) we skip
+    # add/remove/rename entirely — the customer's module set is locked at
+    # fork time and only failing fields' prompts may be refined.
+    if enable_meta:
+        meta = meta_optimizer.run_meta_optimization(
+            api_def=api_def,
+            modules=modules,
+            iterations=iterations,
+            ocr_outputs=ocr_outputs,
+            ground_truths=ground_truths,
+            processor_spec=_split_provider(run.llm_provider)[0],
+            model_name=_split_provider(run.llm_provider)[1],
+        )
+        if meta.get("rationale") and not meta["rationale"].startswith(("no unclaimed", "meta optimizer skipped")):
+            metrics["total_llm_calls"] += 1
+    else:
+        meta = {
+            "add_modules": [],
+            "remove_module_keys": [],
+            "rename": [],
+            "rationale": "meta disabled (customer-iteration mode — modules locked at fork)",
+        }
     rnd.meta_decision = meta
     rnd.phase = RoundPhase.composing.value
     db.commit()

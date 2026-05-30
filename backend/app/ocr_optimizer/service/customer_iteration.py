@@ -501,9 +501,16 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
 
 
 def _run_three_rounds(db: Session, job: CustomizeJob, new_api: ApiDefinition) -> None:
-    """Phase 4: start_optimization + advance_round × 2 + finalize."""
+    """Phase 4: start_optimization + advance_round × 2 + finalize.
+
+    Per design v4 the customer-iteration path runs WITHOUT meta_optimizer
+    (modules are locked at fork time). Each round only refines the prompts
+    of failing fields; the set of modules never changes.
+    """
     try:
-        run = run_orchestrator.start_optimization(db, new_api.id, max_rounds=3)
+        run = run_orchestrator.start_optimization(
+            db, new_api.id, max_rounds=3, enable_meta=False,
+        )
     except ValidationError as exc:
         # Sample gate elsewhere should have prevented this, but guard anyway
         logger.warning("3-round optimization skipped for job %s: %s", job.id, exc)
@@ -544,7 +551,7 @@ def _run_three_rounds(db: Session, job: CustomizeJob, new_api: ApiDefinition) ->
                         phase_detail=f"第 {run.rounds_completed} 轮已达 100% 准确率 · 提前完成")
             break
         try:
-            run = run_orchestrator.advance_round(db, run.id)
+            run = run_orchestrator.advance_round(db, run.id, enable_meta=False)
             _update_job(db, job, rounds_done=run.rounds_completed,
                         phase_detail=f"第 {run.rounds_completed} 轮（分拆→局部验证→重组）完成")
         except Exception as exc:
