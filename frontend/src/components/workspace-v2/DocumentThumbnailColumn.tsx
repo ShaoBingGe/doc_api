@@ -27,7 +27,9 @@ export default function DocumentThumbnailColumn() {
     selectDocument,
     addSampleDocument,
     removeSampleDocument,
+    samplesReview,
   } = useWorkspaceStore()
+  const confirmedDocIds = samplesReview?.confirmedDocIds ?? []
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
@@ -83,6 +85,7 @@ export default function DocumentThumbnailColumn() {
         ) : (
           documents.map((doc, idx) => {
             const selected = doc.id === selectedDocId
+            const confirmed = confirmedDocIds.includes(doc.id)
             const Icon = isImage(doc.fileType) ? ImageIcon : FileText
             return (
               <div key={doc.id} className="relative group">
@@ -92,9 +95,11 @@ export default function DocumentThumbnailColumn() {
                     'w-full aspect-[3/4] rounded-md flex flex-col items-center justify-center gap-1 transition-all border-2',
                     selected
                       ? 'border-purple-500 bg-purple-500/10 ring-2 ring-purple-500/30'
+                      : confirmed
+                      ? 'border-emerald-500/40 bg-emerald-500/5 hover:bg-emerald-500/10'
                       : 'border-white/5 bg-[#1e1e24] hover:border-purple-500/40 hover:bg-purple-500/5',
                   )}
-                  title={doc.filename}
+                  title={confirmed ? `${doc.filename} · 已审视` : `${doc.filename} · 待审视`}
                 >
                   <Icon
                     className={cn(
@@ -109,6 +114,19 @@ export default function DocumentThumbnailColumn() {
                     {doc.filename}
                   </span>
                 </button>
+                {/* GT review badge — top-left of the thumbnail.
+                    Green ✓ = confirmed, amber ◯ = pending. */}
+                <div
+                  className={cn(
+                    'absolute -top-1 -left-1 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold border',
+                    confirmed
+                      ? 'bg-emerald-500 text-white border-emerald-300/50'
+                      : 'bg-amber-500/80 text-white border-amber-300/50',
+                  )}
+                  title={confirmed ? '已审视（OCR 结果作为 GT）' : '待审视 — 打开样本后点"已审视"'}
+                >
+                  {confirmed ? '✓' : '?'}
+                </div>
                 {/* Delete button — visible on hover */}
                 <button
                   onClick={(e) => {

@@ -90,6 +90,17 @@ export interface CustomizeJobStatus {
   reflectionSummary?: Array<Record<string, unknown>>
 }
 
+// ─── Sample GT review state ───────────────────────────────────────────────────
+// Drives the "已审视 X/3" gate. Customer confirms a sample's OCR output as
+// ground truth (or fixes individual fields first) before it counts toward
+// triggering the 3-round iteration.
+export interface SamplesReviewStatus {
+  confirmedDocIds: string[]
+  confirmedCount: number
+  totalCount: number
+  requiredCount: number
+}
+
 /**
  * Lightweight summary of a sample document in the batch sample set.
  * Comes from GET /api-definitions/{id}/documents.
@@ -178,6 +189,11 @@ interface WorkspaceStore {
   setPanMode: (on: boolean) => void
   setFieldPanOffset: (annotationId: string, offset: { dx: number; dy: number }) => void
   clearFieldPanOffset: (annotationId: string) => void
+
+  // ── Sample GT review ───────────────────────────────────────────────────
+  samplesReview: SamplesReviewStatus | null
+  loadSamplesReview: () => Promise<void>
+  confirmSampleGT: (docId: string, confirmed: boolean) => Promise<void>
 }
 
 // ─── Structured data parser ───────────────────────────────────────────────────
@@ -342,6 +358,8 @@ const initialState = {
   fieldPanOffsets: {} as Record<string, { dx: number; dy: number }>,
   // Hand tool active state (drives cursor + drag-to-pan in the doc viewer).
   panMode: false as boolean,
+  // GT review state for current ApiDef's sample set
+  samplesReview: null as SamplesReviewStatus | null,
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -690,6 +708,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       }))
       set({ documents: docs })
 
+      // 2b. fetch GT review status for the sample set
+      void get().loadSamplesReview()
+
       // 3. auto-select first doc
       if (docs.length > 0) {
         await get().selectDocument(docs[0].id)
@@ -945,6 +966,51 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       delete next[annotationId]
       return { fieldPanOffsets: next }
     }),
+
+  // ── Sample GT review ────────────────────────────────────────────────────
+  loadSamplesReview: async () => {
+    const id = get().apiDefinitionId
+    if (!id) return
+    try {
+      const res = await apiClient.get(
+        `/api/v1/api-definitions/${id}/samples-review`,
+      )
+      const d = res.data
+      const confirmedDocIds: string[] = (d.samples || [])
+        .filter((s: { confirmed: boolean }) => s.confirmed)
+        .map((s: { document_id: string }) => s.document_id)
+      set({
+        samplesReview: {
+          confirmedDocIds,
+          confirmedCount: d.confirmed_count ?? confirmedDocIds.length,
+          totalCount: d.total_count ?? (d.samples || []).length,
+          requiredCount: d.required_for_iteration ?? 3,
+        },
+      })
+    } catch {
+      // non-fatal
+    }
+  },
+
+  confirmSampleGT: async (docId, confirmed) => {
+    const apiDefId = get().apiDefinitionId
+    if (!apiDefId) return
+    try {
+      await apiClient.post(
+        `/api/v1/api-definitions/${apiDefId}/samples/${docId}/confirm-gt`,
+        { confirmed },
+      )
+      // Refresh review state to reflect the change + may auto-resume a job
+      await get().loadSamplesReview()
+      // Also refresh the active customize job in case the gate just opened
+      const job = get().customizeJob
+      if (job) void get().pollCustomizeJob()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail
+      toast.error(typeof msg === 'string' ? msg : '保存确认失败')
+    }
+  },
 
   removeSampleDocument: async (docId) => {
     const apiDefId = get().apiDefinitionId

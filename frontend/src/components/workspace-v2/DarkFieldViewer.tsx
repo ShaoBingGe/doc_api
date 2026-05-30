@@ -906,6 +906,7 @@ function WaitingForSamplesBanner({
 }) {
   const apiDefinitionId = useWorkspaceStore((s) => s.apiDefinitionId)
   const documents = useWorkspaceStore((s) => s.documents)
+  const samplesReview = useWorkspaceStore((s) => s.samplesReview)
   const addSampleDocument = useWorkspaceStore((s) => s.addSampleDocument)
   const onNewWorkspace = !!apiDefinitionId && customizeJob.newApiDefinitionId === apiDefinitionId
 
@@ -945,12 +946,13 @@ function WaitingForSamplesBanner({
   }
 
   // ── Live progress numbers ─────────────────────────────────────────────
-  // documents.length = persisted samples on this ApiDef (already uploaded +
-  // bound). It can include the inherited samples from the source. We surface
-  // both the absolute count and the deficit vs MIN_SAMPLES_FOR_ITERATION.
-  const persisted = documents.length
-  const requiredTotal = 3  // backend MIN_SAMPLES_FOR_ITERATION
-  const stillNeeded = Math.max(0, requiredTotal - persisted)
+  // Per design v3 we gate by CONFIRMED samples (customer marked the OCR
+  // result as GT), not raw upload count. samplesReview is fetched on
+  // workspace load and refreshed after every confirm-gt call.
+  const confirmed = samplesReview?.confirmedCount ?? 0
+  const totalSamples = samplesReview?.totalCount ?? documents.length
+  const requiredTotal = samplesReview?.requiredCount ?? 3
+  const stillNeeded = Math.max(0, requiredTotal - confirmed)
   const successUploads = uploads.filter((u) => u.status === 'success').length
   const failedUploads = uploads.filter((u) => u.status === 'failed')
   const uploadingNow = uploads.some((u) => u.status === 'uploading')
@@ -1016,9 +1018,9 @@ function WaitingForSamplesBanner({
               'ml-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium',
               stillNeeded === 0 ? 'bg-emerald-500/30 text-emerald-200' : 'bg-amber-500/30 text-amber-100',
             )}
-            title="当前样本数 / 启动迭代所需最低样本数"
+            title={`已审视 ${confirmed} / 需 ${requiredTotal}（共 ${totalSamples} 个样本）`}
           >
-            {persisted}/{requiredTotal}
+            已审视 {confirmed}/{requiredTotal}
           </span>
         </div>
         <button
@@ -1114,13 +1116,21 @@ function WaitingForSamplesBanner({
         </div>
       )}
 
-      <p className="text-xs text-amber-200/70">
-        {stillNeeded === 0
-          ? '✓ 样本已就绪，迭代将自动启动'
-          : `还需 ${stillNeeded} 个不同格式的样本启动 3 轮迭代`}
-        {remainingMinQuota > 0 && stillNeeded > 0 && (
+      <p className="text-xs text-amber-200/70 leading-relaxed">
+        {stillNeeded === 0 ? (
+          <>✓ 已审视样本充足，迭代将自动启动</>
+        ) : totalSamples >= requiredTotal ? (
           <>
-            （建议上传 {remainingMinQuota}–{remainingMaxQuota} 个）
+            已上传 {totalSamples} 个样本，但只有 {confirmed} 个被审视过。
+            打开每个样本 → 检查 OCR 是否正确 → 点击右上"待审视"切到"已审视"。
+          </>
+        ) : (
+          <>
+            还需上传 {Math.max(0, requiredTotal - totalSamples)} 个不同格式的样本
+            {remainingMinQuota > 0 && (
+              <>（建议 {remainingMinQuota}–{remainingMaxQuota} 个）</>
+            )}
+            ，并将每个样本点为"已审视"。
           </>
         )}
       </p>

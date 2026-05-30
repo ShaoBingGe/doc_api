@@ -9,10 +9,13 @@ DocumentService — 文档上传、存储、处理调度、查询、删除。
 
 from __future__ import annotations
 
+import logging
 import math
 import uuid
 from pathlib import Path
 from typing import BinaryIO
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -236,9 +239,37 @@ def bind_to_api_and_extract(
         flag_modified(api_def, "config")
 
     # Trigger OCR. reprocess_document will resolve the prompt from the active
-    # OcrPromptVersion when body.prompt is None (see _resolve_active_composed_prompt).
+    # OcrPromptVersion when body.prompt is None.
+    #
+    # Errors here (most often Gemini SSL/connectivity failures) must NOT
+    # bubble up as a 500 — the file was successfully uploaded and bound to
+    # the API. We mark doc.status=failed via _run_extraction's own except
+    # clause; the customer can re-run OCR later (e.g. when the proxy is back).
     body = ReprocessRequest(prompt=None)
-    reprocess_document(db, doc.id, body)
+    try:
+        reprocess_document(db, doc.id, body)
+    except Exception as exc:
+        logger.exception(
+            "OCR failed for newly-uploaded sample doc=%s api=%s — keeping upload, marking doc failed",
+            doc.id, api_definition_id,
+        )
+        # _run_extraction has already set doc.status=failed; refresh state
+        db.rollback()
+        # Reload doc + reapply the config change we may have committed above
+        db.refresh(api_def)
+        cfg2 = dict(api_def.config or {})
+        ids2 = list(cfg2.get("sample_document_ids") or [])
+        if str(doc.id) not in ids2:
+            ids2.append(str(doc.id))
+            cfg2["sample_document_ids"] = ids2
+            api_def.config = cfg2
+            flag_modified(api_def, "config")
+        # Mark the doc record itself as failed so the UI reflects status
+        db.refresh(doc)
+        from app.models.document import DocumentStatus
+        doc.status = DocumentStatus.failed
+        doc.error_message = (f"OCR failed: {exc}")[:1024]
+        db.commit()
 
     # bump updated_at so GC defers
     from datetime import datetime, timezone

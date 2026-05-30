@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
-import { Search, ZoomIn, ZoomOut, Upload, ChevronLeft, ChevronRight, FileText, AlertCircle, Hand, RotateCcw } from 'lucide-react'
+import { Search, ZoomIn, ZoomOut, Upload, ChevronLeft, ChevronRight, FileText, AlertCircle, Hand, RotateCcw, CheckCircle2, CircleSlash } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useWorkspaceStore, type Annotation, type ProcessingResult } from '../../stores/workspace-store'
 
@@ -164,7 +164,12 @@ export default function DarkDocumentViewer() {
     fieldPanOffsets,
     setFieldPanOffset,
     clearFieldPanOffset,
+    samplesReview,
+    confirmSampleGT,
   } = useWorkspaceStore()
+
+  const isCurrentSampleConfirmed =
+    !!documentInfo && (samplesReview?.confirmedDocIds ?? []).includes(documentInfo.id)
 
   const [numPages, setNumPages] = useState<number>(0)
   const [page, setPage] = useState(1)
@@ -404,10 +409,35 @@ export default function DarkDocumentViewer() {
             </button>
           </div>
         </div>
-        <button className="flex items-center gap-2 px-3 py-1.5 border border-white/20 hover:bg-white/5 rounded text-white transition-colors text-xs">
-          <Upload className="w-3.5 h-3.5" />
-          上传新文档
-        </button>
+        <div className="flex items-center gap-2">
+          {/* GT confirmation toggle for the current sample. Disabled when
+              there's no document loaded. When confirmed, button shows the
+              green pill state; clicking again revokes (mark uncorrected). */}
+          {documentInfo && (
+            <button
+              onClick={() => void confirmSampleGT(documentInfo.id, !isCurrentSampleConfirmed)}
+              title={
+                isCurrentSampleConfirmed
+                  ? '已确认该样本的 OCR 结果作为 GT — 点击撤销'
+                  : '将该样本的当前 OCR 结果整体确认为 GT，纳入迭代'
+              }
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors',
+                isCurrentSampleConfirmed
+                  ? 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/40'
+                  : 'border border-white/20 text-gray-300 hover:bg-white/5',
+              )}
+            >
+              {isCurrentSampleConfirmed
+                ? <><CheckCircle2 className="w-3.5 h-3.5" /> 已审视</>
+                : <><CircleSlash className="w-3.5 h-3.5" /> 待审视</>}
+            </button>
+          )}
+          <button className="flex items-center gap-2 px-3 py-1.5 border border-white/20 hover:bg-white/5 rounded text-white transition-colors text-xs">
+            <Upload className="w-3.5 h-3.5" />
+            上传新文档
+          </button>
+        </div>
       </div>
 
       {/* Document area — overflow-hidden viewport with a CSS-transformed doc wrapper.

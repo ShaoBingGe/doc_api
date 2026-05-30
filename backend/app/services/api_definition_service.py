@@ -289,26 +289,29 @@ def add_sample_document(
     """Upload a file, bind it to the API, run OCR using the API's active prompt,
     and append the new Document.id to config.sample_document_ids.
 
-    On forked (customer-customize) ApiDefs, the resulting AI annotations are
-    auto-marked is_corrected=True so the 3-round optimizer sees them as GT.
-    This matches the customer's stated intent: uploaded samples are expected
-    to produce results consistent with the customized template; if any field
-    is wrong, the customer can correct it through the edit panel, which will
-    fold into the next round.
+    The OCR step may fail (most commonly: Gemini connectivity). When that
+    happens `bind_to_api_and_extract` catches the error and marks the
+    Document as failed — the upload itself still succeeds so the customer
+    can retry OCR later via the reprocess endpoint.
 
-    Also auto-triggers any parked CustomizeJob in `waiting_for_samples` once
-    this upload brings the sample count to MIN_SAMPLES_FOR_ITERATION.
+    Customer-supplied GT: per design v3 the resulting annotations are NOT
+    auto-marked as ground truth. The customer must explicitly confirm each
+    sample's extraction via `POST .../samples/{doc_id}/confirm-gt` (or
+    correct individual fields through the edit panel) before the 3-round
+    iteration will consider this sample.
+
+    Also auto-triggers any parked CustomizeJob in `waiting_for_samples`
+    once the count of *confirmed* samples reaches MIN_SAMPLES_FOR_ITERATION.
     """
     from threading import Thread
 
-    from app.models.annotation import Annotation
     from app.ocr_optimizer.service import customer_iteration
     from app.services.document_service import (
         bind_to_api_and_extract,
         upload_document,
     )
 
-    api_def = _get_or_404(db, api_def_id)
+    _get_or_404(db, api_def_id)  # 404 guard
     doc = upload_document(
         db,
         filename=filename,
@@ -319,52 +322,16 @@ def add_sample_document(
     bind_to_api_and_extract(db, doc, api_def_id)
     db.refresh(doc)
 
-    # ── Auto-mark AI annotations as GT on forked ApiDefs ────────────────
-    cfg = api_def.config or {}
-    if cfg.get("fork_origin") == "customer_customize":
-        try:
-            updated = (
-                db.query(Annotation)
-                .filter(
-                    Annotation.document_id == doc.id,
-                    Annotation.is_corrected.is_(False),
-                )
-                .update({Annotation.is_corrected: True}, synchronize_session=False)
-            )
-            if updated:
-                db.commit()
-                logger.info(
-                    "Auto-marked %d annotations as GT on forked ApiDef %s, doc %s",
-                    updated, api_def_id, doc.id,
-                )
-        except Exception:
-            db.rollback()
-            logger.exception("Auto-GT marking failed (non-fatal)")
-
     # ── Auto-resume any waiting customize job for this ApiDef ───────────
     #
-    # After bind_to_api_and_extract, sample_document_ids has been updated.
-    # We check synchronously whether a parked job can now proceed, then
-    # kick off the resume in a background thread so this HTTP request
-    # returns immediately. The resume itself owns its own DB session.
+    # Just-uploaded samples don't count toward the gate yet (they aren't
+    # confirmed GT). Auto-resume only triggers when the COUNT of CONFIRMED
+    # samples hits the threshold — which happens via the confirm-gt
+    # endpoint, not here. We still call into the gate function so a
+    # backlog of already-confirmed samples gets re-checked on each upload
+    # (cheap, idempotent).
     try:
-        waiting = customer_iteration.find_waiting_job_for_api(db, api_def_id)
-        if waiting:
-            api_def = _get_or_404(db, api_def_id)
-            cfg = api_def.config or {}
-            ids = cfg.get("sample_document_ids") or []
-            if len(ids) >= customer_iteration.MIN_SAMPLES_FOR_ITERATION:
-                logger.info("Auto-resuming customize job %s (samples %d/%d)",
-                            waiting.id, len(ids),
-                            customer_iteration.MIN_SAMPLES_FOR_ITERATION)
-                # Background daemon thread — fire-and-forget. The job uses
-                # its own SessionLocal so cross-thread access is safe.
-                Thread(
-                    target=customer_iteration.resume_customize_job,
-                    args=(waiting.id,),
-                    daemon=True,
-                    name=f"customize-resume-{waiting.id}",
-                ).start()
+        customer_iteration.maybe_auto_resume_for_api(api_def_id)
     except Exception:
         logger.exception("Failed to evaluate customize job auto-resume")
 

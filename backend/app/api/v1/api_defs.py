@@ -205,6 +205,64 @@ def remove_sample_document(
     )
 
 
+# ── Sample GT confirmation (design v3) ───────────────────────────────────────
+#
+# The 3-round optimizer needs ground truth to learn from. Per the user-facing
+# design we no longer auto-mark uploaded OCR output as GT; the customer must
+# explicitly accept the extraction (or edit fields first) before a sample
+# counts toward the gate.
+
+
+@router.get(
+    "/{api_def_id}/samples-review",
+    summary="返回每个样本的'已审视'状态 + 已审视/最低要求计数",
+)
+def list_samples_review_status(
+    api_def_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.ocr_optimizer.service import customer_iteration as ci
+    from app.ocr_optimizer.service.ground_truth import has_ground_truth
+
+    api = svc._get_or_404(db, api_def_id)
+    ids: list[str] = (api.config or {}).get("sample_document_ids") or []
+    per_doc = [
+        {
+            "document_id": sid,
+            "confirmed": has_ground_truth(db, uuid.UUID(sid)),
+        }
+        for sid in ids
+    ]
+    confirmed, total = ci.count_confirmed_samples(db, api_def_id)
+    return {
+        "samples": per_doc,
+        "confirmed_count": confirmed,
+        "total_count": total,
+        "required_for_iteration": ci.MIN_SAMPLES_FOR_ITERATION,
+    }
+
+
+@router.post(
+    "/{api_def_id}/samples/{document_id}/confirm-gt",
+    summary="将该样本的 OCR 结果整体确认为 GT（或撤销）",
+)
+def confirm_sample_gt(
+    api_def_id: uuid.UUID,
+    document_id: uuid.UUID,
+    background: BackgroundTasks,
+    body: dict = Body(default={"confirmed": True}),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.ocr_optimizer.service import customer_iteration as ci
+
+    svc._get_or_404(db, api_def_id)
+    confirmed = bool(body.get("confirmed", True))
+    out = ci.set_sample_gt_confirmed(db, document_id, confirmed=confirmed)
+    # Auto-resume if this confirmation just crossed the threshold
+    background.add_task(ci.maybe_auto_resume_for_api, api_def_id)
+    return out
+
+
 # ── Customer-driven customization (reflection + 3-round + fork) ──────────────
 
 

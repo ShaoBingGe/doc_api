@@ -113,6 +113,88 @@ def find_waiting_job_for_api(db: Session, api_definition_id: uuid.UUID) -> Custo
     )
 
 
+def count_confirmed_samples(db: Session, api_definition_id: uuid.UUID) -> tuple[int, int]:
+    """Return (confirmed, total) for the samples bound to an ApiDef.
+
+    "confirmed" = the sample has at least one GT annotation (is_corrected=True
+    or source=manual). "total" = raw count of sample_document_ids. Used by
+    both the waiting-banner progress UI and the auto-resume gate.
+    """
+    from app.models.api_definition import ApiDefinition as _ApiDef
+    from app.ocr_optimizer.service.ground_truth import has_ground_truth
+
+    api = db.get(_ApiDef, api_definition_id)
+    if not api:
+        return 0, 0
+    ids = (api.config or {}).get("sample_document_ids") or []
+    total = len(ids)
+    confirmed = sum(1 for sid in ids if has_ground_truth(db, uuid.UUID(sid)))
+    return confirmed, total
+
+
+def maybe_auto_resume_for_api(api_definition_id: uuid.UUID) -> None:
+    """Re-evaluate the sample gate for an ApiDef and kick off resume in a
+    background thread if it's now met. Idempotent and safe to call from
+    request handlers.
+    """
+    from threading import Thread
+
+    db: Session = SessionLocal()
+    try:
+        waiting = find_waiting_job_for_api(db, api_definition_id)
+        if not waiting:
+            return
+        confirmed, _ = count_confirmed_samples(db, api_definition_id)
+        if confirmed < MIN_SAMPLES_FOR_ITERATION:
+            return
+        job_id = waiting.id
+        logger.info(
+            "Auto-resuming customize job %s (confirmed %d/%d)",
+            job_id, confirmed, MIN_SAMPLES_FOR_ITERATION,
+        )
+    finally:
+        db.close()
+    # Fire-and-forget; resume_customize_job owns its own session.
+    Thread(
+        target=resume_customize_job,
+        args=(job_id,),
+        daemon=True,
+        name=f"customize-resume-{job_id}",
+    ).start()
+
+
+def set_sample_gt_confirmed(
+    db: Session, document_id: uuid.UUID, *, confirmed: bool
+) -> dict:
+    """Toggle whether ALL annotations on a document are treated as GT.
+
+    confirmed=True: bulk-set is_corrected=True on every annotation tied to
+    the document (idempotent).
+    confirmed=False: bulk-set is_corrected=False (only useful for testing
+    or undoing an over-eager confirmation).
+
+    Returns {"document_id": str, "confirmed": bool, "annotations_total": int}.
+    Caller is responsible for triggering downstream auto-resume.
+    """
+    from app.models.annotation import Annotation
+    from sqlalchemy import func
+
+    total = db.query(func.count(Annotation.id)).filter(
+        Annotation.document_id == document_id
+    ).scalar() or 0
+    if total == 0:
+        logger.warning("set_sample_gt_confirmed: doc %s has 0 annotations", document_id)
+    db.query(Annotation).filter(
+        Annotation.document_id == document_id
+    ).update({Annotation.is_corrected: confirmed}, synchronize_session=False)
+    db.commit()
+    return {
+        "document_id": str(document_id),
+        "confirmed": confirmed,
+        "annotations_total": int(total),
+    }
+
+
 def find_latest_active_job_for_api(db: Session, api_definition_id: uuid.UUID) -> CustomizeJob | None:
     """Return the most-recent in-flight job tied to this ApiDefinition —
     either as source OR as fork target.
@@ -217,11 +299,12 @@ def resume_customize_job(job_id: uuid.UUID) -> bool:
                         error_message="forked ApiDefinition was deleted",
                         completed_at=datetime.now(timezone.utc))
             return False
-        cfg = new_api.config or {}
-        ids = cfg.get("sample_document_ids") or []
-        if len(ids) < MIN_SAMPLES_FOR_ITERATION:
-            logger.info("resume_customize_job: job %s still has %d/%d samples, staying parked",
-                        job.id, len(ids), MIN_SAMPLES_FOR_ITERATION)
+        confirmed, total = count_confirmed_samples(db, job.new_api_definition_id)
+        if confirmed < MIN_SAMPLES_FOR_ITERATION:
+            logger.info(
+                "resume_customize_job: job %s still has %d/%d confirmed samples (%d total), staying parked",
+                job.id, confirmed, MIN_SAMPLES_FOR_ITERATION, total,
+            )
             return False
         # Transition: kick off optimization
         _update_job(db, job,
@@ -342,23 +425,21 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
                 new_api_code=new_api.api_code)
 
     # ── Phase 3: sample gate ──────────────────────────────────────────────
-    # The fork inherits sample_document_ids from source. If the source had at
-    # least MIN_SAMPLES, we proceed; otherwise park the job.
-    cfg = new_api.config or {}
-    ids = cfg.get("sample_document_ids") or []
-    have = len(ids)
-    if have < MIN_SAMPLES_FOR_ITERATION:
-        need = MIN_SAMPLES_FOR_ITERATION - have
+    # We require at least MIN_SAMPLES_FOR_ITERATION samples whose annotations
+    # the customer has confirmed as GT. Raw upload count is NOT sufficient.
+    confirmed, total = count_confirmed_samples(db, new_api.id)
+    if confirmed < MIN_SAMPLES_FOR_ITERATION:
+        need = MIN_SAMPLES_FOR_ITERATION - confirmed
         msg = (
             f"已生成新模板 {new_api.api_code}。"
-            f"当前 {have}/{MIN_SAMPLES_FOR_ITERATION} 样本，"
-            f"还需上传 {need} 个不同格式的样本以启动 3 轮迭代优化。"
+            f"当前 {confirmed}/{MIN_SAMPLES_FOR_ITERATION} 已审视样本（共 {total} 个），"
+            f"还需 {need} 个样本经客户确认 OCR 结果正确后才能启动 3 轮迭代。"
         )
         _update_job(db, job,
                     status=CustomizeJobStatus.waiting_for_samples.value,
                     phase_detail=msg)
-        logger.info("Job %s parked in waiting_for_samples (%d/%d samples)",
-                    job.id, have, MIN_SAMPLES_FOR_ITERATION)
+        logger.info("Job %s parked in waiting_for_samples (%d/%d confirmed, %d total)",
+                    job.id, confirmed, MIN_SAMPLES_FOR_ITERATION, total)
         return
 
     # ── Phase 4: 3-round optimization ─────────────────────────────────────
@@ -550,34 +631,10 @@ def _fork_api_definition(
     new_api.status = ApiDefinitionStatus.draft
     db.commit()
 
-    # ── Inherit-as-GT: mark all annotations on inherited sample docs ──
-    # The forked ApiDef inherits the source's sample_document_ids. Those
-    # docs' AI-detected annotations become the implicit ground truth so
-    # the 3-round optimizer has signal to work with. The customer's edit
-    # diffs already influenced the prompt that goes INTO round 1 (via
-    # _clone_module's prompt_suffix); the GT here drives round-over-round
-    # accuracy measurement.
-    inherited_ids = (new_cfg.get("sample_document_ids") or [])
-    if inherited_ids:
-        from app.models.annotation import Annotation as _Annotation
-        try:
-            doc_uuids = [uuid.UUID(x) for x in inherited_ids]
-            marked = (
-                db.query(_Annotation)
-                .filter(
-                    _Annotation.document_id.in_(doc_uuids),
-                    _Annotation.is_corrected.is_(False),
-                )
-                .update({_Annotation.is_corrected: True}, synchronize_session=False)
-            )
-            db.commit()
-            logger.info(
-                "Fork %s: auto-marked %d inherited sample annotations as GT",
-                new_api.api_code, marked,
-            )
-        except Exception:
-            db.rollback()
-            logger.exception("Fork auto-GT marking failed (non-fatal)")
+    # NOTE (design v3): inherited sample annotations are NOT auto-GT'd.
+    # The customer must explicitly confirm each sample's OCR output as
+    # ground truth via the confirm-gt endpoint. This avoids feeding the
+    # 3-round optimizer self-referential "OCR = GT" signal.
 
     db.refresh(new_api)
     db.refresh(new_version)
