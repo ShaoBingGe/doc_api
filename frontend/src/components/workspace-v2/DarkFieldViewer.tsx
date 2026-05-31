@@ -1612,23 +1612,80 @@ function FieldsView() {
   // design v8 — derive "edited on OTHER files" set and the list of added
   // fields from OTHER files not yet present locally. See pending_edits_service.py.
   const currentDocId = documentInfo?.id
-  const otherDocsEditedFields = useMemo(() => {
-    if (!pendingEdits || !currentDocId) return new Set<string>()
+
+  // Phase 21 — uncommitted FieldEditPanel drafts are a SECOND source of
+  // truth for rename / value-modification intent. Customers who use
+  // "仅暂存" instead of "保存到模板（立即生效）" never write to
+  // pending_edits, so cross-doc badges based on overlay alone go quiet
+  // until customize is submitted. Bridge drafts → overlay-shape so
+  // every downstream computation (renamesReverse, otherDocsEditedFields,
+  // valueModifiedHere) sees the full picture.
+  const draftRenameMap = useMemo(() => {
+    // {oldName: newName} from any draft with a rename intent
+    const m: Record<string, string> = {}
+    for (const draft of Object.values(fieldEditDrafts)) {
+      const oldN = (draft.originalName || '').trim()
+      const newN = (draft.correctedName || '').trim()
+      if (oldN && newN && oldN !== newN) m[oldN] = newN
+    }
+    return m
+  }, [fieldEditDrafts])
+  const draftValueEditedFields = useMemo(() => {
+    // Set of field names that have a value-modifying draft
     const out = new Set<string>()
-    for (const [docId, fieldsObj] of Object.entries(pendingEdits.modifications || {})) {
-      if (docId === currentDocId) continue
-      for (const fname of Object.keys(fieldsObj)) out.add(fname)
+    for (const [key, draft] of Object.entries(fieldEditDrafts)) {
+      const ov = String(draft.originalValue ?? '')
+      const cv = String(draft.correctedValue ?? '')
+      if (ov !== cv) out.add(key)
     }
     return out
-  }, [pendingEdits, currentDocId])
+  }, [fieldEditDrafts])
+
+  const otherDocsEditedFields = useMemo(() => {
+    const out = new Set<string>()
+    // From committed overlay (per-doc value mods)
+    if (pendingEdits && currentDocId) {
+      for (const [docId, fieldsObj] of Object.entries(pendingEdits.modifications || {})) {
+        if (docId === currentDocId) continue
+        for (const fname of Object.keys(fieldsObj)) out.add(fname)
+      }
+    }
+    // From uncommitted drafts — surface them too. Drafts are
+    // workspace-scoped (Zustand store) and can belong to ANY doc;
+    // treat them as "other docs' edits" unless they match a label on
+    // the current doc (in which case the local "已暂存" badge takes
+    // precedence — see FieldRow's badge priority).
+    for (const draftKey of draftValueEditedFields) {
+      out.add(draftKey)
+    }
+    return out
+  }, [pendingEdits, currentDocId, draftValueEditedFields])
 
   const otherDocsAddedFields = useMemo(() => {
-    if (!pendingEdits) return [] as Array<{ field_name: string; type: string; description: string }>
     const localNames = new Set(annotations.map((a) => a.label))
-    return (pendingEdits.added_fields || []).filter(
-      (f) => !localNames.has(f.field_name) && f.added_at_doc_id !== currentDocId,
-    )
-  }, [pendingEdits, annotations, currentDocId])
+    const seen = new Set<string>()
+    const out: Array<{ field_name: string; type: string; description: string }> = []
+    // (a) committed overlay adds NOT on this doc
+    for (const f of pendingEdits?.added_fields || []) {
+      if (localNames.has(f.field_name)) continue
+      if (f.added_at_doc_id === currentDocId) continue
+      if (seen.has(f.field_name)) continue
+      seen.add(f.field_name)
+      out.push(f)
+    }
+    // (b) Phase 21 — uncommitted addFieldDrafts (the "+ 添加识别字段" rows)
+    for (const d of addFieldDrafts) {
+      const name = (d.correctedName || '').trim()
+      if (!name || localNames.has(name) || seen.has(name)) continue
+      seen.add(name)
+      out.push({
+        field_name: name,
+        type: d.correctedFormat || 'string',
+        description: '（草稿，尚未保存到模板）',
+      })
+    }
+    return out
+  }, [pendingEdits, annotations, currentDocId, addFieldDrafts])
 
   // Phase 13 — fields the LLM should have produced but didn't on this doc.
   // requiredFields = union(active modules, overlay.added) − deleted, renames
@@ -1649,17 +1706,23 @@ function FieldsView() {
     )
   }, [requiredFields, annotations, pendingEdits])
 
-  // design v8 — reverse rename map {new → old} used to:
+  // design v8 + Phase 21 — reverse rename map {new → old} used to:
   //   - show "原: oldName" subtitle + "已重命名" badge on renamed rows
-  //   - fall back to fieldEditDrafts[oldName] when looking up dirty drafts,
-  //     so cascade-rename doesn't invalidate the editor's draft association
+  //   - fall back to fieldEditDrafts[oldName] when looking up dirty drafts
+  // Phase 21: merge BOTH committed overlay renames AND uncommitted draft
+  // renames so cross-doc badges work even when the customer is still
+  // editing (hasn't clicked "保存到模板（立即生效）" yet).
   const renamesReverse = useMemo(() => {
     const m: Record<string, string> = {}
     for (const [oldN, newN] of Object.entries(pendingEdits?.renames || {})) {
       m[newN] = oldN
     }
+    for (const [oldN, newN] of Object.entries(draftRenameMap)) {
+      // Overlay wins on conflict (it's already persisted)
+      if (!m[newN]) m[newN] = oldN
+    }
     return m
-  }, [pendingEdits])
+  }, [pendingEdits, draftRenameMap])
 
   // Set of field names whose value was modified on THIS doc and persisted
   // to pending_edits.modifications (used for purple "已保存修改" badge).
