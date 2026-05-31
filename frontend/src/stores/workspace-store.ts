@@ -1030,10 +1030,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       }
       set({ customizeJob: updated })
       if (updated.status === 'completed' || updated.status === 'failed') return
-      // Adaptive cadence: waiting_for_samples just sits there until the user
-      // confirms more samples — no need to hammer the backend every 2s. Live
-      // phases (reflecting/forking/optimizing) update fast, poll quickly.
-      const delay = updated.status === 'waiting_for_samples' ? 10_000 : 2_000
+      // Adaptive cadence:
+      //   - waiting_for_samples: every 10s, the user is busy clicking 已审视
+      //   - reflecting: 5s — agent runs are slow (~15s/diff) so frequent
+      //     polling just wastes a request; the backend won't change state
+      //     between rounds anyway
+      //   - forking / optimizing: 3s — these phases stream rapid updates
+      let delay = 3_000
+      if (updated.status === 'waiting_for_samples') delay = 10_000
+      else if (updated.status === 'reflecting') delay = 5_000
       setTimeout(() => void get().pollCustomizeJob(), delay)
     } catch {
       setTimeout(() => void get().pollCustomizeJob(), 6_000)

@@ -1242,11 +1242,14 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
     new_json_path = src.json_path
     # Phase 17 — keep optimizer's display label in sync with the
     # workspace field column. When the customer renames a field, the
-    # frontend field list shows the NEW camelCase name (cascade rename
-    # in Annotation.field_name). The original Chinese display_name
-    # (e.g. "开票方名称识别") no longer describes the renamed concept,
-    # so we append the new name in parentheses for traceability.
+    # frontend field column shows the NEW camelCase name (cascade
+    # rename in Annotation.field_name). To match, the optimizer's
+    # display_name becomes the new name verbatim — same format as the
+    # ADD path (_module_from_add_diff sets display_name=new_name). The
+    # original Chinese semantic label is preserved in `description`,
+    # not lost.
     new_display_name = src.display_name
+    new_description_value = new_description
     rename_old = patch.get("__rename_old")
     rename_new = patch.get("__rename_new")
     if rename_old and rename_new and rename_old != rename_new:
@@ -1256,13 +1259,19 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
         #   $.billFromName     →  $.supplierName
         if src.json_path and rename_old in src.json_path:
             new_json_path = src.json_path.replace(rename_old, rename_new)
-        # Optimizer-page label: keep the original semantic prefix but
-        # surface the customer's new field name so it matches the
-        # workspace field column at a glance.
-        if src.display_name and rename_new not in src.display_name:
-            new_display_name = f"{src.display_name} → {rename_new}"
-        else:
-            new_display_name = rename_new
+        # Display the new field name — matches what the workspace
+        # column shows + matches the ADD path's format.
+        new_display_name = rename_new
+        # Preserve the source's Chinese semantic anchor in description
+        # so audit / future LLM passes still know what this field is.
+        # Format: "<orig display> (重命名自 <old>)" prepended when not
+        # already present in description.
+        prefix = f"{src.display_name}（重命名自 {rename_old}）"
+        if src.display_name and prefix not in (new_description or ""):
+            new_description_value = (
+                prefix + "。"
+                + (new_description.lstrip() if new_description else "")
+            ).rstrip()
         # Append rename hint to the prompt so the LLM gets explicit mapping
         rename_hint = (
             f"\n\n# 字段重命名（Part 3 §3.9）\n"
@@ -1277,7 +1286,7 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
         prompt_version_id=new_version_id,
         module_key=new_module_key,
         display_name=new_display_name,
-        description=new_description,
+        description=new_description_value,
         json_path=new_json_path,
         schema_fragment=new_schema,
         ocr_suggestions=new_suggestions,  # Phase 8: includes reflections log

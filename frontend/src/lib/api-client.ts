@@ -18,6 +18,13 @@ apiClient.interceptors.request.use((config) => {
   return config
 })
 
+// Console-noise control:
+//   - request aborts (component unmount, HMR, throttled poller) get
+//     silenced — they're routine, not errors
+//   - genuine connect failures coalesce to ONE warning per 5s window
+//     so a stuck backend doesn't spam the console with 300 lines
+let _lastNetworkWarn = 0
+
 apiClient.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
@@ -26,12 +33,23 @@ apiClient.interceptors.response.use(
       if (status === 401) {
         console.error('Unauthorized — check your API key in Settings.')
       } else if (status === 404) {
-        console.error('Resource not found:', error.config?.url)
+        // Stale-annotation 404s are a routine race; downgrade to silent
+        // (workspace-store.saveAnnotation already auto-reloads the doc).
+        const url = error.config?.url || ''
+        if (!url.includes('/annotations/')) {
+          console.warn('Resource not found:', url)
+        }
       } else if (status >= 500) {
         console.error('Server error:', error.response.data)
       }
+    } else if (error.code === 'ERR_CANCELED' || error.message === 'canceled') {
+      // Request was aborted (component unmount / poller throttle) — no log
     } else if (error.request) {
-      console.error('Network error — is the API server running at', baseURL)
+      const now = Date.now()
+      if (now - _lastNetworkWarn > 5_000) {
+        _lastNetworkWarn = now
+        console.warn('Network error — server may be busy or unreachable at', baseURL || '/')
+      }
     }
     return Promise.reject(error)
   },
