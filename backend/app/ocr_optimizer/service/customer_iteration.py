@@ -726,6 +726,46 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
         "schema_fragment": m.schema_fragment,
     } for m in src_modules}
 
+    # ── Phase 17 follow-up: force cascade-rename on ALL diff renames ────
+    # Bug-fix context: cascade_rename_annotations only fires inside
+    # commitCurrentDraft (Phase 10) when the customer explicitly clicks
+    # "保存到模板（立即生效）". Customers who use "仅暂存" + the top-right
+    # "保存并生成 API" button skip that path entirely. Result: source
+    # ApiDef's Annotation.field_name stays at the OLD names, but the
+    # fork's modules (built from diffs with rename intent) use the NEW
+    # names. After iteration, the frontend on the fork URL sees a
+    # mismatch — annotations labeled `billFromName` while every
+    # ProcessingResult.structured_data emits `salerName` — and renders
+    # what looks like "everything reverted to original prompt".
+    #
+    # Fix: at the start of pipeline execution, apply EVERY rename diff
+    # to the source ApiDef's annotation rows. After Phase 12's
+    # _mirror_source_samples_to_fork rebinds those docs to fork, the
+    # fork's docs naturally have correctly-named annotations.
+    try:
+        from app.services import pending_edits_service as _pes_rename
+        for d in diffs:
+            if d.get("kind") != "edit":
+                continue
+            on = (d.get("original_name") or "").strip()
+            cn = (d.get("corrected_name") or "").strip()
+            if (
+                on and cn and on != cn
+                and "[" not in on and "." not in on
+                and "[" not in cn and "." not in cn
+            ):
+                n = _pes_rename.cascade_rename_annotations(
+                    db, src_id, on, cn,
+                )
+                if n > 0:
+                    logger.info(
+                        "Pipeline pre-step: cascaded rename %r → %r across "
+                        "%d source-ApiDef annotation rows",
+                        on, cn, n,
+                    )
+    except Exception as _exc:  # noqa: BLE001
+        logger.warning("Pre-fork cascade rename failed: %s", _exc)
+
     # ── Phase 11a/b: drop deleted fields BEFORE anything else ────────────
     # User contract: deleted fields have NO meta, NO reflection, NO module
     # slot. We filter them out at three places:
@@ -827,6 +867,31 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
     _update_job(db, job,
                 new_api_definition_id=new_api.id,
                 new_api_code=new_api.api_code)
+
+    # ── Phase 18 CRITICAL FIX: rebind source's sample docs to fork ──────
+    # Without this, the iteration runner queries fork.id but documents
+    # are still bound to source.id → no docs found → iteration runs on
+    # zero samples → fork's ProcessingResults never get updated → when
+    # the customer navigates to the fork URL after completion, the
+    # workspace loads docs that don't belong to fork (they're still on
+    # source) and the fork shows EMPTY data. Customer reads this as
+    # "everything reverted to original prompt".
+    #
+    # Previously _mirror_source_samples_to_fork only ran from the
+    # auto-resume hook AND only when waiting.new_api_definition_id was
+    # already set — which was always None for Phase-14a pre-fork jobs.
+    # Now we call it explicitly right after the fork is created, so
+    # iteration always finds the samples on the fork.
+    try:
+        n_mirrored = _mirror_source_samples_to_fork(
+            db, source_id=src_id, fork_id=new_api.id,
+        )
+        logger.info(
+            "Post-fork: rebound %d sample docs from source %s to fork %s",
+            n_mirrored, src_id, new_api.id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Post-fork sample mirror failed: %s", exc)
 
     # Phase 5 revisited (design v8 / June '26 UX fix):
     #
