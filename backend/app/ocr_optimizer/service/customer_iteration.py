@@ -42,6 +42,7 @@ from ..models import (
     CustomizeJobStatus,
     OcrModule,
     OcrOptimizationRound,
+    OcrOptimizationRun,
     OcrPromptVersion,
     PromptVersionStatus,
     RunStatus,
@@ -889,8 +890,11 @@ def _run_three_rounds(db: Session, job: CustomizeJob, new_api: ApiDefinition) ->
                     completed_at=datetime.now(timezone.utc))
         return
 
-    _update_job(db, job, rounds_done=run.rounds_completed,
-                phase_detail=f"第 {run.rounds_completed} 轮（分拆→局部验证→重组）完成")
+    _update_job(
+        db, job,
+        rounds_done=run.rounds_completed,
+        phase_detail=_format_round_phase_detail(db, run, run.rounds_completed),
+    )
 
     # Rounds 2 & 3 — with early stop on 100% accuracy
     best_version_id = _latest_round_version(db, run.id) or None
@@ -921,8 +925,11 @@ def _run_three_rounds(db: Session, job: CustomizeJob, new_api: ApiDefinition) ->
             break
         try:
             run = run_orchestrator.advance_round(db, run.id, enable_meta=False)
-            _update_job(db, job, rounds_done=run.rounds_completed,
-                        phase_detail=f"第 {run.rounds_completed} 轮（分拆→局部验证→重组）完成")
+            _update_job(
+                db, job,
+                rounds_done=run.rounds_completed,
+                phase_detail=_format_round_phase_detail(db, run, run.rounds_completed),
+            )
         except Exception as exc:
             logger.exception("advance_round failed for job %s: %s", job.id, exc)
             break
@@ -945,6 +952,80 @@ def _run_three_rounds(db: Session, job: CustomizeJob, new_api: ApiDefinition) ->
                 overall_accuracy=overall_acc,
                 phase_detail=f"已完成 3 轮迭代，新模板 api_code = {new_api.api_code}",
                 completed_at=datetime.now(timezone.utc))
+
+
+def _format_round_phase_detail(
+    db: Session, run: OcrOptimizationRun, round_num: int,
+) -> str:
+    """N5 — build a customer-friendly phase_detail that surfaces WHICH
+    fields the optimizer just refined this round.
+
+    Round-N's per-module work lives in OcrModuleIteration rows tied to
+    the latest OcrOptimizationRound. A module that was actually touched
+    has at least one of (new_description, new_ocr_suggestions,
+    new_ocr_prompt) non-null; pure "passed evaluation, no change"
+    iterations are skipped from the banner.
+
+    Output examples:
+        "第 1 轮完成 · 本轮优化 8 个字段: invoiceNumber, billFromName, …"
+        "第 2 轮完成 · 本轮所有字段评估通过，无 prompt 改写"
+    """
+    from ..models import OcrModuleIteration, OcrOptimizationRound, OcrModule
+
+    base = f"第 {round_num} 轮（分拆→局部验证→重组）完成"
+
+    try:
+        last_round = (
+            db.query(OcrOptimizationRound)
+            .filter(OcrOptimizationRound.run_id == run.id)
+            .order_by(OcrOptimizationRound.round_num.desc())
+            .first()
+        )
+        if not last_round:
+            return base
+
+        iters = (
+            db.query(OcrModuleIteration)
+            .filter(OcrModuleIteration.round_id == last_round.id)
+            .all()
+        )
+
+        # Collect module_keys whose iteration touched the prompt material
+        touched_module_ids: set[uuid.UUID] = set()
+        for it in iters:
+            changed = (
+                (it.new_description is not None and it.new_description != "")
+                or (it.new_ocr_suggestions is not None)
+                or (it.new_ocr_prompt is not None and it.new_ocr_prompt != "")
+            )
+            if changed and it.module_id:
+                touched_module_ids.add(it.module_id)
+
+        if not touched_module_ids:
+            return base + " · 本轮所有字段评估通过，无 prompt 改写"
+
+        modules = (
+            db.query(OcrModule)
+            .filter(OcrModule.id.in_(touched_module_ids))
+            .order_by(OcrModule.order_index)
+            .all()
+        )
+        # Prefer display_name (post-rename camelCase, see Phase 17) over module_key
+        names = [
+            (m.display_name or m.module_key or "").strip()
+            for m in modules
+        ]
+        names = [n for n in names if n]
+        n = len(names)
+        if n == 0:
+            return base
+        # Cap at 6 names + suffix to keep the banner concise
+        head = ", ".join(names[:6])
+        tail = "" if n <= 6 else f"…（共 {n} 个）"
+        return f"第 {round_num} 轮完成 · 本轮优化 {n} 个字段: {head}{tail}"
+    except Exception as _exc:  # noqa: BLE001
+        logger.warning("Could not format round-%d phase_detail: %s", round_num, _exc)
+        return base
 
 
 def _latest_round_version(db: Session, run_id: uuid.UUID) -> uuid.UUID | None:

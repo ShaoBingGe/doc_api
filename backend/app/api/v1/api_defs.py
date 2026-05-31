@@ -231,62 +231,14 @@ def get_required_fields(
     Frontend uses this to render "本样本未识别 — 待补齐" placeholder rows
     so the customer can manually annotate fields the LLM missed.
     """
-    from app.ocr_optimizer.models import OcrModule, OcrPromptVersion, PromptVersionStatus
-
     svc.get_api_definition(db, api_def_id)  # 404 guard
-
-    # Field names from the active version's modules.
-    # OcrModule.json_path looks like "$[*].invoiceNumber" or
-    # "$[*].detailOfGoodsOrServices[*]" — the leaf segment (without
-    # brackets) is the JSON key the LLM should emit at that level.
-    version = (
-        db.query(OcrPromptVersion)
-        .filter(
-            OcrPromptVersion.api_definition_id == api_def_id,
-            OcrPromptVersion.status == PromptVersionStatus.active.value,
-        )
-        .first()
-    )
-    base_fields: list[str] = []
-    if version is not None:
-        modules = (
-            db.query(OcrModule)
-            .filter(OcrModule.prompt_version_id == version.id)
-            .order_by(OcrModule.order_index)
-            .all()
-        )
-        for m in modules:
-            path = m.json_path or ""
-            # Take the last "." segment, strip brackets
-            leaf = path.split(".")[-1] if path else ""
-            leaf = leaf.replace("[*]", "").replace("[", "").replace("]", "").strip()
-            if leaf and leaf not in {"$", ""}:
-                base_fields.append(leaf)
-
     overlay = pending_edits_service.get_overlay(db, api_def_id)
-
-    # Apply renames (replace old with new where present)
-    renames = overlay.get("renames") or {}
-    renamed = [renames.get(f, f) for f in base_fields]
-
-    # Add overlay's added_fields (dedupe)
-    seen = set(renamed)
-    for f in overlay.get("added_fields") or []:
-        name = (f or {}).get("field_name") or ""
-        if name and name not in seen:
-            renamed.append(name)
-            seen.add(name)
-
-    # Remove deleted_fields
-    deleted = set(overlay.get("deleted_fields") or [])
-    final = [f for f in renamed if f not in deleted]
-
+    fields = pending_edits_service.compute_required_field_set(db, api_def_id)
     return {
-        "fields": final,
-        "from_modules": len(base_fields),
+        "fields": fields,
         "from_added": len(overlay.get("added_fields") or []),
-        "deleted_count": len(deleted),
-        "renamed_count": len(renames),
+        "deleted_count": len(overlay.get("deleted_fields") or []),
+        "renamed_count": len(overlay.get("renames") or {}),
     }
 
 

@@ -263,6 +263,63 @@ def record_deleted_field(
     return overlay, deleted_count
 
 
+def compute_required_field_set(db: Session, api_def_id: uuid.UUID) -> list[str]:
+    """N4 — canonical "what every sample should produce" field list.
+
+    Mirrors the GET /api-definitions/{id}/required-fields endpoint so both
+    the frontend missing-fields panel AND the backend OCR-prompt
+    augmentation / post-OCR null-padding use the same source of truth.
+
+    Computed as:
+        union(active modules' field names, overlay.added_fields)
+        − overlay.deleted_fields
+        + apply overlay.renames (old → new)
+
+    Returns the field name list in module order, with added-fields
+    appended at the end.
+    """
+    from app.ocr_optimizer.models import (
+        OcrModule, OcrPromptVersion, PromptVersionStatus,
+    )
+
+    version = (
+        db.query(OcrPromptVersion)
+        .filter(
+            OcrPromptVersion.api_definition_id == api_def_id,
+            OcrPromptVersion.status == PromptVersionStatus.active.value,
+        )
+        .first()
+    )
+    base_fields: list[str] = []
+    if version is not None:
+        modules = (
+            db.query(OcrModule)
+            .filter(OcrModule.prompt_version_id == version.id)
+            .order_by(OcrModule.order_index)
+            .all()
+        )
+        for m in modules:
+            path = m.json_path or ""
+            leaf = path.split(".")[-1] if path else ""
+            leaf = leaf.replace("[*]", "").replace("[", "").replace("]", "").strip()
+            if leaf and leaf not in {"$", ""}:
+                base_fields.append(leaf)
+
+    overlay = get_overlay(db, api_def_id)
+    renames = overlay.get("renames") or {}
+    renamed = [renames.get(f, f) for f in base_fields]
+
+    seen = set(renamed)
+    for f in overlay.get("added_fields") or []:
+        name = (f or {}).get("field_name") or ""
+        if name and name not in seen:
+            renamed.append(name)
+            seen.add(name)
+
+    deleted = set(overlay.get("deleted_fields") or [])
+    return [f for f in renamed if f not in deleted]
+
+
 def clear_overlay(db: Session, api_def_id: uuid.UUID) -> None:
     """Phase 5: reset overlay after successful fork."""
     api_def = db.get(ApiDefinition, api_def_id)

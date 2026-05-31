@@ -312,6 +312,20 @@ def _run_extraction(
         elapsed_ms = int(time.time() * 1000) - start_ms
 
         structured_data = _normalize_structured_data(raw_structured)
+        # N4 — pad structured_data with null for any required field the
+        # LLM omitted. Guarantees every sample exposes the SAME top-level
+        # key set (cross-sample parity), so the workspace's field list is
+        # consistent across docs and downstream consumers don't crash on
+        # missing keys.
+        if doc.api_definition_id:
+            try:
+                from app.services import pending_edits_service
+                required = pending_edits_service.compute_required_field_set(
+                    db, doc.api_definition_id,
+                )
+                structured_data = _pad_with_required_keys(structured_data, required)
+            except Exception as _exc:  # noqa: BLE001
+                logger.warning("Failed to pad structured_data with required keys: %s", _exc)
         inferred_schema = _infer_schema(raw_structured)
 
         result = ProcessingResult(
@@ -554,6 +568,39 @@ def _create_annotations(
         db.add(ann)
 
 
+def _pad_with_required_keys(
+    structured_data: list[dict] | dict, required: list[str],
+) -> list[dict] | dict:
+    """N4 — guarantee every required field appears as a top-level key in
+    structured_data, with null value when the LLM omitted it.
+
+    structured_data shape after _normalize: usually list[dict] where each
+    dict is one extracted record (e.g. one invoice). We pad each record
+    independently so cross-sample parity is enforced per-record.
+
+    Idempotent: re-applying with the same required-list is a no-op.
+    """
+    if not required:
+        return structured_data
+
+    required_set = list(required)
+
+    def _pad_one(rec: dict) -> dict:
+        if not isinstance(rec, dict):
+            return rec
+        out = dict(rec)
+        for key in required_set:
+            if key not in out:
+                out[key] = None
+        return out
+
+    if isinstance(structured_data, list):
+        return [_pad_one(r) for r in structured_data]
+    if isinstance(structured_data, dict):
+        return _pad_one(structured_data)
+    return structured_data
+
+
 def _infer_schema(data: dict) -> dict:
     """
     Simple JSON Schema inference from a structured_data dict.
@@ -704,7 +751,18 @@ def _augment_with_overlay(db: Session, api_def_id: uuid.UUID, base_prompt: str) 
 
     added = overlay.get("added_fields") or []
     renames = overlay.get("renames") or {}
-    if not added and not renames:
+
+    # N4 — include the FULL required-field set so the LLM tries to extract
+    # every field the customer cares about, not just the overlay additions.
+    # The base prompt's schema reference already lists the canonical fields,
+    # but pending renames/adds can shift the expected output keys; spelling
+    # them out explicitly closes the loop on cross-doc parity.
+    try:
+        required = pending_edits_service.compute_required_field_set(db, api_def_id)
+    except Exception:  # noqa: BLE001
+        required = []
+
+    if not added and not renames and not required:
         return base_prompt
 
     blocks: list[str] = ["", "# 跨样本 Pending Edits 补充（design v8 overlay）",
@@ -729,6 +787,17 @@ def _augment_with_overlay(db: Session, api_def_id: uuid.UUID, base_prompt: str) 
                 blocks.append(f"- `{name}` (type: {ftype}) — {desc}")
             else:
                 blocks.append(f"- `{name}` (type: {ftype})")
+
+    if required:
+        blocks.append("")
+        blocks.append("## 本 ApiDef 必填字段集（跨样本一致性约束）")
+        blocks.append(
+            "下列字段构成所有样本必须保持一致的字段集合。**每一个 key 都必须出现在输出 JSON 中**——"
+            "在票面找到对应内容就填实际值，找不到则填 null。不允许省略 key，也不允许新增本列表之外的 key："
+        )
+        # Wrap long lists 8-per-line for prompt readability
+        for i in range(0, len(required), 8):
+            blocks.append("- " + " · ".join(f"`{f}`" for f in required[i:i+8]))
 
     return base_prompt.rstrip() + "\n" + "\n".join(blocks) + "\n"
 

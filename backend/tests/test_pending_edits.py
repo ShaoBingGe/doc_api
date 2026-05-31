@@ -263,6 +263,41 @@ def test_cross_doc_context_builder_collects_per_field_samples(db_session):
     assert values == ["ABC123", "DEF456"]
 
 
+def test_pad_with_required_keys_idempotent():
+    """N4 — _pad_with_required_keys fills missing keys with null and is
+    idempotent across re-application."""
+    from app.services.document_service import _pad_with_required_keys
+
+    required = ["invoiceNumber", "supplierTier", "buyerName"]
+    sd = [{"invoiceNumber": "ABC123", "buyerName": "Foo"}]
+    padded = _pad_with_required_keys(sd, required)
+    assert padded[0]["supplierTier"] is None
+    assert padded[0]["invoiceNumber"] == "ABC123"
+    # idempotent
+    again = _pad_with_required_keys(padded, required)
+    assert again == padded
+
+
+def test_pad_with_required_keys_handles_empty_required():
+    """No required → pass-through."""
+    from app.services.document_service import _pad_with_required_keys
+    sd = [{"a": 1}]
+    assert _pad_with_required_keys(sd, []) == sd
+
+
+def test_compute_required_field_set_helper(db_session):
+    """The new pending_edits_service.compute_required_field_set helper
+    must return union(modules, added) − deleted with renames applied."""
+    from app.services import pending_edits_service
+
+    api_def, _d1, _d2 = _setup_api_def(db_session)
+    pending_edits_service.record_added_field(db_session, api_def.id, "newField", "string")
+    pending_edits_service.record_deleted_field(db_session, api_def.id, "billFromName")
+    fields = pending_edits_service.compute_required_field_set(db_session, api_def.id)
+    assert "newField" in fields
+    assert "billFromName" not in fields
+
+
 def test_cross_doc_context_dedupes_identical_values(db_session):
     """Phase 15 — when the same field has the same value on multiple docs,
     collapse to a single entry with dup_count + dup_doc_filenames."""
