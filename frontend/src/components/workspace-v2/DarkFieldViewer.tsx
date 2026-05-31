@@ -1236,17 +1236,47 @@ function WaitingForSamplesBanner({
           下方字段列表中的"已重命名 / 已新增 / 已删除"标识保留为本次编辑的历史记录。
         </div>
         <div className="flex gap-2">
-          <button
-            onClick={() => {
-              // Scroll the top sample-thumbnail column into view; document-list lives in Column A
-              const docCol = document.querySelector('[data-sample-column="true"]')
-              if (docCol) docCol.scrollIntoView({ behavior: 'smooth', block: 'start' })
-              else toast.info('在左侧文档列上方点击"上传样本"按钮，或直接拖拽 PDF 到工作区')
-            }}
-            className="flex-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-sm rounded transition-colors"
-          >
-            上传/确认更多样本 →
-          </button>
+          {remaining > 0 ? (
+            <button
+              onClick={() => {
+                // Scroll the top sample-thumbnail column into view; document-list lives in Column A
+                const docCol = document.querySelector('[data-sample-column="true"]')
+                if (docCol) docCol.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                else toast.info('在左侧文档列上方点击"上传样本"按钮，或直接拖拽 PDF 到工作区')
+              }}
+              className="flex-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-sm rounded transition-colors"
+            >
+              上传/确认更多样本 →
+            </button>
+          ) : (
+            // Phase 22: 3/3 confirmed — flip to a green "开始优化" CTA that
+            // manually triggers /customize-jobs/{id}/resume (in case the
+            // auto-resume hook is slow or hit a race). Fires an immediate
+            // pollCustomizeJob() so the banner state flips as soon as the
+            // backend transitions to reflecting/optimizing.
+            <button
+              onClick={async () => {
+                const jobId = customizeJob.jobId
+                if (!jobId) {
+                  toast.error('找不到对应的 customize job')
+                  return
+                }
+                try {
+                  await apiClient.post(`/api/v1/api-definitions/customize-jobs/${jobId}/resume`)
+                  toast.success('已触发反思 + 3 轮优化')
+                  // Immediate refresh so the banner flips without waiting
+                  // for the 10s waiting_for_samples polling cadence.
+                  await useWorkspaceStore.getState().pollCustomizeJob()
+                } catch (err) {
+                  console.error('manual resume failed', err)
+                  toast.error('启动失败，请稍后重试')
+                }
+              }}
+              className="flex-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded transition-colors font-medium"
+            >
+              开始优化 →
+            </button>
+          )}
           <button
             onClick={async () => {
               if (!apiDefinitionId) return
