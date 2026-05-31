@@ -1413,6 +1413,7 @@ function FieldsView() {
     pendingEdits,  // design v8 — cross-sample overlay
     commitCurrentDraft,  // Phase 10
     commitFieldDeletion,  // Phase 11c
+    requiredFields,  // Phase 13 — canonical field set
   } = useWorkspaceStore()
 
   // design v8 — derive "edited on OTHER files" set and the list of added
@@ -1435,6 +1436,25 @@ function FieldsView() {
       (f) => !localNames.has(f.field_name) && f.added_at_doc_id !== currentDocId,
     )
   }, [pendingEdits, annotations, currentDocId])
+
+  // Phase 13 — fields the LLM should have produced but didn't on this doc.
+  // requiredFields = union(active modules, overlay.added) − deleted, renames
+  // applied. Any required field with no annotation here is shown as a
+  // "未识别 — 待标注" placeholder.
+  const missingRequiredFields = useMemo(() => {
+    if (!requiredFields || requiredFields.length === 0) return [] as string[]
+    const localNames = new Set(annotations.map((a) => a.label))
+    const overlayAdded = new Set(
+      (pendingEdits?.added_fields || []).map((f) => f.field_name),
+    )
+    return requiredFields.filter(
+      (f) =>
+        !localNames.has(f) &&
+        // Avoid double-listing fields already covered by the
+        // "其他文件已新增字段" section below.
+        !overlayAdded.has(f),
+    )
+  }, [requiredFields, annotations, pendingEdits])
 
   // design v8 — reverse rename map {new → old} used to:
   //   - show "原: oldName" subtitle + "已重命名" badge on renamed rows
@@ -1678,6 +1698,52 @@ function FieldsView() {
           onStartEdit={startEditingField}
         />
       ))}
+
+      {/* Phase 13 — fields the customer wants on every sample but the
+          LLM did NOT emit on THIS doc. Placeholder rows so the user can
+          manually annotate them. Clicking opens the FieldEditPanel for
+          quick value entry. */}
+      {missingRequiredFields.length > 0 && (
+        <div className="bg-[#2a2a32] rounded-lg border border-orange-500/25 overflow-hidden">
+          <div className="flex items-center justify-between p-3 bg-orange-500/10">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded bg-orange-500/20 flex items-center justify-center text-orange-300">
+                <AlertCircle className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-sm font-medium text-gray-200">本样本未识别字段</span>
+              <span className="text-xs text-gray-500 ml-2">{missingRequiredFields.length} 个待补齐</span>
+            </div>
+          </div>
+          <div className="p-3 space-y-1.5">
+            <p className="text-[11px] text-gray-500 leading-relaxed">
+              下列字段是本 ApiDef 的必填字段集（模板字段 + 客户新增 − 删除字段，重命名已应用），
+              但本样本的 OCR 输出未包含它们。请手工补齐取值，3 个样本字段集严格一致后才能启动优化。
+            </p>
+            {missingRequiredFields.map((name) => (
+              <div
+                key={name}
+                className="flex items-center justify-between py-1.5 px-2 rounded bg-orange-500/5 border border-orange-500/15 hover:bg-orange-500/10 transition-colors cursor-pointer"
+                onClick={() => {
+                  if (!docId) return
+                  // Create a stub annotation locally + open the editor so
+                  // the user can immediately type a value.
+                  addPendingField(name, '', 'text')
+                  toast.info(`已新增空标注「${name}」，请填写值并点"保存到模板"提交`)
+                }}
+                title="点击新增空标注，由你手工填值"
+              >
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <span className="text-gray-300 text-sm font-mono truncate">{name}</span>
+                  <span className="text-gray-600 text-xs">—（待补齐）</span>
+                </div>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-300 font-medium flex-shrink-0">
+                  未识别
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Phase 11c — fields the customer has deleted from all samples.
           Kept as a small audit footer so the user can verify what was

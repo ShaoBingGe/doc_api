@@ -334,7 +334,13 @@ def manual_patch(
                 description=patch.get("description") or m.description,
                 json_path=m.json_path,
                 schema_fragment=m.schema_fragment,
-                ocr_suggestions=patch.get("ocr_suggestions") or m.ocr_suggestions,
+                ocr_suggestions=persistence._merge_round_suggestions(
+                    previous=m.ocr_suggestions,
+                    new_text=patch.get("ocr_suggestions"),
+                    round_no=None,  # manual_patch is not round-tied
+                    kind="manual",
+                    rationale=patch.get("description") or "",
+                ),
                 ocr_prompt=m.ocr_prompt,  # not regenerated in manual patch
                 # ★ skill_ids HARD COPY — never user-editable here
                 skill_ids=list(m.skill_ids or []),

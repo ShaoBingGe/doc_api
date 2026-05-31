@@ -176,6 +176,56 @@ def load_recent_module_history(
 
 # ── Snapshot helpers (copy modules into next version) ────────────────────────
 
+def _merge_round_suggestions(
+    *,
+    previous: Any,
+    new_text: Any,
+    round_no: int | None,
+    kind: str,
+    rationale: str,
+) -> dict:
+    """Phase 14c — return a fresh ocr_suggestions dict that PRESERVES the
+    prior reflection history list and APPENDS a new entry capturing this
+    round's update.
+
+    Shape ({"semantics", "position", "most_common_feature", "extra_features"
+    + "reflections": [{...}, ...]}).
+
+    `previous` may be a dict (preferred), None, or a plain string from very
+    old data. `new_text` is whatever the optimizer's "new_ocr_suggestions"
+    returned (usually a string or dict).
+    """
+    import copy as _copy
+    base: dict = _copy.deepcopy(previous) if isinstance(previous, dict) else {}
+    if not isinstance(base, dict):
+        base = {}
+    # If the optimizer produced a fresh structured dict, take its
+    # top-level keys (but never let it clobber an existing reflections list)
+    if isinstance(new_text, dict):
+        for k, v in new_text.items():
+            if k == "reflections":
+                continue
+            base[k] = v
+        summary_text = (
+            new_text.get("semantics")
+            or new_text.get("most_common_feature")
+            or ""
+        )
+    else:
+        summary_text = new_text if isinstance(new_text, str) else ""
+
+    history = list(base.get("reflections") or [])
+    if summary_text or rationale:
+        history.append({
+            "round": round_no,
+            "kind": kind,
+            "rationale": (rationale or "")[:600],
+            "summary": (summary_text or "")[:600],
+        })
+    base["reflections"] = history
+    return base
+
+
 def clone_modules_to_new_version(
     db: Session,
     new_version: OcrPromptVersion,
@@ -216,6 +266,18 @@ def clone_modules_to_new_version(
             continue  # avoid duplicate keys from renaming collisions
         seen_keys.add(new_key)
 
+        # Phase 14c — preserve per-round reflection history on every module.
+        # When the optimizer hands us a fresh "new_ocr_suggestions" string,
+        # we still want the prior `reflections` list (Phase 8 round-0 entries
+        # + earlier rounds' entries) to survive. Wrap rather than replace.
+        merged_suggestions = _merge_round_suggestions(
+            previous=m.ocr_suggestions,
+            new_text=upd.get("ocr_suggestions"),
+            round_no=getattr(new_version, "produced_in_round", None),
+            kind="round",
+            rationale=upd.get("description") or "",
+        )
+
         new_modules.append(
             OcrModule(
                 id=uuid.uuid4(),
@@ -225,7 +287,7 @@ def clone_modules_to_new_version(
                 description=upd.get("description") or m.description,
                 json_path=m.json_path,
                 schema_fragment=m.schema_fragment,
-                ocr_suggestions=upd.get("ocr_suggestions") or m.ocr_suggestions,
+                ocr_suggestions=merged_suggestions,
                 ocr_prompt=upd.get("ocr_prompt") or m.ocr_prompt,
                 # ★ HARD COPY: skill_ids never come from updates dict — design §15.10.
                 # Optimizer's `updates` payload is filtered upstream to exclude skills,

@@ -212,6 +212,99 @@ def test_record_deleted_field_idempotent(db_session):
 # ── Phase 11b: optimizer filtering ────────────────────────────────────────────
 
 
+# ── Phase 13: required-fields endpoint ────────────────────────────────────────
+
+
+def test_required_fields_computes_union_minus_deleted(db_session):
+    """The required-fields endpoint subtracts deleted, applies renames,
+    and unions overlay.added_fields."""
+    from app.services import pending_edits_service
+    from app.api.v1.api_defs import get_required_fields
+
+    api_def, _d1, _d2 = _setup_api_def(db_session)
+
+    # No active OcrPromptVersion → fields come only from overlay
+    pending_edits_service.record_added_field(db_session, api_def.id, "extraField", "string")
+    pending_edits_service.record_added_field(db_session, api_def.id, "anotherOne", "string")
+    pending_edits_service.record_deleted_field(db_session, api_def.id, "anotherOne")
+
+    result = get_required_fields(api_def.id, db_session)
+    assert "extraField" in result["fields"]
+    assert "anotherOne" not in result["fields"]
+
+
+# ── Phase 14b: cross-doc context builder ──────────────────────────────────────
+
+
+def test_cross_doc_context_builder_collects_per_field_samples(db_session):
+    """_build_cross_doc_context_for_diffs gathers a value list per field
+    name across every confirmed sample of the ApiDef."""
+    from app.ocr_optimizer.service.customer_iteration import (
+        _build_cross_doc_context_for_diffs,
+    )
+
+    api_def, d1, d2 = _setup_api_def(db_session)
+    _add_annotation(db_session, d1.id, "invoiceNumber", "ABC123")
+    _add_annotation(db_session, d2.id, "invoiceNumber", "DEF456")
+
+    # Bind both docs as samples
+    api_def.config = {"sample_document_ids": [str(d1.id), str(d2.id)]}
+    db_session.commit()
+
+    diffs = [
+        {"kind": "edit", "module_key": "invoice_number",
+         "original_name": "invoiceNumber", "corrected_name": "invoiceNumber"},
+    ]
+    ctx = _build_cross_doc_context_for_diffs(db_session, api_def.id, diffs)
+    assert "invoiceNumber" in ctx
+    samples = ctx["invoiceNumber"]
+    assert len(samples) == 2
+    values = sorted(s["value"] for s in samples)
+    assert values == ["ABC123", "DEF456"]
+
+
+# ── Phase 14c: per-round suggestion merge ─────────────────────────────────────
+
+
+def test_merge_round_suggestions_appends_history():
+    """Each round's update is APPENDED to the reflections list, not replacing."""
+    from app.ocr_optimizer.service.persistence import _merge_round_suggestions
+
+    initial = {
+        "semantics": "v1",
+        "reflections": [
+            {"round": 0, "kind": "edit", "rationale": "fork-time", "summary": "—"},
+        ],
+    }
+    merged = _merge_round_suggestions(
+        previous=initial,
+        new_text={"semantics": "v2", "most_common_feature": "<digits>"},
+        round_no=1,
+        kind="round",
+        rationale="round-1 reflection",
+    )
+    assert merged["semantics"] == "v2"
+    # History preserved AND extended
+    assert len(merged["reflections"]) == 2
+    assert merged["reflections"][0]["round"] == 0
+    assert merged["reflections"][1]["round"] == 1
+    assert merged["reflections"][1]["rationale"] == "round-1 reflection"
+
+
+def test_merge_round_suggestions_handles_string_new_text():
+    """Optimizer may return plain string; helper still appends a history entry."""
+    from app.ocr_optimizer.service.persistence import _merge_round_suggestions
+
+    merged = _merge_round_suggestions(
+        previous=None,
+        new_text="去掉 W1 前缀，只保留 6 位数字",
+        round_no=2,
+        kind="round",
+        rationale="多张样本都显示前缀 W1 是 PO 头",
+    )
+    assert merged["reflections"][0]["summary"] == "去掉 W1 前缀，只保留 6 位数字"
+
+
 def test_execute_pipeline_filters_deleted_modules_and_diffs():
     """The Phase 11b filter logic must drop modules + diffs matching
     deleted_field_names, supporting both camelCase and snake_case forms.

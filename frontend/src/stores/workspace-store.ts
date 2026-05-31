@@ -183,6 +183,16 @@ interface WorkspaceStore {
    * (no meta, no reflection, no schema slot). */
   commitFieldDeletion: () => Promise<void>
 
+  /** Phase 13 — canonical field set the customer wants on every sample.
+   * Computed by the backend as:
+   *   union(active_modules' fields, overlay.added_fields)
+   *   - overlay.deleted_fields
+   *   - apply overlay.renames
+   * Used to render "本样本未识别字段" placeholder rows.
+   */
+  requiredFields: string[]
+  loadRequiredFields: () => Promise<void>
+
   setStep: (step: WorkspaceStep) => void
   setSelectedFieldId: (id: string | null) => void
   setHoveredFieldId: (id: string | null) => void
@@ -405,6 +415,8 @@ const initialState = {
   customizeJob: null as CustomizeJobStatus | null,
   // design v8 — pending_edits overlay; reloaded after every save
   pendingEdits: null as WorkspaceStore['pendingEdits'],
+  // Phase 13 — canonical field set (modules ∪ added − deleted, renames applied)
+  requiredFields: [] as string[],
   customizeSubmitting: false,
   // Per-annotation pan offset (extra translate on top of the focus zoom).
   // Updated while the user pans the document with the hand tool, replayed
@@ -621,6 +633,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
     // Refresh overlay so this doc's view shows other-files' adds/renames
     void get().loadPendingEdits()
+    void get().loadRequiredFields()
   },
 
   addPendingField: (name, value = '', fieldType = 'text') =>
@@ -766,6 +779,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
       // 1c. fetch pending_edits overlay (design v8) — async, non-blocking
       void get().loadPendingEdits()
+      // Phase 13 — fetch the canonical required-field set
+      void get().loadRequiredFields()
 
       // 2. fetch sample set
       const res = await apiClient.get(
@@ -1151,9 +1166,24 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         editingFieldId: null,
       }))
       await get().loadPendingEdits()
+      await get().loadRequiredFields()
       if (selectedDocId) await get().loadDocument(selectedDocId)
     } catch (err) {
       console.error('commitFieldDeletion failed', err)
+    }
+  },
+
+  loadRequiredFields: async () => {
+    const id = get().apiDefinitionId
+    if (!id) return
+    try {
+      const res = await apiClient.get(
+        `/api/v1/api-definitions/${id}/required-fields`,
+      )
+      const fields = (res.data?.fields || []) as string[]
+      set({ requiredFields: fields })
+    } catch {
+      // non-fatal
     }
   },
 

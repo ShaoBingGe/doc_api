@@ -98,6 +98,75 @@ def _update_job(db: Session, job: CustomizeJob, **kwargs) -> None:
     db.refresh(job)
 
 
+def _build_cross_doc_context_for_diffs(
+    db: Session,
+    api_def_id: uuid.UUID,
+    diffs: list[dict],
+) -> dict[str, list[dict]]:
+    """Phase 14b — collect each diff's field-name across every confirmed
+    sample of the ApiDef.
+
+    For each diff (edit/add/rename), produce a list of {doc_id, doc_filename,
+    value, is_corrected, bbox} for every annotation matching either the
+    original_name or corrected_name. The reflection agent uses this to
+    compare values/formatting across the 3 invoices.
+    """
+    from app.models.api_definition import ApiDefinition as _ApiDef
+    from app.models.annotation import Annotation as _Annotation
+    from app.models.document import Document as _Document
+
+    api_def = db.get(_ApiDef, api_def_id)
+    if not api_def:
+        return {}
+    sample_ids = (api_def.config or {}).get("sample_document_ids") or []
+    if not sample_ids:
+        return {}
+
+    # Collect the field names we care about (both old and new forms)
+    field_names: set[str] = set()
+    for d in diffs:
+        for k in ("original_name", "corrected_name"):
+            v = (d.get(k) or "").strip()
+            if v and "[" not in v and "." not in v:
+                field_names.add(v)
+    if not field_names:
+        return {}
+
+    # Resolve docs once
+    doc_uuids: list[uuid.UUID] = []
+    for s in sample_ids:
+        try:
+            doc_uuids.append(uuid.UUID(str(s)))
+        except Exception:  # noqa: BLE001
+            continue
+    if not doc_uuids:
+        return {}
+
+    docs = db.query(_Document).filter(_Document.id.in_(doc_uuids)).all()
+    doc_by_id = {d.id: d for d in docs}
+
+    out: dict[str, list[dict]] = {f: [] for f in field_names}
+    rows = (
+        db.query(_Annotation)
+        .filter(
+            _Annotation.document_id.in_(doc_uuids),
+            _Annotation.field_name.in_(field_names),
+        )
+        .all()
+    )
+    for ann in rows:
+        doc = doc_by_id.get(ann.document_id)
+        out[ann.field_name].append({
+            "doc_id": str(ann.document_id),
+            "doc_filename": (doc.filename if doc else None) or str(ann.document_id),
+            "value": ann.field_value,
+            "is_corrected": bool(ann.is_corrected),
+            "bbox": ann.bounding_box,
+        })
+    # Drop fields with no samples to keep the prompt clean
+    return {k: v for k, v in out.items() if v}
+
+
 def _mirror_source_samples_to_fork(
     db: Session,
     *,
@@ -520,6 +589,33 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
     if not src_api:
         raise NotFoundError(f"ApiDefinition {src_id} not found")
 
+    # ── Phase 14a: sample gate FIRST ──────────────────────────────────────
+    # Reflection burns LLM credits; we should not run it until we have all
+    # the samples it can compare against. Per user spec: only after 3
+    # already-confirmed samples does the reflection agent start.
+    # We check the SOURCE ApiDef's count (single-workspace UX from Phase 12).
+    confirmed_src, total_src = count_confirmed_samples(db, src_id)
+    fork_done = job.new_api_definition_id is not None
+    if not fork_done and confirmed_src < MIN_SAMPLES_FOR_ITERATION:
+        n_edit = sum(1 for d in diffs if d.get("kind") == "edit")
+        n_add = sum(1 for d in diffs if d.get("kind") == "add")
+        msg = (
+            f"已记录 {n_edit} 个修改 + {n_add} 个新增字段。等待 "
+            f"{MIN_SAMPLES_FOR_ITERATION - confirmed_src} 个已审视样本以启动反思 agent。"
+            f"（当前 {confirmed_src}/{MIN_SAMPLES_FOR_ITERATION}，共 {total_src} 个样本）"
+        )
+        _update_job(
+            db, job,
+            status=CustomizeJobStatus.waiting_for_samples.value,
+            phase_detail=msg,
+        )
+        logger.info(
+            "Job %s parked in waiting_for_samples PRE-reflection "
+            "(source confirmed %d/%d, %d total)",
+            job.id, confirmed_src, MIN_SAMPLES_FOR_ITERATION, total_src,
+        )
+        return
+
     # ── Defensive source-version pick ─────────────────────────────────────
     # If the source's currently-active version has been mutated down to a
     # near-empty module set (e.g. a previous run hit the legacy meta bug),
@@ -633,12 +729,16 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
     # Country code (e.g. "MY") drives the per-country reflection agents.
     # Falls back to None for ApiDefs that didn't come from a country template.
     src_country = (src_api.config or {}).get("source_country") or None
+    # Phase 14b — build cross-doc context so the agent sees how each
+    # edited / added field actually appears on every confirmed sample.
+    cross_doc_context = _build_cross_doc_context_for_diffs(db, src_id, diffs)
     reflections = reflect_on_diffs(
         diffs,
         modules_by_key=modules_by_key,
         processor_spec=src_api.processor_type or "gemini",
         model_name=src_api.model_name,
         country=src_country,
+        cross_doc_context=cross_doc_context,
     )
     reflection_summary = [
         {
