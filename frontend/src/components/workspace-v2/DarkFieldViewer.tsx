@@ -21,6 +21,7 @@ import {
 import { cn } from '../../lib/utils'
 import { useWorkspaceStore, type Annotation, type FieldEditDraft, type ProcessingResult } from '../../stores/workspace-store'
 import { toast } from '../../lib/toast'
+import apiClient from '../../lib/api-client'
 
 const FORMAT_OPTIONS = ['string', 'number', 'date', 'boolean', 'array'] as const
 
@@ -999,12 +1000,35 @@ function WaitingForSamplesBanner({
             新 api_code: <code className="bg-black/40 px-1.5 py-0.5 rounded text-amber-200">{customizeJob.newApiCode}</code>
           </div>
         )}
-        <button
-          onClick={() => navigate(`/workspace/api/${customizeJob.newApiDefinitionId}`)}
-          className="w-full px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-sm rounded transition-colors"
-        >
-          前往新模板工作区上传样本 →
-        </button>
+        <div className="text-[11px] text-amber-100/60 leading-relaxed">
+          下方字段列表中的"已重命名 / 已新增 / 已保存修改"标识保留为本次编辑的历史记录。
+          切换到新模板工作区后，新模板的字段已固化新名。
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={() => navigate(`/workspace/api/${customizeJob.newApiDefinitionId}`)}
+            className="flex-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-sm rounded transition-colors"
+          >
+            前往新模板工作区上传样本 →
+          </button>
+          <button
+            onClick={async () => {
+              if (!apiDefinitionId) return
+              if (!confirm('清理后本工作区将不再显示"已重命名/已新增/已修改"标识。继续？')) return
+              try {
+                await apiClient.delete(`/api/v1/api-definitions/${apiDefinitionId}/pending-edits`)
+                await useWorkspaceStore.getState().loadPendingEdits()
+                toast.success('已清理本工作区的变更标识')
+              } catch {
+                toast.error('清理失败')
+              }
+            }}
+            className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/15 text-gray-300 text-xs rounded transition-colors"
+            title="清空本工作区的变更标识 overlay（不影响新模板）"
+          >
+            清理变更标识
+          </button>
+        </div>
       </div>
     )
   }

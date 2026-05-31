@@ -526,15 +526,30 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
                 new_api_definition_id=new_api.id,
                 new_api_code=new_api.api_code)
 
-    # Phase 5 (design v8): clear the source ApiDef's pending_edits overlay.
-    # The edits have been persisted into the fork's OcrModule rows; the
-    # overlay is a transient buffer and should not bleed into future edits.
-    try:
-        from app.services import pending_edits_service
-        pending_edits_service.clear_overlay(db, src_api.id)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to clear pending_edits on src ApiDef %s: %s",
-                       src_api.id, exc)
+    # Phase 5 revisited (design v8 / June '26 UX fix):
+    #
+    # Original design (per user decision D) was to clear the source ApiDef's
+    # pending_edits overlay on fork — rationale: "edits have been persisted
+    # into the fork's OcrModule rows; overlay is a transient buffer".
+    #
+    # But the user typically STAYS on the source workspace when reflection
+    # completes (the URL doesn't auto-redirect to the fork). Clearing wiped
+    # every badge they were looking at, and they reported it as "the page
+    # lost all my markers after reflection ended". So the overlay now
+    # **survives until the user explicitly clears it** via DELETE
+    # /api-definitions/{id}/pending-edits (or the workspace "清理变更标识"
+    # button).
+    #
+    # Trade-off: if the user uploads a fresh sample to the SOURCE ApiDef
+    # after fork, _augment_with_overlay will still inject the lingering
+    # rename map into the OCR prompt. That's an acceptable behavior since
+    # subsequent samples on the source likely should follow the same
+    # renaming convention anyway, and the explicit "clear" gives the user
+    # a clean slate when they want one.
+    logger.info(
+        "Fork created for source ApiDef %s — overlay preserved (user-cleared)",
+        src_api.id,
+    )
 
     # ── Phase 3: sample gate ──────────────────────────────────────────────
     # We require at least MIN_SAMPLES_FOR_ITERATION samples whose annotations
