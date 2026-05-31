@@ -966,6 +966,58 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       toast.info('没有可保存的字段修改')
       return null
     }
+
+    // Phase 23.1 — FLUSH all in-memory drafts to backend pending_edits
+    // overlay BEFORE creating the customize job. The fork step (Phase
+    // 23.2) reads renames/added/deleted from overlay as the SINGLE
+    // source of truth; if drafts haven't been committed via the
+    // "保存到模板（立即生效）" path, this flush guarantees the overlay
+    // is in sync at customize time.
+    const flushed: Array<Promise<unknown>> = []
+    for (const d of editDiffs) {
+      const oldN = (d.originalName || '').trim()
+      const newN = (d.correctedName || '').trim()
+      const valChanged = String(d.originalValue ?? '') !== d.correctedValue
+      // Rename branch
+      if (oldN && newN && oldN !== newN) {
+        flushed.push(apiClient.post(
+          `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
+          { old_name: oldN, new_name: newN },
+        ))
+      }
+      // Value modification branch (per-doc)
+      const docIdForMod = d.documentId ?? get().selectedDocId
+      if (valChanged && docIdForMod) {
+        flushed.push(apiClient.post(
+          `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
+          {
+            modification: {
+              document_id: docIdForMod,
+              field_name: newN || oldN,
+              value: d.correctedValue,
+            },
+          },
+        ))
+      }
+    }
+    for (const d of addDiffs) {
+      const newN = (d.correctedName || '').trim()
+      if (!newN) continue
+      flushed.push(apiClient.post(
+        `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
+        {
+          new_name: newN,
+          field_type: d.correctedFormat || 'string',
+          added_value: d.correctedValue || null,
+        },
+      ))
+    }
+    try {
+      await Promise.all(flushed)
+      await get().loadPendingEdits()
+    } catch (err) {
+      console.warn('Phase 23.1 draft-flush had errors, proceeding anyway', err)
+    }
     const payload = {
       diffs: [...editDiffs, ...addDiffs].map((d) => ({
         kind: d.kind,

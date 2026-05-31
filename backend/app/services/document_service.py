@@ -601,6 +601,35 @@ def _pad_with_required_keys(
     return structured_data
 
 
+def _rewrite_structured_data_keys(
+    structured_data: list[dict] | dict, renames: dict[str, str],
+) -> list[dict] | dict:
+    """Phase 23.3 — rewrite TOP-LEVEL keys of structured_data according
+    to renames {old: new}. Used post-customize to bring every doc's
+    cached OCR output in line with the new module key names.
+
+    Idempotent: applying twice is a no-op. Top-level only — nested
+    objects (e.g. array items in detailOfGoodsOrServices) are NOT
+    touched, since overlay renames model top-level fields.
+    """
+    if not renames:
+        return structured_data
+
+    def _rewrite_one(rec: dict) -> dict:
+        if not isinstance(rec, dict):
+            return rec
+        out: dict = {}
+        for k, v in rec.items():
+            out[renames.get(k, k)] = v
+        return out
+
+    if isinstance(structured_data, list):
+        return [_rewrite_one(r) for r in structured_data]
+    if isinstance(structured_data, dict):
+        return _rewrite_one(structured_data)
+    return structured_data
+
+
 def _infer_schema(data: dict) -> dict:
     """
     Simple JSON Schema inference from a structured_data dict.

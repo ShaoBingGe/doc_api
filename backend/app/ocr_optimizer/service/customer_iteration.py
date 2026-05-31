@@ -200,6 +200,49 @@ def _build_cross_doc_context_for_diffs(
 # - the auto-resume branch in maybe_auto_resume_for_api (removed in C5).
 
 
+def _rewrite_all_docs_structured_data(
+    db: Session,
+    api_def_id: uuid.UUID,
+    renames: dict[str, str],
+) -> int:
+    """Phase 23.3 post-customize sweep.
+
+    For every ProcessingResult on every Document bound to api_def_id,
+    rewrite top-level structured_data keys per the renames map. Used
+    immediately after _fork_api_definition so the workspace's cached
+    OCR outputs match the new module key names — eliminating the
+    "JSON shows old name / module list shows new name" drift.
+
+    Returns the number of ProcessingResult rows touched.
+    """
+    if not renames:
+        return 0
+    from app.models.document import Document as _Document, ProcessingResult as _PR
+    from app.services.document_service import _rewrite_structured_data_keys
+
+    doc_ids = [d.id for d in db.query(_Document.id)
+               .filter(_Document.api_definition_id == api_def_id).all()]
+    if not doc_ids:
+        return 0
+
+    rows = db.query(_PR).filter(_PR.document_id.in_(doc_ids)).all()
+    touched = 0
+    for pr in rows:
+        if not pr.structured_data:
+            continue
+        new_sd = _rewrite_structured_data_keys(pr.structured_data, renames)
+        if new_sd != pr.structured_data:
+            pr.structured_data = new_sd
+            touched += 1
+    db.commit()
+    logger.info(
+        "Phase 23.3: rewrote structured_data on %d ProcessingResult rows "
+        "across %d docs of ApiDef %s (renames=%d)",
+        touched, len(doc_ids), api_def_id, len(renames),
+    )
+    return touched
+
+
 def find_waiting_job_for_api(db: Session, api_definition_id: uuid.UUID) -> CustomizeJob | None:
     """Return the most-recent `waiting_for_samples` job whose new ApiDef
     OR source ApiDef = api_definition_id.
@@ -821,6 +864,20 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
                 new_api_definition_id=new_api.id,
                 new_api_code=new_api.api_code)
 
+    # Phase 23.3 — sweep all docs' cached structured_data so the
+    # workspace's JSON view matches the new module key names. Without
+    # this, OCR results captured pre-rename keep showing
+    # "billFromName" while the new active modules emit "salerCompany".
+    try:
+        from app.services import pending_edits_service as _pes_sweep
+        _post_overlay = _pes_sweep.get_overlay(db, src_api.id)
+        _sweep_renames = dict(_post_overlay.get("renames") or {})
+        if _sweep_renames:
+            n = _rewrite_all_docs_structured_data(db, src_api.id, _sweep_renames)
+            logger.info("Phase 23.3 sweep touched %d ProcessingResult rows", n)
+    except Exception as _exc:  # noqa: BLE001
+        logger.warning("Phase 23.3 structured_data sweep failed: %s", _exc)
+
     # Phase 19 — no doc rebinding. new_api IS src_api; iteration's
     # api_definition_id == source.id; ProcessingResults land on the
     # source workspace's docs directly. The customer's URL never
@@ -1142,6 +1199,97 @@ def _fork_api_definition(
     # for Phase-7 promoted dicts that aren't members of the original list.
     edits_by_key: dict[str, dict] = {}
     add_specs: list[tuple[dict, str | None]] = []
+
+    # ── Phase 23.2 defense-in-depth: APPLY overlay.deleted_fields to
+    # src_modules right here, in addition to the same filter in
+    # _execute_pipeline. This makes _fork_api_definition robust when
+    # invoked directly (tests, future codepaths) and guarantees deleted
+    # fields never sneak into the new version.
+    try:
+        from app.services import pending_edits_service as _pes_del
+        _fork_deleted = set(
+            (_pes_del.get_overlay(db, src_api.id).get("deleted_fields") or [])
+        )
+    except Exception:  # noqa: BLE001
+        _fork_deleted = set()
+    if _fork_deleted:
+        _fork_deleted_snake = {_snake(f) for f in _fork_deleted if f}
+        _fork_deleted_all = _fork_deleted | _fork_deleted_snake
+        src_modules = [
+            m for m in src_modules
+            if (m.module_key not in _fork_deleted_all)
+            and ((m.json_path or "").split(".")[-1]
+                 .replace("[*]", "").replace("[", "").replace("]", "").strip()
+                 not in _fork_deleted_all)
+        ]
+
+    # ── Phase 23.2: SEED edits_by_key + add_specs from pending_edits ────
+    # The overlay is the single source of truth for the customer's
+    # intended field set (renames / adds / deletes). Diffs are still
+    # consumed below for reflection inputs + value examples, but the
+    # MODULE STRUCTURE is now driven entirely by the overlay — so a
+    # rename committed via "保存到模板（立即生效）" lands in the new
+    # version's modules even when the customize-submit codepath sent
+    # a diff with corrected_name == original_name (or no diff at all).
+    try:
+        from app.services import pending_edits_service as _pes_fork
+        _fork_overlay = _pes_fork.get_overlay(db, src_api.id)
+    except Exception:  # noqa: BLE001
+        _fork_overlay = {}
+    _overlay_renames: dict[str, str] = dict(_fork_overlay.get("renames") or {})
+    _overlay_added: list[dict] = list(_fork_overlay.get("added_fields") or [])
+
+    # (a) Seed RENAMES: for each {oldName: newName} in overlay, find the
+    # source module whose json_path leaf matches oldName and stash a
+    # rename patch on its module_key.
+    if _overlay_renames:
+        for src_m in src_modules:
+            jp = src_m.json_path or ""
+            leaf = jp.split(".")[-1].replace("[*]", "").replace("[", "").replace("]", "").strip()
+            if not leaf:
+                continue
+            new_name = _overlay_renames.get(leaf)
+            if not new_name or new_name == leaf:
+                continue
+            existing = edits_by_key.get(src_m.module_key, {})
+            existing.setdefault("__rename_old", leaf)
+            existing.setdefault("__rename_new", new_name)
+            edits_by_key[src_m.module_key] = existing
+            logger.info(
+                "Phase 23.2: overlay seeded rename %r → %r on module %s",
+                leaf, new_name, src_m.module_key,
+            )
+
+    # (b) Seed ADDS: for each overlay.added_fields entry not already
+    # represented as a real source module, synthesize an add spec.
+    src_leafs = {
+        (m.json_path or "").split(".")[-1]
+        .replace("[*]", "").replace("[", "").replace("]", "").strip()
+        for m in src_modules
+    }
+    # Also exclude renames' new-names (they'll exist after rename)
+    src_leafs |= set(_overlay_renames.values())
+    _added_already_in_specs: set[str] = set()
+    for f in _overlay_added:
+        name = (f or {}).get("field_name") or ""
+        if not name or name in src_leafs:
+            continue
+        # Build a synth diff in the same shape genuine kind=add diffs use
+        synth = {
+            "kind": "add",
+            "module_key": _snake(name),
+            "original_name": name,
+            "corrected_name": name,
+            "corrected_format": (f.get("type") or "string"),
+        }
+        # Reflection for adds is keyed by module_key in the reflector
+        add_specs.append((synth, synth["module_key"]))
+        _added_already_in_specs.add(name)
+        logger.info(
+            "Phase 23.2: overlay seeded add %r (module_key=%s)",
+            name, synth["module_key"],
+        )
+
     for orig_idx, d in enumerate(diffs):
         if d.get("kind") == "edit":
             mk = d.get("module_key")
@@ -1215,6 +1363,13 @@ def _fork_api_definition(
         elif d.get("kind") == "add":
             # Genuine add — reflector keyed by module_key if present, else _new_{idx}
             rk = d.get("module_key") or f"_new_{orig_idx}"
+            # Phase 23.2 dedup: if overlay already seeded this name as an add,
+            # skip — overlay version wins (it has the customer's most recent
+            # description / type).
+            on = (d.get("original_name") or "").strip()
+            cn = (d.get("corrected_name") or "").strip()
+            if (on in _added_already_in_specs) or (cn in _added_already_in_specs):
+                continue
             add_specs.append((d, rk))
 
     new_modules: list[OcrModule] = []

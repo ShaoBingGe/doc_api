@@ -1778,9 +1778,37 @@ function FieldsView() {
     () => new Set(pendingEdits?.deleted_fields || []),
     [pendingEdits],
   )
+  // Phase 23.4 — last-mile rename safety-net: even after the backend's
+  // Phase 23.3 sweep rewrites structured_data, in-flight uncommitted
+  // renames (FieldEditPanel drafts not yet pushed to overlay) need the
+  // workspace to display the NEW name on the current doc too. We apply
+  // both committed (overlay.renames) and draft renames at render time.
+  // Forward map {oldName: newName} — overlay wins on conflict.
+  const forwardRenameMap = useMemo(() => {
+    const m: Record<string, string> = { ...(pendingEdits?.renames || {}) }
+    for (const [oldN, newN] of Object.entries(draftRenameMap)) {
+      if (!m[oldN]) m[oldN] = newN
+    }
+    return m
+  }, [pendingEdits, draftRenameMap])
   const visibleAnnotations = useMemo(
-    () => annotations.filter((a) => !deletedFieldsSet.has(a.label)),
-    [annotations, deletedFieldsSet],
+    () => annotations
+      .filter((a) => !deletedFieldsSet.has(a.label))
+      // Filter out the OLD-named row when the rename's NEW-named row
+      // is also present (post-23.3 docs may have both during a brief
+      // window if structured_data caching races; show only the latest).
+      .filter((a) => {
+        const newN = forwardRenameMap[a.label]
+        if (!newN) return true
+        // a is an OLD-named row. Hide if a NEW-named row also exists.
+        return !annotations.some((b) => b.label === newN)
+      })
+      .map((a) => {
+        // Apply rename to displayed label
+        const newN = forwardRenameMap[a.label]
+        return newN ? { ...a, label: newN, _renamedFrom: a.label } : a
+      }),
+    [annotations, deletedFieldsSet, forwardRenameMap],
   )
   const { scalars, arrays } = useMemo(
     () => groupAnnotations(visibleAnnotations, resultMap),
