@@ -185,10 +185,14 @@ interface WorkspaceStore {
 
   // ── Document viewer pan tool ───────────────────────────────────────────
   fieldPanOffsets: Record<string, { dx: number; dy: number }>
+  /** Pan offset applied when no field is focused (the user just drags
+   * the document around at native zoom). Persists across selections. */
+  globalPanOffset: { dx: number; dy: number }
   panMode: boolean
   setPanMode: (on: boolean) => void
   setFieldPanOffset: (annotationId: string, offset: { dx: number; dy: number }) => void
   clearFieldPanOffset: (annotationId: string) => void
+  setGlobalPanOffset: (offset: { dx: number; dy: number }) => void
 
   // ── Sample GT review ───────────────────────────────────────────────────
   samplesReview: SamplesReviewStatus | null
@@ -357,6 +361,9 @@ const initialState = {
   // Updated while the user pans the document with the hand tool, replayed
   // next time that field is focused.
   fieldPanOffsets: {} as Record<string, { dx: number; dy: number }>,
+  // Offset applied when no field is focused — lets the user shift the
+  // document around at native zoom for general inspection.
+  globalPanOffset: { dx: 0, dy: 0 } as { dx: number; dy: number },
   // Hand tool active state (drives cursor + drag-to-pan in the doc viewer).
   panMode: false as boolean,
   // GT review state for current ApiDef's sample set
@@ -969,6 +976,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       delete next[annotationId]
       return { fieldPanOffsets: next }
     }),
+
+  setGlobalPanOffset: (offset) => set({ globalPanOffset: offset }),
 
   // ── Sample GT review ────────────────────────────────────────────────────
   loadSamplesReview: async () => {

@@ -60,18 +60,21 @@ function AnchorLayer({ annotations, results, selectedFieldId, hoveredFieldId, on
             onMouseEnter={() => onHover(ann.id)}
             onMouseLeave={() => onHover(null)}
           >
-            {/* Dot */}
+            {/* Dot — transparent light-yellow when active so the
+                underlying text stays readable. Solid confidence color
+                when idle (small, unobtrusive). */}
             <div
               className={cn(
                 'rounded-full cursor-pointer transition-all duration-150',
                 active
-                  ? 'w-3 h-3 bg-purple-500 ring-2 ring-purple-300/70 shadow-[0_0_8px_rgba(168,85,247,0.7)]'
+                  ? 'w-3 h-3 bg-yellow-300/30 ring-2 ring-yellow-200/60'
                   : `w-2 h-2 ${dotColor} hover:scale-150`,
               )}
             />
-            {/* Label tag — only visible when active (selected or hovered) */}
+            {/* Label tag — semi-transparent yellow background, dark text;
+                offset to avoid covering text immediately under the dot. */}
             {active && (
-              <div className="absolute left-1/2 top-4 -translate-x-1/2 px-1.5 py-0.5 text-[9px] font-semibold text-white leading-none rounded bg-purple-500 whitespace-nowrap max-w-[140px] overflow-hidden text-ellipsis shadow-lg">
+              <div className="absolute left-1/2 top-4 -translate-x-1/2 px-1.5 py-0.5 text-[9px] font-semibold text-yellow-50 leading-none rounded bg-yellow-400/60 whitespace-nowrap max-w-[140px] overflow-hidden text-ellipsis shadow">
                 {ann.label}
               </div>
             )}
@@ -167,6 +170,8 @@ export default function DarkDocumentViewer() {
     samplesReview,
     confirmSampleGT,
     retrySampleOCR,
+    globalPanOffset,
+    setGlobalPanOffset,
   } = useWorkspaceStore()
 
   const isCurrentSampleConfirmed =
@@ -273,35 +278,42 @@ export default function DarkDocumentViewer() {
   const drawingAnn = drawingFieldId ? annotations.find((a) => a.id === drawingFieldId) : null
   const isDrawing = !!drawingAnn
 
-  // ── Pan offset (extra translate on top of focus zoom) ────────────────
-  // Per-field offset stored in the store; mutated by drag-to-pan. The
-  // offset is applied AFTER the focus translate, so the user's adjustments
-  // stay anchored to that field's center.
+  // ── Pan offset (works WITH or WITHOUT a focused field) ──────────────
+  // When a field is focused, drag updates that field's per-field offset
+  // (persisted in fieldPanOffsets). With no field focused, drag updates
+  // globalPanOffset and the doc shifts at native zoom.
   const activePanOffset =
     selectedFieldId && fieldPanOffsets[selectedFieldId]
       ? fieldPanOffsets[selectedFieldId]
-      : { dx: 0, dy: 0 }
+      : selectedFieldId
+      ? { dx: 0, dy: 0 }
+      : globalPanOffset
   // Live drag delta during an in-progress pan gesture (not yet committed).
   const [liveDrag, setLiveDrag] = useState<{ dx: number; dy: number } | null>(null)
   const dragStartRef = useRef<{ x: number; y: number; baseDx: number; baseDy: number } | null>(null)
 
   const focusTransform = (() => {
-    if (!focusBbox) return 'none'
     const { Lx, Ly, Dw, Dh } = docMetrics
     const { Vw, Vh } = viewMetrics
+    const panDx = (liveDrag?.dx ?? activePanOffset.dx)
+    const panDy = (liveDrag?.dy ?? activePanOffset.dy)
+    // No field selected: just apply the pan (no scale).
+    if (!focusBbox) {
+      if (panDx === 0 && panDy === 0) return 'none'
+      return `translate(${panDx}px, ${panDy}px)`
+    }
     if (Dw === 0 || Vw === 0) return 'none'
     const bcx = ((focusBbox.x + focusBbox.width / 2) / 100) * Dw
     const bcy = ((focusBbox.y + focusBbox.height / 2) / 100) * Dh
     const tx = Vw / 2 - Lx - FOCUS_SCALE * bcx
     const ty = Vh / 2 - Ly - FOCUS_SCALE * bcy
-    const panDx = (liveDrag?.dx ?? activePanOffset.dx)
-    const panDy = (liveDrag?.dy ?? activePanOffset.dy)
     return `translate(${tx + panDx}px, ${ty + panDy}px) scale(${FOCUS_SCALE})`
   })()
 
   // ── Drag-to-pan handlers ─────────────────────────────────────────────
+  // No longer gated on focus — pan works any time the Hand tool is on.
   const handlePanMouseDown = (e: React.MouseEvent) => {
-    if (!panMode || !focusBbox || !selectedFieldId) return
+    if (!panMode) return
     e.preventDefault()
     dragStartRef.current = {
       x: e.clientX,
@@ -320,8 +332,13 @@ export default function DarkDocumentViewer() {
       setLiveDrag({ dx: baseDx + (e.clientX - x), dy: baseDy + (e.clientY - y) })
     }
     const onUp = () => {
-      if (liveDrag && selectedFieldId) {
-        setFieldPanOffset(selectedFieldId, liveDrag)
+      if (liveDrag) {
+        // Persist to per-field offset if focused, else to globalPanOffset
+        if (selectedFieldId) {
+          setFieldPanOffset(selectedFieldId, liveDrag)
+        } else {
+          setGlobalPanOffset(liveDrag)
+        }
       }
       dragStartRef.current = null
       setLiveDrag(null)
@@ -332,10 +349,11 @@ export default function DarkDocumentViewer() {
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
     }
-  }, [liveDrag, selectedFieldId, setFieldPanOffset])
+  }, [liveDrag, selectedFieldId, setFieldPanOffset, setGlobalPanOffset])
 
   const resetPan = () => {
     if (selectedFieldId) clearFieldPanOffset(selectedFieldId)
+    else setGlobalPanOffset({ dx: 0, dy: 0 })
   }
 
   return (
@@ -378,21 +396,17 @@ export default function DarkDocumentViewer() {
               />
             </div>
           )}
-          {/* Pan tool — only meaningful when a field is focused (i.e. zoomed in). */}
+          {/* Pan tool — always available, with or without a focused field.
+              Without focus: drag shifts the doc at native zoom (globalPanOffset).
+              With focus: drag adjusts the per-field offset on top of the
+              focus zoom, persisted in fieldPanOffsets. */}
           <div className="flex items-center gap-2 border-l border-white/10 pl-4">
             <button
               onClick={() => setPanMode(!panMode)}
-              disabled={!selectedFieldId}
-              title={
-                !selectedFieldId
-                  ? '先点选一个字段再使用抓手'
-                  : panMode ? '关闭抓手（再次点击退出）' : '开启抓手 — 拖动图像调整可视区域'
-              }
+              title={panMode ? '关闭抓手（再次点击退出）' : '开启抓手 — 拖动图像调整可视区域'}
               className={cn(
                 'p-1 rounded transition-colors',
-                !selectedFieldId
-                  ? 'text-gray-600 cursor-not-allowed'
-                  : panMode
+                panMode
                   ? 'bg-purple-500/30 text-purple-200'
                   : 'hover:bg-white/10 text-gray-400 hover:text-white',
               )}
@@ -401,11 +415,15 @@ export default function DarkDocumentViewer() {
             </button>
             <button
               onClick={resetPan}
-              disabled={!selectedFieldId || (activePanOffset.dx === 0 && activePanOffset.dy === 0)}
-              title="重置该字段的可视位置"
+              disabled={activePanOffset.dx === 0 && activePanOffset.dy === 0}
+              title={
+                selectedFieldId
+                  ? '重置该字段的可视位置'
+                  : '重置文档的可视位置'
+              }
               className={cn(
                 'p-1 rounded transition-colors',
-                !selectedFieldId || (activePanOffset.dx === 0 && activePanOffset.dy === 0)
+                activePanOffset.dx === 0 && activePanOffset.dy === 0
                   ? 'text-gray-600 cursor-not-allowed'
                   : 'hover:bg-white/10 text-gray-400 hover:text-white',
               )}
@@ -478,7 +496,7 @@ export default function DarkDocumentViewer() {
         className={cn(
           'flex-1 overflow-hidden p-4 flex items-center justify-center bg-[#1e1e24] relative',
           isDrawing && 'z-30',
-          panMode && selectedFieldId && (liveDrag ? 'cursor-grabbing' : 'cursor-grab'),
+          panMode && (liveDrag ? 'cursor-grabbing' : 'cursor-grab'),
         )}
         onMouseDown={handlePanMouseDown}
         onClick={(e) => {
