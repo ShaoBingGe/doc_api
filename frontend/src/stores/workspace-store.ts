@@ -170,12 +170,18 @@ interface WorkspaceStore {
     }>
     renames: Record<string, string>           // old → new
     modifications: Record<string, Record<string, unknown>>  // docId → {field: value}
+    deleted_fields: string[]                  // Phase 11a
   } | null
   loadPendingEdits: () => Promise<void>
   /** Phase 10 — commit the currently-open FieldEditorPanel draft to the
    * backend pending_edits overlay so badges + cascade rename fire even
    * BEFORE the customize submit. */
   commitCurrentDraft: () => Promise<void>
+  /** Phase 11c — delete the currently-edited field. Cascades across all
+   * docs of the ApiDef, removes from overlay's added_fields/modifications,
+   * and excludes the field from the next customize fork's modules entirely
+   * (no meta, no reflection, no schema slot). */
+  commitFieldDeletion: () => Promise<void>
 
   setStep: (step: WorkspaceStep) => void
   setSelectedFieldId: (id: string | null) => void
@@ -1108,6 +1114,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         }>
         renames?: Record<string, string>
         modifications?: Record<string, Record<string, unknown>>
+        deleted_fields?: string[]
       }
       set({
         pendingEdits: {
@@ -1120,10 +1127,33 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           })),
           renames: d.renames || {},
           modifications: d.modifications || {},
+          deleted_fields: d.deleted_fields || [],
         },
       })
     } catch {
       // non-fatal
+    }
+  },
+
+  commitFieldDeletion: async () => {
+    const { editingFieldId, annotations, apiDefinitionId, selectedDocId } = get()
+    if (!editingFieldId || !apiDefinitionId) return
+    const ann = annotations.find((a) => a.id === editingFieldId)
+    if (!ann) return
+    try {
+      await apiClient.post(
+        `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
+        { deleted: true, field_name: ann.label },
+      )
+      // Drop locally + close the editor pane
+      set((s) => ({
+        annotations: s.annotations.filter((a) => a.id !== editingFieldId),
+        editingFieldId: null,
+      }))
+      await get().loadPendingEdits()
+      if (selectedDocId) await get().loadDocument(selectedDocId)
+    } catch (err) {
+      console.error('commitFieldDeletion failed', err)
     }
   },
 

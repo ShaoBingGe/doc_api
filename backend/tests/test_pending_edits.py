@@ -158,7 +158,107 @@ def test_clear_overlay(db_session):
     pending_edits_service.record_added_field(db_session, api_def.id, "extra", "string")
     pending_edits_service.clear_overlay(db_session, api_def.id)
     overlay = pending_edits_service.get_overlay(db_session, api_def.id)
-    assert overlay == {"added_fields": [], "renames": {}, "modifications": {}}
+    assert overlay == {
+        "added_fields": [], "renames": {}, "modifications": {},
+        "deleted_fields": [],
+    }
+
+
+# ── Phase 11a: deleted_fields ─────────────────────────────────────────────────
+
+
+def test_record_deleted_field_cascade(db_session):
+    """Deleting a field cascades to annotation rows AND cleans overlay."""
+    from app.services import pending_edits_service
+    from app.models.annotation import Annotation
+
+    api_def, d1, d2 = _setup_api_def(db_session)
+    _add_annotation(db_session, d1.id, "invoiceNumber", "A123")
+    _add_annotation(db_session, d2.id, "invoiceNumber", "B456")
+    # Also seed an added_fields entry + a modification — both should be wiped
+    pending_edits_service.record_added_field(
+        db_session, api_def.id, "invoiceNumber", "string",
+    )
+    pending_edits_service.record_modification(
+        db_session, api_def.id, d1.id, "invoiceNumber", "X",
+    )
+
+    overlay, n = pending_edits_service.record_deleted_field(
+        db_session, api_def.id, "invoiceNumber",
+    )
+    assert n == 2  # both docs' annotations gone
+    assert "invoiceNumber" in overlay["deleted_fields"]
+    assert overlay["added_fields"] == []      # add+delete cancels
+    assert overlay["modifications"] == {}     # value mod dropped
+
+    # Verify the actual annotation rows are gone
+    after = db_session.query(Annotation).filter(
+        Annotation.document_id.in_([d1.id, d2.id])
+    ).count()
+    assert after == 0
+
+
+def test_record_deleted_field_idempotent(db_session):
+    """Deleting twice doesn't duplicate the entry."""
+    from app.services import pending_edits_service
+    api_def, _d1, _d2 = _setup_api_def(db_session)
+    pending_edits_service.record_deleted_field(db_session, api_def.id, "foo")
+    overlay, _ = pending_edits_service.record_deleted_field(
+        db_session, api_def.id, "foo",
+    )
+    assert overlay["deleted_fields"] == ["foo"]
+
+
+# ── Phase 11b: optimizer filtering ────────────────────────────────────────────
+
+
+def test_execute_pipeline_filters_deleted_modules_and_diffs():
+    """The Phase 11b filter logic must drop modules + diffs matching
+    deleted_field_names, supporting both camelCase and snake_case forms.
+    """
+    from app.ocr_optimizer.service.customer_iteration import _snake
+
+    # Mock src_modules (just need .module_key attribute)
+    class M:
+        def __init__(self, k): self.module_key = k
+
+    src_modules = [
+        M("invoice_number"),
+        M("invoice_date"),
+        M("bill_from_name"),
+    ]
+    diffs = [
+        {"kind": "edit", "module_key": "invoice_number",
+         "original_name": "invoiceNumber", "corrected_name": "invoiceNumber"},
+        {"kind": "edit", "module_key": "invoice_date",
+         "original_name": "invoiceDate", "corrected_name": "invoiceDate"},
+        {"kind": "add", "module_key": "billFromCompanyName",
+         "original_name": "billFromCompanyName", "corrected_name": "salerName"},
+    ]
+    deleted_field_names = {"invoiceNumber"}  # camelCase form
+
+    # Replicate the filtering logic from _execute_pipeline Phase 11b
+    deleted_snake = {_snake(f) for f in deleted_field_names if f}
+    all_deleted = deleted_field_names | deleted_snake  # {"invoiceNumber", "invoice_number"}
+
+    deleted_module_keys = {m.module_key for m in src_modules if m.module_key in all_deleted}
+    assert deleted_module_keys == {"invoice_number"}
+
+    surviving = [m for m in src_modules if m.module_key not in deleted_module_keys]
+    assert [m.module_key for m in surviving] == ["invoice_date", "bill_from_name"]
+
+    def _is_deleted_diff(d):
+        for v in (d.get("module_key") or "",
+                  d.get("original_name") or "",
+                  d.get("corrected_name") or ""):
+            if v and (v in all_deleted or _snake(v) in all_deleted):
+                return True
+        return False
+
+    surviving_diffs = [d for d in diffs if not _is_deleted_diff(d)]
+    assert len(surviving_diffs) == 2
+    assert surviving_diffs[0]["module_key"] == "invoice_date"
+    assert surviving_diffs[1]["module_key"] == "billFromCompanyName"
 
 
 def test_augment_with_overlay_renders_rename_map(db_session):

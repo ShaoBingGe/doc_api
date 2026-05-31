@@ -98,15 +98,76 @@ def _update_job(db: Session, job: CustomizeJob, **kwargs) -> None:
     db.refresh(job)
 
 
-def find_waiting_job_for_api(db: Session, api_definition_id: uuid.UUID) -> CustomizeJob | None:
-    """Return the most-recent `waiting_for_samples` job whose new ApiDef = api_definition_id.
+def _mirror_source_samples_to_fork(
+    db: Session,
+    *,
+    source_id: uuid.UUID,
+    fork_id: uuid.UUID,
+) -> int:
+    """Phase 12 single-workspace flow: copy source ApiDef's
+    sample_document_ids onto the fork ApiDef's config + re-bind each
+    Document to fork.api_definition_id.
 
+    This makes the rest of the iteration pipeline (run_orchestrator,
+    annotation queries, etc.) see those samples without rewriting any
+    fork-specific code path. The customer keeps editing on source URL;
+    fork is purely an internal artifact.
+
+    Returns the number of doc-ids mirrored.
+    """
+    from app.models.api_definition import ApiDefinition as _ApiDef
+    from app.models.document import Document as _Document
+
+    src = db.get(_ApiDef, source_id)
+    fork = db.get(_ApiDef, fork_id)
+    if not src or not fork:
+        return 0
+    sample_ids = (src.config or {}).get("sample_document_ids") or []
+    if not sample_ids:
+        return 0
+
+    fork_cfg = dict(fork.config or {})
+    fork_cfg["sample_document_ids"] = [str(s) for s in sample_ids]
+    fork.config = fork_cfg
+
+    # Re-bind the Document rows. They're still physically the same files
+    # on disk; we just transfer the API association. (The customer won't
+    # see this — they're on source URL — but iteration code reads docs by
+    # api_definition_id, so we need to point them at fork.)
+    n = 0
+    for sid in sample_ids:
+        try:
+            doc = db.get(_Document, uuid.UUID(str(sid)))
+            if doc and doc.api_definition_id != fork_id:
+                doc.api_definition_id = fork_id
+                n += 1
+        except Exception:
+            continue
+    db.commit()
+    logger.info(
+        "Mirrored %d sample documents from source %s to fork %s",
+        n, source_id, fork_id,
+    )
+    return n
+
+
+def find_waiting_job_for_api(db: Session, api_definition_id: uuid.UUID) -> CustomizeJob | None:
+    """Return the most-recent `waiting_for_samples` job whose new ApiDef
+    OR source ApiDef = api_definition_id.
+
+    Phase 12: extended to also match by source_api_definition_id so that
+    when the customer uploads/confirms samples on the SOURCE workspace
+    (per the single-workspace UX), the same auto-resume hook fires.
     Used by the sample-upload hook to auto-resume.
     """
+    from sqlalchemy import or_
     return (
         db.query(CustomizeJob)
         .filter(
-            CustomizeJob.new_api_definition_id == api_definition_id,
+            or_(
+                CustomizeJob.new_api_definition_id == api_definition_id,
+                CustomizeJob.source_api_definition_id == api_definition_id,
+            ),
             CustomizeJob.status == CustomizeJobStatus.waiting_for_samples.value,
         )
         .order_by(CustomizeJob.created_at.desc())
@@ -137,6 +198,11 @@ def maybe_auto_resume_for_api(api_definition_id: uuid.UUID) -> None:
     """Re-evaluate the sample gate for an ApiDef and kick off resume in a
     background thread if it's now met. Idempotent and safe to call from
     request handlers.
+
+    Phase 12: when the waiting job matches via source_api_definition_id
+    (single-workspace UX), copy the source's confirmed sample list to the
+    fork ApiDef's config so the iteration's existing sample_document_ids
+    flow keeps working without further changes.
     """
     from threading import Thread
 
@@ -145,7 +211,19 @@ def maybe_auto_resume_for_api(api_definition_id: uuid.UUID) -> None:
         waiting = find_waiting_job_for_api(db, api_definition_id)
         if not waiting:
             return
-        confirmed, _ = count_confirmed_samples(db, api_definition_id)
+        # If the upload happened on SOURCE workspace, mirror confirmed
+        # sample IDs onto the fork's config so the rest of the iteration
+        # pipeline (which is fork-centric) sees them.
+        if waiting.source_api_definition_id == api_definition_id and \
+           waiting.new_api_definition_id is not None and \
+           waiting.new_api_definition_id != api_definition_id:
+            _mirror_source_samples_to_fork(
+                db,
+                source_id=waiting.source_api_definition_id,
+                fork_id=waiting.new_api_definition_id,
+            )
+        # Count using whichever ApiDef the job's sample_document_ids now live on
+        confirmed, _ = count_confirmed_samples(db, waiting.new_api_definition_id)
         if confirmed < MIN_SAMPLES_FOR_ITERATION:
             return
         job_id = waiting.id
@@ -487,6 +565,66 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
         "ocr_prompt": m.ocr_prompt,
         "schema_fragment": m.schema_fragment,
     } for m in src_modules}
+
+    # ── Phase 11a/b: drop deleted fields BEFORE anything else ────────────
+    # User contract: deleted fields have NO meta, NO reflection, NO module
+    # slot. We filter them out at three places:
+    #   (1) src_modules — so _clone_module never sees them and the fork's
+    #       schema/prompt naturally excludes them.
+    #   (2) diffs — so the reflection agent isn't invoked on them and they
+    #       don't reach _fork_api_definition's add_specs.
+    #   (3) modules_by_key — keeps the reflector's "sibling examples"
+    #       context clean.
+    try:
+        from app.services import pending_edits_service as _pes
+        overlay_for_delete = _pes.get_overlay(db, src_id)
+        deleted_field_names = set(overlay_for_delete.get("deleted_fields") or [])
+    except Exception as _exc:  # noqa: BLE001
+        logger.warning("Could not read deleted_fields from overlay: %s", _exc)
+        deleted_field_names = set()
+
+    if deleted_field_names:
+        # Precompute the snake-cased forms of every deleted field name
+        # so module_key (snake) and field_name (camel) both match.
+        deleted_snake = {_snake(f) for f in deleted_field_names if f}
+        all_deleted = deleted_field_names | deleted_snake
+
+        def _is_deleted_diff(d: dict) -> bool:
+            mk = (d.get("module_key") or "").strip()
+            on = (d.get("original_name") or "").strip()
+            cn = (d.get("corrected_name") or "").strip()
+            for v in (mk, on, cn):
+                if v and (v in all_deleted or _snake(v) in all_deleted):
+                    return True
+            return False
+
+        before_modules = len(src_modules)
+        before_diffs = len(diffs)
+        # Filter src_modules — match by module_key against either camel
+        # or snake form of any deleted field name.
+        deleted_module_keys = {
+            m.module_key for m in src_modules
+            if m.module_key in all_deleted
+        }
+        src_modules = [m for m in src_modules if m.module_key not in deleted_module_keys]
+        # Filter diffs
+        diffs = [d for d in diffs if not _is_deleted_diff(d)]
+        # Rebuild modules_by_key after the filter
+        modules_by_key = {m.module_key: {
+            "module_key": m.module_key,
+            "display_name": m.display_name,
+            "description": m.description,
+            "ocr_prompt": m.ocr_prompt,
+            "schema_fragment": m.schema_fragment,
+        } for m in src_modules}
+        logger.info(
+            "Phase 11b — dropped %d deleted fields: modules %d→%d, diffs %d→%d, "
+            "deleted_module_keys=%s",
+            len(deleted_field_names),
+            before_modules, len(src_modules),
+            before_diffs, len(diffs),
+            sorted(deleted_module_keys),
+        )
 
     # ── Phase 1: reflection ───────────────────────────────────────────────
     _update_job(db, job,

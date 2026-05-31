@@ -18,14 +18,16 @@ Shape:
         "modifications": {                          # per-doc value edits
             "<doc_uuid>": {"<field_name>": "<corrected_value>"},
             ...
-        }
+        },
+        "deleted_fields": ["<field_name>", ...]      # Phase 11a
     }
 
-Invariants (CLAUDE.md §⑥ once added):
+Invariants:
   - `renames` is global: one field has exactly one name across all docs.
   - `added_fields` is global: new fields appear on every sample's field list.
   - `modifications` is per-doc: each invoice's values are document-specific.
-  - Cleared by Phase 5 on successful customize-job fork.
+  - `deleted_fields` is global + ABSOLUTE: a deleted field has NO meta,
+    NO reflection, NO module slot; the optimizer drops it entirely.
 """
 
 from __future__ import annotations
@@ -48,7 +50,12 @@ logger = logging.getLogger(__name__)
 
 
 def _empty() -> dict[str, Any]:
-    return {"added_fields": [], "renames": {}, "modifications": {}}
+    return {
+        "added_fields": [],
+        "renames": {},
+        "modifications": {},
+        "deleted_fields": [],
+    }
 
 
 def _normalize(overlay: dict | None) -> dict[str, Any]:
@@ -62,6 +69,7 @@ def _normalize(overlay: dict | None) -> dict[str, Any]:
         str(k): dict(v) for k, v in (overlay.get("modifications") or {}).items()
         if isinstance(v, dict)
     }
+    out["deleted_fields"] = list(overlay.get("deleted_fields") or [])
     return out
 
 
@@ -182,6 +190,77 @@ def record_modification(
     _save_overlay(db, api_def, overlay)
     db.commit()
     return overlay
+
+
+def record_deleted_field(
+    db: Session,
+    api_def_id: uuid.UUID,
+    field_name: str,
+) -> tuple[dict[str, Any], int]:
+    """Phase 11a: register a field deletion + cascade across all docs.
+
+    Returns (overlay, annotations_deleted_count).
+
+    Semantics (per user spec for deleted fields):
+      - The field is fully removed from the field set: no meta, no module
+        slot, no reflection agent invocation, no schema entry.
+      - All existing Annotation rows for this field across every Document
+        of this ApiDef are HARD-DELETED (not archived) so they no longer
+        contribute to OCR baseline or display.
+      - The field name is also dropped from any pending added_fields entry
+        and any modifications[*][field_name] entry, since they no longer
+        make sense.
+      - The rename map keeps its entries (if the deleted field had a rename
+        chain, the user can choose to clean it up via separate UI).
+    """
+    if not field_name:
+        return get_overlay(db, api_def_id), 0
+
+    api_def = db.get(ApiDefinition, api_def_id)
+    if not api_def:
+        raise NotFoundError(f"ApiDefinition {api_def_id} not found")
+
+    overlay = _normalize(api_def.pending_edits)
+
+    # Add to deleted_fields (idempotent)
+    if field_name not in overlay["deleted_fields"]:
+        overlay["deleted_fields"].append(field_name)
+
+    # Strip from added_fields (delete-after-add cancels both)
+    overlay["added_fields"] = [
+        f for f in overlay["added_fields"]
+        if f.get("field_name") != field_name
+    ]
+
+    # Strip from modifications (per-doc value mods no longer apply)
+    for doc_key in list(overlay["modifications"].keys()):
+        overlay["modifications"][doc_key].pop(field_name, None)
+        if not overlay["modifications"][doc_key]:
+            del overlay["modifications"][doc_key]
+
+    _save_overlay(db, api_def, overlay)
+
+    # Cascade-DELETE annotations across all docs of this ApiDef
+    doc_ids = [d.id for d in db.query(Document.id).filter(
+        Document.api_definition_id == api_def_id
+    ).all()]
+    deleted_count = 0
+    if doc_ids:
+        deleted_count = (
+            db.query(Annotation)
+            .filter(
+                Annotation.document_id.in_(doc_ids),
+                Annotation.field_name == field_name,
+            )
+            .delete(synchronize_session=False)
+        )
+
+    db.commit()
+    logger.info(
+        "Recorded deletion of field %r on ApiDef %s; hard-deleted %d annotation rows",
+        field_name, api_def_id, deleted_count,
+    )
+    return overlay, deleted_count
 
 
 def clear_overlay(db: Session, api_def_id: uuid.UUID) -> None:

@@ -732,6 +732,7 @@ function FieldEditPanel({
   onUpdate,
   onCancel,
   onSaveToOverlay,
+  onDelete,
 }: {
   annotation: Annotation
   result?: ProcessingResult
@@ -741,6 +742,9 @@ function FieldEditPanel({
   /** Phase 10 — commits the current draft to backend overlay so badges
    * + cascade rename fire BEFORE the user clicks the customize button. */
   onSaveToOverlay: () => Promise<void> | void
+  /** Phase 11c — permanently delete this field across all docs of the
+   * ApiDef AND drop it from the optimizer pipeline (no meta, no reflection). */
+  onDelete: () => Promise<void> | void
 }) {
   const origValue = result?.value ?? annotation.value ?? ''
   const origValueStr = origValue === null || origValue === undefined ? '' : String(origValue)
@@ -848,6 +852,22 @@ function FieldEditPanel({
             仅暂存
           </button>
         </div>
+        <button
+          onClick={async () => {
+            if (!confirm(
+              `确认从所有样本中删除字段 "${draft.originalName || annotation.label}"？\n\n` +
+              `· 所有文件中该字段的标注将被永久删除\n` +
+              `· 客户化时不再生成该字段的 module / 反思 / schema\n` +
+              `· 此操作不可撤销`,
+            )) return
+            await onDelete()
+          }}
+          className="w-full px-3 py-2 rounded-md bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-medium transition-colors flex items-center justify-center gap-2"
+          title="从所有样本和优化器中彻底删除此字段"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          删除此字段（所有样本 + 优化器同步生效）
+        </button>
       </div>
     </div>
   )
@@ -978,14 +998,29 @@ function WaitingForSamplesBanner({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploads, setUploads] = useState<PerFileUpload[]>([])
 
-  // On the source workspace, surface a single CTA to navigate to the new fork
+  // Phase 12 — single-workspace UX:
+  // After fork, the customer STAYS on the source workspace URL and uploads
+  // additional samples here. The fork's sample list is mirrored from
+  // source on each confirmation (see _mirror_source_samples_to_fork on
+  // the backend), so iteration runs without the customer ever navigating.
   if (!onNewWorkspace && customizeJob.newApiDefinitionId) {
+    // samplesReview tracks the SOURCE ApiDef's confirmed-count progress
+    // (same store key used by the per-doc "已审视" toggle).
+    const sampleProgress = useWorkspaceStore.getState().samplesReview
+    const confirmed = sampleProgress?.confirmedCount ?? 0
+    const required = sampleProgress?.requiredCount ?? 3
+    const remaining = Math.max(0, required - confirmed)
+
     return (
       <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-2.5">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0" />
-            <span className="text-sm text-amber-200 font-medium">等待上传样本以启动迭代优化</span>
+            <span className="text-sm text-amber-200 font-medium">
+              {remaining > 0
+                ? `还需 ${remaining} 个已审视样本即可启动优化`
+                : '样本已就绪，优化即将自动启动'}
+            </span>
           </div>
           <button
             onClick={onClose}
@@ -1000,21 +1035,40 @@ function WaitingForSamplesBanner({
             新 api_code: <code className="bg-black/40 px-1.5 py-0.5 rounded text-amber-200">{customizeJob.newApiCode}</code>
           </div>
         )}
+        {/* Progress bar — 3 cells */}
+        <div className="flex gap-1.5">
+          {Array.from({ length: required }).map((_, i) => (
+            <div
+              key={i}
+              className={cn(
+                'flex-1 h-1.5 rounded-full transition-colors',
+                i < confirmed ? 'bg-emerald-500' : 'bg-white/10',
+              )}
+            />
+          ))}
+        </div>
         <div className="text-[11px] text-amber-100/60 leading-relaxed">
-          下方字段列表中的"已重命名 / 已新增 / 已保存修改"标识保留为本次编辑的历史记录。
-          切换到新模板工作区后，新模板的字段已固化新名。
+          请在本工作区继续上传样本（不会切换到新模板工作区）。每张样本完成
+          OCR 后，请点击对应文档的"已审视"开关确认 GT。当 {required} 张
+          都已审视，3 轮迭代优化会自动启动，结果将合并到新 api_code 上。
+          下方字段列表中的"已重命名 / 已新增 / 已删除"标识保留为本次编辑的历史记录。
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => navigate(`/workspace/api/${customizeJob.newApiDefinitionId}`)}
+            onClick={() => {
+              // Scroll the top sample-thumbnail column into view; document-list lives in Column A
+              const docCol = document.querySelector('[data-sample-column="true"]')
+              if (docCol) docCol.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              else toast.info('在左侧文档列上方点击"上传样本"按钮，或直接拖拽 PDF 到工作区')
+            }}
             className="flex-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-sm rounded transition-colors"
           >
-            前往新模板工作区上传样本 →
+            上传/确认更多样本 →
           </button>
           <button
             onClick={async () => {
               if (!apiDefinitionId) return
-              if (!confirm('清理后本工作区将不再显示"已重命名/已新增/已修改"标识。继续？')) return
+              if (!confirm('清理后本工作区将不再显示"已重命名/已新增/已修改/已删除"标识。继续？')) return
               try {
                 await apiClient.delete(`/api/v1/api-definitions/${apiDefinitionId}/pending-edits`)
                 await useWorkspaceStore.getState().loadPendingEdits()
@@ -1358,6 +1412,7 @@ function FieldsView() {
     updateEditDraft, addNewFieldDraft, addFieldDrafts,
     pendingEdits,  // design v8 — cross-sample overlay
     commitCurrentDraft,  // Phase 10
+    commitFieldDeletion,  // Phase 11c
   } = useWorkspaceStore()
 
   // design v8 — derive "edited on OTHER files" set and the list of added
@@ -1499,6 +1554,10 @@ function FieldsView() {
             await commitCurrentDraft()
             toast.success('已保存到模板，其他样本会自动同步显示')
           }}
+          onDelete={async () => {
+            await commitFieldDeletion()
+            toast.success('字段已从所有样本中删除')
+          }}
         />
         <CustomizeBar />
       </div>
@@ -1619,6 +1678,39 @@ function FieldsView() {
           onStartEdit={startEditingField}
         />
       ))}
+
+      {/* Phase 11c — fields the customer has deleted from all samples.
+          Kept as a small audit footer so the user can verify what was
+          removed without cluttering the active field list. */}
+      {(pendingEdits?.deleted_fields?.length ?? 0) > 0 && (
+        <div className="bg-[#2a2a32] rounded-lg border border-red-500/20 overflow-hidden">
+          <div className="flex items-center justify-between p-3 bg-red-500/10">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded bg-red-500/20 flex items-center justify-center text-red-300">
+                <Trash2 className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-sm font-medium text-gray-300">已删除字段</span>
+              <span className="text-xs text-gray-500 ml-2">{pendingEdits?.deleted_fields?.length ?? 0} 个</span>
+            </div>
+          </div>
+          <div className="p-3 space-y-1">
+            <p className="text-[11px] text-gray-500 leading-relaxed mb-1.5">
+              下列字段在所有样本中已被永久删除，客户化时不再生成模块/反思/schema。
+            </p>
+            {(pendingEdits?.deleted_fields || []).map((name) => (
+              <div
+                key={name}
+                className="flex items-center justify-between py-1 px-2 rounded bg-red-500/5 border border-red-500/15"
+              >
+                <span className="text-gray-400 text-sm font-mono line-through">{name}</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-300 font-medium flex-shrink-0">
+                  已删除
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* design v8 — fields added on OTHER files, missing in this doc.
           Rendered as empty rows with a cyan "其他文件新增" badge so the user

@@ -203,6 +203,13 @@ def commit_draft_to_overlay(
             new_value=mod.get("value"),
         )
 
+    # Case 4 (Phase 11a): field deletion — cascades across all docs
+    if body.get("deleted") and body.get("field_name"):
+        overlay, n = pending_edits_service.record_deleted_field(
+            db, api_def_id, str(body["field_name"]),
+        )
+        out["deleted_annotation_rows"] = n
+
     return pending_edits_service.get_overlay(db, api_def_id)
 
 
