@@ -1,6 +1,6 @@
-id: '7_7'
-remark: gemini json schema, anyof. Restructured into Part1 (MY country global) + Part2 (per-field rules + output format).
-structure_prompt_version: '5'
+id: '7_8'
+remark: gemini json schema, anyof. Design v7 — Part1 (MY country global) + Part2 (defer to schema descriptions) + Part3 (platform output contract reference only; composer injects from assets/global_output_contract.yaml).
+structure_prompt_version: '6'
 prompt_template:
   prompt_format: |-
     # 任务
@@ -60,33 +60,42 @@ prompt_template:
     - **缺失信息**：无法找到的字段一律不输出，**不要推断、不要捏造**。
 
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Part 2 · 字段识别规则与输出格式
+    # Part 2 · 字段识别规则
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    ## 2.1 字段级规则
     下方 JSON Schema 中每个字段的 `description` 已经包含了：
     - 该字段的业务含义
     - MY 票面常见关键词与典型格式
     - 取值位置锚点
     - 易混淆字段的辨别要点
+    - 数值类字段的取值方法（如税额优先语义匹配 / 严禁推算）
 
     **请严格按 schema 中每字段的 description 提取。**
 
-    ## 2.2 跨字段输出规则
-    - **金额相关字段**（`totalNetAmount`、`totalAmount`、`totalTaxAmount`，以及明细行 `unitPrice` / `netAmount` / `grossAmount` / `tax`）：按 Part 1·1.2 货币规则去千分位、去货币符号后输出，严禁保留任何 `,` 千分位。
-    - **税额提取**（`detailOfTaxSummary` + `totalTaxAmount`）：
-      - **语义优先**：优先提取明确标识为 `Tax` / `SST` / `VAT` / `GST` / `Tax Amount` 的数值。
-      - **结构识别**：若票面有多行税率汇总表（Tax Summary），提取表中每个税种的金额合计，而不是简单取表底的 `Total` / `Subtotal`。
-      - **严禁推算**：不要用 `totalAmount - 某项` 反推税额，必须在票面找到对应的税金标识。
-      - 同一票据可能同时存在加项税（VAT / SST）与减项税（WHT / 预扣税），都要逐一提取并放入 `detailOfTaxSummary` 数组。
-      - `detailOfTaxSummary.taxCategory` 字段使用标准简称：{tax_categories_text}；不在列表中的用票面原名。
-    - **行项目明细**（`detailOfGoodsOrServices`）：
-      - 一行 = 一项；若一行的"数量/单价"分多列子标题（如 PCS / BDL / MT），优先取计费用单位对应的列，确认 quantity × unitPrice ≈ netAmount。
-      - `purchaseOrderNumber` / `salesOrderNumber` / `deliveryOrderNumber`：
-        - 若该单号对整张发票适用 → 填到票头字段；
-        - 若该单号仅对某行适用 → 填到对应行；**两边都填一份的做法是错的**。
-    - **跨页票据**：合并所有页的内容作为单张票据输出，`page` 字段填全部连续页码数组（如 `[2, 3, 4]`）。
-    - **Credit Note**：必须填 `originalInvoiceReferences` 数组（原发票号、原日期、原代码）。
+    > 说明：字段识别规则（"在哪里找、找什么"）由本 Part 2 + schema description 承担；
+    > 输出装配规则（"找到后怎么组装成 JSON"）已统一抽到 Part 3 平台契约。
+
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Part 3 · 输出契约与装配规则
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    > 本部分由平台统一管理，运行时由 composer 从
+    > `backend/app/ocr_optimizer/assets/global_output_contract.yaml`
+    > 强制注入。本 yaml 中**不复制具体规则**，避免双向维护漂移。
+    >
+    > 涵盖：
+    >   3.1 顶层 ARRAY 结构
+    >   3.2 数值字段统一规范（去千分位、去货币符号、保留精度）
+    >   3.3 税额装配（detailOfTaxSummary 数组 + 总税额一致性 + ADJUSTMENT 平账）
+    >   3.4 行项目装配（一行一项 + qty×price 校验 < 1% + PO/SO/DO 头/行二选一）
+    >   3.5 跨页装配（合并为单元素 + page 数组）
+    >   3.6 Credit Note 装配（originalInvoiceReferences 必填）
+    >   3.7 缺失字段处理（找不到不输出，严禁推断捏造）
+    >   3.8 字段输出顺序（预留）
+    >
+    > 国家级特例（如 MY 货币千分位约定）写在 Part 1.2 作为"输入侧事实"，
+    > 为 Part 3 平台规则提供解析依据。
+    > 本国家无 Part 3 特例 override。
 
   json_schema:
     title: invoice_and_receipts
@@ -222,7 +231,11 @@ prompt_template:
                     description: 备注
                   quantity:
                     type: NUMBER
-                    description: 商品或服务的数量
+                    description: |-
+                      商品或服务的数量。
+                      单位列辨识：若该行的"数量/单价"分多列子标题（如 PCS / BDL / MT / CTN / SET），
+                      优先取**计费单位**对应的列（与 unitPrice 同列）。
+                      参考校验：quantity × unitPrice 应约等于 netAmount（具体一致性阈值见 Part 3.4）。
                   unitOfMeasure:
                     type: STRING
                     description: 计量单位，如 pcs、kg、m、hour 等
@@ -256,13 +269,17 @@ prompt_template:
                 required: []
             detailOfTaxSummary:
               type: ARRAY
-              description: 税金汇总列表，包括税种、税率、税基、税额。请注意，同一税种但不同税率的情况需要分别提取。
+              description: |-
+                税金汇总列表，包括税种、税率、税基、税额。
+                同一票据可能同时存在加项税（VAT / SST / GST）与减项税（WHT / 预扣税），都要逐一提取。
+                同一税种但不同税率的情况需要分别提取为多行。
+                装配规则与一致性校验见 Part 3.3（含 ADJUSTMENT 平账机制）。
               items:
                 type: OBJECT
                 properties:
                   taxCategory:
                     type: STRING
-                    description: "税种简称。必须使用prompt中提供的标准税种简称（如'VAT'、'CIT'、'CT'等）。如果识别的税种不在标准列表中，则使用原始税种名称。"
+                    description: "税种简称。优先使用平台标准简称（VAT/SST/GST/WHT/CIT/CT/IVA/ADJUSTMENT），不在表中用票面原名。"
                   taxRate:
                     type: STRING
                     description: 税率
@@ -271,7 +288,12 @@ prompt_template:
                     description: 税基（需计税的金额/不含税金额）
                   tax:
                     type: NUMBER
-                    description: 税额
+                    description: |-
+                      税额。识别原则：
+                      1. **语义优先**：优先提取明确标识为 Tax / SST / VAT / GST / Tax Amount 的数值。
+                      2. **结构识别**：在多行税率汇总表（Tax Summary）中提取每个税种的金额合计，
+                         不是简单取表底的 Total / Subtotal。
+                      3. **严禁推算**：不要用 totalAmount − 某项反推税额，必须在票面找到对应的税金标识。
                 required: []
             originalInvoiceReferences:
               type: ARRAY

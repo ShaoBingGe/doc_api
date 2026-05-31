@@ -30,6 +30,7 @@ from ..models import (
     VersionOrigin,
 )
 from . import template_loader
+from .composer import GLOBAL_OUTPUT_CONTRACT_DETAILS
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,18 @@ def init_from_country_template(
     db.add(api_def)
     db.flush()  # populate api_def.id
 
+    # v1 special case (design §5.2 / §6.4): composed_prompt is the raw yaml
+    # prompt_format with placeholders replaced. From v2 onwards composer.assemble_prompt
+    # is used and includes Part 3 (GLOBAL_OUTPUT_CONTRACT_DETAILS) automatically.
+    # For v1 we MUST append Part 3 here too so the platform output contract is
+    # enforced from the very first OCR call (design v7).
+    v1_prompt = (
+        decomposed["prompt_format"].rstrip()
+        + "\n\n"
+        + GLOBAL_OUTPUT_CONTRACT_DETAILS
+        + "\n"
+    )
+
     version_id = uuid.uuid4()
     version = OcrPromptVersion(
         id=version_id,
@@ -83,7 +96,7 @@ def init_from_country_template(
         version="1",
         status=PromptVersionStatus.active.value,
         origin=VersionOrigin.init.value,
-        composed_prompt=decomposed["prompt_format"],  # §5.2 / §6.4 exception: raw yaml text
+        composed_prompt=v1_prompt,
         composed_schema=decomposed["json_schema"],
         country_global_text=decomposed["country_global_text"],
         notes=f"Initial version from preset template {country}_invoice_prompt.yaml",

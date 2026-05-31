@@ -2,11 +2,18 @@
 Composer — assembles the final `composed_prompt` string and
 `composed_schema` dict from a list of OcrModule snapshots.
 
-Layout (see docs/ocr-optimizer-design.md §10):
+Layout (design v7 — see CLAUDE.md §① and docs/prompt-system.md §6):
   - GLOBAL_PREAMBLE
-  - GLOBAL_OUTPUT_CONTRACT (mentions the composed schema)
-  - For each module: "## N. {display_name}\n{ocr_prompt}\n"
+  - country_global_text (Part 1 + slim Part 2 from country yaml)
+  - GLOBAL_SCHEMA_REFERENCE (composed schema block)
+  - GLOBAL_OUTPUT_CONTRACT_DETAILS (Part 3, platform-wide, loaded from
+    backend/app/ocr_optimizer/assets/global_output_contract.yaml)
+  - "# 模块识别指令" + per-module bodies
   - GLOBAL_SELF_CHECK
+
+The three GLOBAL_* constants + GLOBAL_OUTPUT_CONTRACT_DETAILS form the
+**platform contract** — any path (client / optimizer / reflection) that tries
+to rewrite them is a bug per CLAUDE.md §①.
 """
 
 from __future__ import annotations
@@ -15,6 +22,8 @@ import copy
 import json
 import re
 from typing import Iterable
+
+from .output_contract import render_output_contract
 
 
 # ── Global template fragments (not module-iterable) ──────────────────────────
@@ -27,6 +36,11 @@ GLOBAL_PREAMBLE = """你是一名严谨的文档信息抽取专家。请阅读�
 2. 字段缺失时输出 null，不要捏造。
 3. 日期统一格式为 YYYY-MM-DD；数字去掉千分位与货币符号。
 """
+
+# Platform-wide output contract (Part 3). Loaded once at import time from
+# the yaml asset; immutable thereafter for the process lifetime. Same
+# protection level as GLOBAL_PREAMBLE / GLOBAL_SELF_CHECK.
+GLOBAL_OUTPUT_CONTRACT_DETAILS = render_output_contract()
 
 GLOBAL_SELF_CHECK = """
 # 输出前自检
@@ -51,10 +65,11 @@ def assemble_prompt(modules: Iterable, *, country_global: str | None) -> str:
       - the version's `country_global_text` for country-templated ApiDefs
       - `None` or "" for non-templated ApiDefs (no country section rendered)
 
-    Render order (design v6):
+    Render order (design v7):
         GLOBAL_PREAMBLE
-        country_global       ← injected here (skipped when empty)
-        GLOBAL_OUTPUT_CONTRACT (composed schema)
+        country_global                    ← Part 1 + slim Part 2 (skipped when empty)
+        GLOBAL_SCHEMA_REFERENCE           ← composed schema JSON block
+        GLOBAL_OUTPUT_CONTRACT_DETAILS    ← Part 3 platform contract
         # 模块识别指令
         ## 1..N field modules
         GLOBAL_SELF_CHECK
@@ -67,7 +82,7 @@ def assemble_prompt(modules: Iterable, *, country_global: str | None) -> str:
 
     schema = assemble_schema(mod_list)
     schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
-    output_contract = (
+    schema_reference = (
         "# 整体输出 Schema\n"
         "返回的 JSON 必须符合下列 Schema：\n"
         f"```json\n{schema_json}\n```\n"
@@ -80,7 +95,10 @@ def assemble_prompt(modules: Iterable, *, country_global: str | None) -> str:
         GLOBAL_PREAMBLE
         + "\n"
         + country_section
-        + output_contract
+        + schema_reference
+        + "\n"
+        + GLOBAL_OUTPUT_CONTRACT_DETAILS
+        + "\n"
         + "\n# 模块识别指令\n"
         + "\n".join(body_parts)
         + GLOBAL_SELF_CHECK

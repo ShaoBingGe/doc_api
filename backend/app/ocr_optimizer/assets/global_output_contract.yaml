@@ -1,0 +1,108 @@
+id: output_contract_v1
+version: 1
+description: |
+  跨国家通用输出契约。任何 prompt 渲染时由 composer 强制注入到 schema 引用块之后、
+  字段模块体之前。客户、反思 agent、optimizer 一律不可改写此契约 —— 它是 API 输出形状
+  的法律边界。需要变更须改本文件源码并 PR 审查。
+
+  与 country yaml 的关系：country yaml 的 Part 3 段只是人类阅读副本（指向本文件），
+  composer 在运行时不读 country yaml 的 Part 3 文本，只读本文件。
+sections:
+  - key: "3.1"
+    title: 顶层结构
+    text: |
+      输出必须是 JSON Schema 中定义的 ARRAY。每个元素是一张票据对象（anyOf：invoice/receipt/other）。
+      整份文档若含多张票据，按出现顺序作为数组元素，**不要合并**。
+      整份文档若仅一张票据，输出长度为 1 的数组。
+
+  - key: "3.2"
+    title: 数值字段统一规范
+    text: |
+      所有 type=NUMBER 的字段（含明细行的 quantity / unitPrice / netAmount / tax / grossAmount，
+      以及票头的 totalNetAmount / totalAmount / totalTaxAmount）：
+      - **一律去除千分位分隔符**（`,` 或 `.`，按国家 Part 1.2 的"输入侧事实"判别）
+      - **一律去除货币符号**（$ / RM / ¥ / € / £ 等）
+      - **保留原始小数精度**（不四舍五入、不补零、不截断）
+      - 负数（如 Credit Note 的总金额）保留 `-` 号
+      - 严禁输出字符串形式的数字（"6000.00" 错，6000.00 对）
+
+  - key: "3.3"
+    title: 税额装配
+    text: |
+      `detailOfTaxSummary` 是数组：每个税种 × 税率 = 一行。
+      - `taxCategory` 优先使用平台标准简称表（VAT/SST/GST/WHT/CIT/CT/...），不在表中用票面原名
+      - `netTaxableAmount` / `tax` 同 §3.2 数值规范
+      - 总税额一致性：
+        * `totalTaxAmount` 应等于 `sum(detailOfTaxSummary[].tax)`
+        * 若票面给出独立的总税额（如 "Total Tax: RM 600.00"）且与 `sum(detailOfTaxSummary[].tax)` 不一致：
+          - **以票面独立总税额为准**写入 `totalTaxAmount`
+          - 同时在 `detailOfTaxSummary` 末尾补一行 `{"taxCategory": "ADJUSTMENT", "tax": <差值>}` 用于平账
+      - **严禁推算**：不要用 `totalAmount - totalNetAmount` 反推 `totalTaxAmount`；必须在票面找到税金标识
+
+  - key: "3.4"
+    title: 行项目装配
+    text: |
+      - **一行 = 一项**（detailOfGoodsOrServices 数组每个元素）；不要把多个商品合并成一行，也不要把一行拆成多行
+      - **数值一致性校验**：每行必须满足
+        `|quantity × unitPrice - netAmount| / max(|netAmount|, 1) < 0.01`（即误差 < 1%）
+        校验失败时：**优先信任 `netAmount`**（票面给出的金额），重新核对 `quantity` 或 `unitPrice`
+      - **PO / SO / DO 单号归属规则**（仅写一处，**严禁两边都填**）：
+        | 情况 | 写到 |
+        |---|---|
+        | 单号对整张发票通用 | 票头的 `purchaseOrderNumber` / `salesOrderNumber` / `deliveryOrderNumber` |
+        | 单号仅对某一行适用 | 对应行的同名字段 |
+        | 单号既出现在表头又出现在每行 | 视为头级，**只填票头** |
+      - 行项目内的 `tax` / `grossAmount` 同样遵循 §3.2
+
+  - key: "3.5"
+    title: 跨页装配
+    text: |
+      同一张票据跨越多页时：
+      - 合并所有页内容为**单个**数组元素（不要拆成多条记录）
+      - `page` 字段输出全部连续页码数组，如 [2, 3, 4]
+      - 跨页明细：把所有页的行项目按出现顺序合并到 `detailOfGoodsOrServices`
+
+  - key: "3.6"
+    title: Credit Note 装配
+    text: |
+      当 `invoiceType = "Credit Note"`：
+      - 必须填 `originalInvoiceReferences` 数组（原发票号 / 原发票代码 / 原发票日期 各一组）
+      - 若票面有多组原始发票引用，全部输出为多个数组元素
+      - `totalAmount`、`totalNetAmount`、`totalTaxAmount` 通常为负数，保留 `-` 号
+      - `detailOfGoodsOrServices` 的 `quantity`、`netAmount`、`grossAmount` 同样为负数
+
+      当 `invoiceType != "Credit Note"`：
+      - **不输出** `originalInvoiceReferences` 字段（不要给空数组）
+
+  - key: "3.7"
+    title: 缺失字段处理
+    text: |
+      - schema 中 **非 required** 字段，若票面无信息：**不要输出**该字段（不要给 null / 不要给 "" / 不要给 0）
+      - schema 中 **required** 字段（如 `docType` / `page` / `invoiceType` / `currency`）若缺失：
+        按国家 Part 1.4 默认值规则处理；不能默认的，按 Part 1.3 推断
+      - **严禁推断、严禁捏造、严禁拼凑** —— 找不到就不写，宁可漏字段也不要错字段
+
+  - key: "3.8"
+    title: 字段输出顺序
+    text: |
+      当前版本不强制 key 顺序，按 JSON 解析器默认输出即可。
+      （预留：若未来下游 API 要求稳定排序，在此声明规则。）
+
+# ───────────────────────────────────────────────────────────────
+# 未来扩展位（v1 不实现，结构预留）
+# ───────────────────────────────────────────────────────────────
+
+# 国家级 override（如 JP 日元无小数、VN 千分位反转等）
+# 渲染时与 sections[].text 合并
+country_overrides: {}
+
+# 平台标准税种简称表（taxCategory 字段引用此表）
+tax_category_standard_abbreviations:
+  - VAT       # Value Added Tax
+  - GST       # Goods and Services Tax
+  - SST       # Sales and Service Tax (MY)
+  - WHT       # Withholding Tax
+  - CIT       # Corporate Income Tax
+  - CT        # Consumption Tax (JP)
+  - IVA       # Impuesto al Valor Agregado (ES/LATAM)
+  - ADJUSTMENT  # 平账占位（见 §3.3）

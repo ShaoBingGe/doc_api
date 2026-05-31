@@ -31,14 +31,25 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 TAX_CATEGORIES_DEFAULT = "请使用文档中出现的原名"
 
 # Markers that delimit the global-rules section in yaml.prompt_format.
-# Everything from the FIRST marker found (inclusive) to the end of
-# prompt_format is captured as the `global_rules` module.
+# Everything from the FIRST start marker (inclusive) up to either the END
+# marker (exclusive) or end-of-string is captured as country_global_text.
 #
-# Markers in priority order:
-#   1. "# Part 1"        — design v5 country template (Part 1 = country
-#                          global rules; Part 2 = per-field rules + schema)
+# START markers in priority order:
+#   1. "# Part 1"        — design v5+ country template (Part 1 = country
+#                          global rules; Part 2 = per-field rules; Part 3 =
+#                          delegated to platform output contract)
 #   2. "**提取规则：**" — legacy marker used by pre-v5 country YAMLs
-_GLOBAL_RULES_MARKERS = ("# Part 1", "**提取规则：**")
+#
+# END marker (design v7):
+#   "# Part 3"           — Part 3 is platform-owned (loaded by composer
+#                          from assets/global_output_contract.yaml at
+#                          runtime). Excluded from country_global_text to
+#                          avoid double-injection.
+_GLOBAL_RULES_START_MARKERS = ("# Part 1", "**提取规则：**")
+_GLOBAL_RULES_END_MARKER = "# Part 3"
+
+# Backwards-compatible alias (some external code may import this name).
+_GLOBAL_RULES_MARKERS = _GLOBAL_RULES_START_MARKERS
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -173,31 +184,47 @@ def _extract_global_rules_text(rendered_prompt: str) -> str:
     rules live in `OcrPromptVersion.country_global_text` instead of being
     wrapped as a fake module.
 
-    Tries each marker in order. Captures from the FIRST match (inclusive)
-    to the end of prompt_format. Falls back to the entire prompt when no
-    marker is found (lenient — better than failing init).
+    Design v7 update:
+      - START: from the FIRST matched start marker (inclusive)
+      - END:   stops at "# Part 3" (exclusive) if present, otherwise EOF
+      - Reason: Part 3 (output contract) is platform-owned and injected by
+        composer from a yaml asset; country yaml's Part 3 is a human-readable
+        reference only and must NOT be persisted to country_global_text
+        (otherwise composed_prompt would contain Part 3 twice).
 
-    For the design-v5 yaml layout (# Part 1 / # Part 2), captures from
-    "# Part 1" through end of file — country knowledge + cross-field
-    output rules together. That is exactly what composer injects between
-    GLOBAL_PREAMBLE and the schema block.
+    Falls back to the entire prompt when no start marker is found (lenient —
+    better than failing init).
     """
-    rules_text = rendered_prompt
-    matched_marker: str | None = None
-    for marker in _GLOBAL_RULES_MARKERS:
+    start_idx = -1
+    matched_start: str | None = None
+    for marker in _GLOBAL_RULES_START_MARKERS:
         idx = rendered_prompt.find(marker)
         if idx >= 0:
-            rules_text = rendered_prompt[idx:]
-            matched_marker = marker
+            start_idx = idx
+            matched_start = marker
             break
-    if matched_marker is None:
+
+    if start_idx < 0:
         logger.warning(
-            "No global-rules marker found in yaml.prompt_format (tried %s); "
+            "No global-rules start marker found in yaml.prompt_format (tried %s); "
             "storing entire prompt as country_global_text",
-            list(_GLOBAL_RULES_MARKERS),
+            list(_GLOBAL_RULES_START_MARKERS),
+        )
+        return rendered_prompt
+
+    end_idx = rendered_prompt.find(_GLOBAL_RULES_END_MARKER, start_idx)
+    if end_idx > start_idx:
+        rules_text = rendered_prompt[start_idx:end_idx].rstrip()
+        logger.info(
+            "country_global_text captured from %r to %r (length=%d)",
+            matched_start, _GLOBAL_RULES_END_MARKER, len(rules_text),
         )
     else:
-        logger.info("country_global_text captured using marker %r", matched_marker)
+        rules_text = rendered_prompt[start_idx:]
+        logger.info(
+            "country_global_text captured from %r to EOF (no %r marker; length=%d)",
+            matched_start, _GLOBAL_RULES_END_MARKER, len(rules_text),
+        )
     return rules_text
 
 

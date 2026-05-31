@@ -291,16 +291,21 @@ Empty lists mean no change.
 
 ## [6] Composer（纯代码，无 LLM）
 
-**文件**: `backend/app/ocr_optimizer/service/composer.py`
-**调用点**: 每轮末尾 + fork 创建 v1 时
-**签名（design v6）**:
+**文件**:
+- `backend/app/ocr_optimizer/service/composer.py` — 装配 + 四段 GLOBAL_* 常量
+- `backend/app/ocr_optimizer/assets/global_output_contract.yaml` — Part 3 平台资产
+- `backend/app/ocr_optimizer/service/output_contract.py` — 资产 loader（lru_cache 启动期加载）
+
+**调用点**: 每轮末尾 + fork 创建 v1 时 + preset_init 也会附加 Part 3 到 v1 prompt
+**签名（design v7）**:
 ```python
 def assemble_prompt(modules: Iterable, *, country_global: str | None) -> str
 ```
 `country_global` 是 **keyword-only 必传**。来源：`OcrPromptVersion.country_global_text` 列。
 fork / round 通过 `new_version.country_global_text = src_version.country_global_text` 继承。
+**Part 3（GLOBAL_OUTPUT_CONTRACT_DETAILS）** 不是参数：composer 在每次 assemble 时从平台资产重新注入，因此 Part 3 永远是平台最新版，不可被任何调用方覆盖。
 
-把所有模块组装成完整 composed_prompt + composed_schema。结构：
+把所有模块组装成完整 composed_prompt + composed_schema。结构（design v7）：
 
 ```
 GLOBAL_PREAMBLE
@@ -310,15 +315,26 @@ GLOBAL_PREAMBLE
 2. 字段缺失时输出 null，不要捏造。
 3. 日期统一格式为 YYYY-MM-DD；数字去掉千分位与货币符号。"
 
-country_global_text  ← design v6: 国家全局规则（原 global_rules 模块下放为版本级列）
+country_global_text  ← Part 1 国家事实 + Part 2 字段识别要点（template_loader 在 # Part 3 处截断）
 <v.country_global_text>     例如 MY 的「# Part 1 国家全局说明 / # Part 2 字段规则」
 
-GLOBAL_OUTPUT_CONTRACT
+GLOBAL_SCHEMA_REFERENCE
 "# 整体输出 Schema
 返回的 JSON 必须符合下列 Schema：
 ```json
 <composed_schema>
 ```"
+
+GLOBAL_OUTPUT_CONTRACT_DETAILS  ← design v7: Part 3 平台输出契约（从 global_output_contract.yaml 加载）
+"# Part 3 · 输出契约与装配规则（平台统一）
+## 3.1 顶层结构（ARRAY of anyOf invoice/receipt/other）
+## 3.2 数值字段统一规范（去千分位/去货币符号/保留精度）
+## 3.3 税额装配（detailOfTaxSummary 数组 + 总税额一致性 + ADJUSTMENT 平账）
+## 3.4 行项目装配（qty×price 校验 < 1% + PO/SO/DO 头/行二选一）
+## 3.5 跨页装配（合并为单元素 + page 数组）
+## 3.6 Credit Note 装配（originalInvoiceReferences 必填）
+## 3.7 缺失字段处理（找不到不输出）
+## 3.8 字段输出顺序（预留）"
 
 PER-MODULE BODIES (不再含 global_rules — design v6 已下放)
 "# 模块识别指令

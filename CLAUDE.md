@@ -32,33 +32,53 @@ fork ──► 新 ApiDef（自带 api_code）+ v1 (manual_edit)
 
 ## 五大原则（违反任一条 = bug）
 
-### ① 国家全局规则（country_global_text）
+### ① Prompt 三段平台契约（design v7）
 
 **文件**:
 - `backend/app/ocr_optimizer/models.py` — `OcrPromptVersion.country_global_text`
-- `backend/app/ocr_optimizer/service/composer.py` — 渲染顺序
+- `backend/app/ocr_optimizer/service/composer.py` — 渲染顺序 + 四段 GLOBAL_* 常量
+- `backend/app/ocr_optimizer/assets/global_output_contract.yaml` — Part 3 平台资产
+- `backend/app/ocr_optimizer/service/output_contract.py` — 资产 loader（lru_cache）
 
-`GLOBAL_PREAMBLE`、`GLOBAL_OUTPUT_CONTRACT`（schema 引用块）、`GLOBAL_SELF_CHECK` 是写死在 composer 里的字符串，**任何路径都不允许动这三段**。
+#### 四段平台契约（任何路径都不允许动）
 
-国家全局规则文本以 `OcrPromptVersion.country_global_text` 一列持久化（design v6，原 `global_rules` OcrModule 已下放为这一列）。composer 在 `GLOBAL_PREAMBLE` 与 schema 块之间强制注入：
+| 常量 / 字段 | 内容 | 来源 |
+|---|---|---|
+| `GLOBAL_PREAMBLE` | 任务说明 + 输出格式约束 | 写死在 composer.py |
+| `country_global_text` | Part 1 国家事实 + Part 2 字段识别要点 | yaml `# Part 1` → `# Part 3` 之间，存 DB 列 |
+| `GLOBAL_OUTPUT_CONTRACT_DETAILS` | Part 3 输出装配契约 8 节 | `assets/global_output_contract.yaml`，loader 启动时 lru_cache |
+| `GLOBAL_SELF_CHECK` | 输出前自检三条 | 写死在 composer.py |
+
+#### 渲染顺序（design v7）
 
 ```
 GLOBAL_PREAMBLE
-country_global_text   ← 这里
-GLOBAL_OUTPUT_CONTRACT (schema)
+country_global_text                  ← Part 1 + 瘦身 Part 2（无 Part 3 文本）
+# 整体输出 Schema (schema reference)
+GLOBAL_OUTPUT_CONTRACT_DETAILS       ← Part 3：3.1-3.8 平台装配规则
+# 模块识别指令
 ## 1..N 字段模块
 GLOBAL_SELF_CHECK
 ```
 
-`composer.assemble_prompt(modules, *, country_global)` 是 **keyword-only 必传**；
-fork / round 通过 `new_version.country_global_text = src_version.country_global_text` 继承，整个生命周期不变动。
+`composer.assemble_prompt(modules, *, country_global)` 是 **keyword-only 必传**。
+fork / round 通过 `new_version.country_global_text = src_version.country_global_text` 继承 Part 1+2；Part 3 由 composer 在每次组装时从平台资产重新注入，**不快照、不可改写**。
+
+#### Part 3 平台资产边界
+
+- 客户、反思 agent、optimizer **不可改写** `global_output_contract.yaml`
+- 仅平台工程师能改，且需 PR 审查 + 进程重启才生效
+- country yaml 的 `# Part 3` 段是**人类阅读副本**（指向平台资产的 TOC），composer 运行时**不读** country yaml 的 Part 3 文本（template_loader 在 `# Part 3` 标记处截断 country_global_text）
+- v1（preset_init 路径）特例：composed_prompt = raw yaml prompt_format + 附加 `GLOBAL_OUTPUT_CONTRACT_DETAILS`，确保 Part 3 从第一次 OCR 起就生效
 
 | ❌ 错误 | ✅ 正确 |
 |---|---|
-| 把全局规则塞进 OcrModule 表 | 用 `OcrPromptVersion.country_global_text` 列 |
-| round / fork 改写国家文本 | 直接从 `src_version.country_global_text` 拷贝到 new_version |
+| 把国家全局规则塞进 OcrModule 表 | 用 `OcrPromptVersion.country_global_text` 列 |
+| 把输出契约（去千分位 / qty×price 校验）写进 country yaml | 改 `global_output_contract.yaml`，PR 审查 |
+| round / fork 改写 country_global_text | 直接从 src_version 拷贝到 new_version |
+| 反思 agent 修改 Part 3 装配规则 | 反思只能改 Part 2（字段 schema description / ocr_prompt） |
 | 在 OcrModule 表里搜 `module_key='global_rules'` | 已迁移；只查 `country_global_text` 列 |
-| 在 round 中改写 GLOBAL_PREAMBLE | 仅可在 composer.py 源码层修改，需 PR 审查 |
+| 在客户/反思路径动 GLOBAL_PREAMBLE / GLOBAL_OUTPUT_CONTRACT_DETAILS / GLOBAL_SELF_CHECK | 仅可在 composer.py / 平台 yaml 源码层修改 |
 
 ---
 
