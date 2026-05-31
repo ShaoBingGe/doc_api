@@ -389,12 +389,15 @@ def retry_ocr_on_sample(
 
 
 def find_latest_active_job_for_api(db: Session, api_definition_id: uuid.UUID) -> CustomizeJob | None:
-    """Return the most-recent in-flight job tied to this ApiDefinition —
-    either as source OR as fork target.
+    """Return the most-recent in-flight job tied to this ApiDefinition.
+
+    Phase 19+ jobs always have source == new (the customize result lands
+    on the source ApiDef itself), so the OR-match on either column is
+    equivalent. The OR kept for pre-Phase-19 row compatibility.
 
     Used by the frontend on workspace load to rehydrate the customize banner.
     We exclude both `completed` and `failed` so:
-      - completed jobs don't show "✓ 已生成新模板" cards forever
+      - completed jobs don't show "✓ 已激活新版本" cards forever
       - failed jobs (especially the reaped ones from boot) don't auto-resurface
         across sessions; a user can still find them by job_id if needed.
     """
@@ -678,16 +681,16 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
     # "保存到模板（立即生效）". Customers who use "仅暂存" + the top-right
     # "保存并生成 API" button skip that path entirely. Result: source
     # ApiDef's Annotation.field_name stays at the OLD names, but the
-    # fork's modules (built from diffs with rename intent) use the NEW
-    # names. After iteration, the frontend on the fork URL sees a
-    # mismatch — annotations labeled `billFromName` while every
+    # new version's modules (built from diffs with rename intent) use
+    # the NEW names. After iteration, the workspace sees a mismatch —
+    # annotations labeled `billFromName` while every
     # ProcessingResult.structured_data emits `salerName` — and renders
     # what looks like "everything reverted to original prompt".
     #
     # Fix: at the start of pipeline execution, apply EVERY rename diff
-    # to the source ApiDef's annotation rows. After Phase 12's
-    # _mirror_source_samples_to_fork rebinds those docs to fork, the
-    # fork's docs naturally have correctly-named annotations.
+    # to the source ApiDef's annotation rows. Phase 19 keeps docs on
+    # source the whole time, so the rename + structured_data emission
+    # line up naturally after this single cascade pass.
     try:
         from app.services import pending_edits_service as _pes_rename
         for d in diffs:
@@ -801,10 +804,14 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
         for r in reflections.values()
     ]
 
-    # ── Phase 2: fork ApiDefinition with new api_code ─────────────────────
+    # ── Phase 2: bump source ApiDef to a new OcrPromptVersion ────────────
+    # The legacy "forking" status name is preserved for backwards
+    # compatibility with persisted job rows; Phase 19 changed the
+    # semantics so this step now mutates source in place instead of
+    # creating a new ApiDef with -c1 api_code.
     _update_job(db, job,
                 status=CustomizeJobStatus.forking.value,
-                phase_detail="复制为客户专属模板，分配新 api_code",
+                phase_detail="客户化版本生成中（在原工作区上 bump 新版本）",
                 reflection_summary=reflection_summary)
     new_api, new_version, _new_modules = _fork_api_definition(
         db, src_api=src_api, src_version=src_version, src_modules=src_modules,
@@ -820,30 +827,12 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
     # changes; refreshing the source workspace shows the new prompt's
     # output in-place.
 
-    # Phase 5 revisited (design v8 / June '26 UX fix):
-    #
-    # Original design (per user decision D) was to clear the source ApiDef's
-    # pending_edits overlay on fork — rationale: "edits have been persisted
-    # into the fork's OcrModule rows; overlay is a transient buffer".
-    #
-    # But the user typically STAYS on the source workspace when reflection
-    # completes (the URL doesn't auto-redirect to the fork). Clearing wiped
-    # every badge they were looking at, and they reported it as "the page
-    # lost all my markers after reflection ended". So the overlay now
-    # **survives until the user explicitly clears it** via DELETE
-    # /api-definitions/{id}/pending-edits (or the workspace "清理变更标识"
-    # button).
-    #
-    # Trade-off: if the user uploads a fresh sample to the SOURCE ApiDef
-    # after fork, _augment_with_overlay will still inject the lingering
-    # rename map into the OCR prompt. That's an acceptable behavior since
-    # subsequent samples on the source likely should follow the same
-    # renaming convention anyway, and the explicit "clear" gives the user
-    # a clean slate when they want one.
-    logger.info(
-        "Fork created for source ApiDef %s — overlay preserved (user-cleared)",
-        src_api.id,
-    )
+    # Overlay-clear policy (post-Phase-19): the pending_edits overlay on
+    # source SURVIVES the customize step. The customer stays on the
+    # source workspace URL; clearing here would wipe every visible
+    # rename/added/deleted badge. The DELETE /pending-edits endpoint
+    # (or workspace "清理变更标识" button) is the explicit cleanup path.
+    logger.info("Customize version bumped for ApiDef %s — overlay preserved", src_api.id)
 
     # ── Phase 3: sample gate ──────────────────────────────────────────────
     # We require at least MIN_SAMPLES_FOR_ITERATION samples whose annotations
@@ -874,8 +863,9 @@ def _run_three_rounds(db: Session, job: CustomizeJob, new_api: ApiDefinition) ->
     """Phase 4: start_optimization + advance_round × 2 + finalize.
 
     Per design v4 the customer-iteration path runs WITHOUT meta_optimizer
-    (modules are locked at fork time). Each round only refines the prompts
-    of failing fields; the set of modules never changes.
+    (the module set is locked at the moment the new customize version is
+    minted). Each round only refines the prompts of failing fields; the
+    set of modules never changes.
     """
     try:
         run = run_orchestrator.start_optimization(
@@ -1052,7 +1042,14 @@ def _fork_api_definition(
     reflections: dict[str, Any],
     user_id: uuid.UUID | None,
 ) -> tuple[ApiDefinition, OcrPromptVersion, list[OcrModule]]:
-    """Phase 19 — collapse the customize "fork" onto the source ApiDef.
+    """Bump source ApiDef to a new OcrPromptVersion that reflects the
+    customer's edits (diffs) + reflection-agent fix suggestions.
+
+    Function name retained for backwards compatibility / call-site
+    stability; semantics changed in Phase 19. There is NO fork in the
+    repo-clone sense any more — this writes new rows on the SOURCE
+    ApiDef and flips its active version pointer. See `Phase 19` notes
+    below + the CLAUDE.md mental-model diagram.
 
     Previous design created a separate ApiDef with a `-c1` api_code, which
     forced the customer to navigate to a different /workspace/api/<id>

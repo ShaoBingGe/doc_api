@@ -276,12 +276,19 @@ class OcrModuleIteration(UUIDMixin, Base):
 
 # ── 6. customize_jobs (persistent state for the customer iteration pipeline) ──
 #
-# Replaces the in-memory job dict from MVP. A job tracks one "save my edits →
-# fork + 3-round" lifecycle. Persistence enables:
+# Replaces the in-memory job dict from MVP. A job tracks one
+# "save my edits → reflect + 3-round optimize → version bump" lifecycle.
+# Persistence enables:
 #   - Crash recovery: surviving rows can be resumed or marked failed on boot.
 #   - Sample gating: a job parked in `waiting_for_samples` lives in the DB
 #     until the customer uploads enough samples, at which point we transition
 #     it to `optimizing`.
+#
+# Phase 19 (single-workspace UX) collapsed the customize result onto the
+# source ApiDef itself — a new OcrPromptVersion is bumped in place, no
+# new ApiDef row is created. The two ApiDef foreign keys on this row
+# therefore point at the SAME ApiDef for any job created at Phase 19+.
+# Legacy job rows from before Phase 19 may still have new ≠ source.
 
 
 class CustomizeJob(UUIDMixin, Base):
@@ -289,13 +296,21 @@ class CustomizeJob(UUIDMixin, Base):
 
     source_api_definition_id: Mapped[uuid.UUID] = mapped_column(
         nullable=False, index=True,
-        comment="原始 ApiDefinition（客户在其上编辑字段）"
+        comment="ApiDefinition the customer is editing in their workspace (the iteration target)"
     )
+    # (C8) Phase 19+: this equals source_api_definition_id since the
+    # iteration result lands as a new OcrPromptVersion on source itself.
+    # Pre-Phase-19 rows may hold a separate -c1 ApiDef id for audit.
     new_api_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         nullable=True, index=True,
-        comment="fork 出来的新 ApiDefinition（带客户专属 api_code）"
+        comment="(legacy) forked ApiDef id; Phase 19+ equals source_api_definition_id"
     )
-    new_api_code: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    # (C9) Phase 19+: equals source ApiDef's api_code (Phase 19 stopped
+    # generating a separate -c1 suffix per customize).
+    new_api_code: Mapped[Optional[str]] = mapped_column(
+        String(128), nullable=True,
+        comment="(legacy) -c1 api_code; Phase 19+ equals source.api_code"
+    )
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default=CustomizeJobStatus.queued.value
     )

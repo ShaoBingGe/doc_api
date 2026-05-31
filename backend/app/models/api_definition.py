@@ -86,10 +86,13 @@ class ApiDefinition(UUIDMixin, TimestampMixin, Base):
     #     "modifications": {                                    # per-doc value edits
     #         "<doc_uuid>": {"<field_name>": "<corrected_value>"},
     #         ...
-    #     }
+    #     },
+    #     "deleted_fields": ["<field_name>", ...]               # Phase 11a
     #   }
     # See docs/prompt-system.md §11 for the cross-sample workspace invariants.
-    # Cleared on successful customize-job fork (Phase 5).
+    # Cleared only on explicit user action via DELETE /pending-edits
+    # (Phase 19 + Phase 20-P2: overlay survives customize so badges
+    # stay visible on the source workspace after iteration completes).
     pending_edits: Mapped[Optional[dict]] = mapped_column(
         JSON, nullable=True, comment="跨样本编辑 overlay：added_fields / renames / modifications"
     )

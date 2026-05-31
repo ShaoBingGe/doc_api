@@ -6,27 +6,35 @@
 
 ---
 
-## 核心心智模型
+## 核心心智模型（Phase 19 起：单工作区）
 
 ```
 原模板 (国家 YAML)
-   │  customer 在工作区编辑 / 新增字段
+   │  customer 在 source ApiDef 的工作区编辑 / 新增 / 删除字段
+   │  + 上传至少 3 个样本并逐一标记"已审视"
    ▼
-fork ──► 新 ApiDef（自带 api_code）+ v1 (manual_edit)
-          │   • 复制源模块 + 应用客户编辑补丁
-          │   • 新字段用 LLM 反思扩展 description / ocr_prompt
-          │
-          ▼
-[3 轮迭代] 每轮 = 分拆 → 局部验证 → 重组
-          │   1. OCR 所有"已审视"样本 → 评估每个 module 准确率
-          │   2. 若 overall_accuracy ≥ 99.9% → 早停，复用当前版本
-          │   3. 对失败 module 调 module_optimizer
-          │   4. verify_module_fix 判官：accept 才采纳，reject 保留旧 prompt
-          │   5. composer 组装新版本
-          │
-          ▼
-最终激活版本（仍含**所有**初始 module）
+"customize" ──► 在 SAME source ApiDef 上创建新 OcrPromptVersion (origin=manual_edit)
+                │   • 复制源模块 + 应用客户编辑补丁（rename / add / delete）
+                │   • 新字段用 LLM 反思扩展 description / ocr_prompt
+                │   • 旧版本置 archived，source.prompt_version_id 指向新版本
+                │   • source.api_code 不变（caller 集成无影响）
+                │   • 不创建新 ApiDef、不切换 URL、不 rebind 文档
+                │
+                ▼
+[3 轮迭代] 每轮 = 分拆 → 局部验证 → 重组（跑在 source.id 上）
+                │   1. OCR 所有"已审视"样本 → 评估每个 module 准确率
+                │   2. 若 overall_accuracy ≥ 99.9% → 早停，复用当前版本
+                │   3. 对失败 module 调 module_optimizer
+                │   4. verify_module_fix 判官：accept 才采纳，reject 保留旧 prompt
+                │   5. composer 组装新版本（在 source 上继续 bump）
+                │
+                ▼
+最终激活版本（source.prompt_version_id 指向它，工作区刷新即看到结果）
 ```
+
+> **历史名词**：代码里仍出现 "fork" / `_fork_api_definition` / `CustomizeJobStatus.forking`
+> 等用词，是 Phase 19 之前的命名保留。Phase 19 起这些 ≈ "在 source 上 bump 版本"，
+> **不再创建新 ApiDef**，不再有 `-c1` api_code 后缀，不再切换工作区。
 
 ---
 
