@@ -41,7 +41,10 @@ from app.processors.gemini_processor import GeminiProcessor  # noqa: E402
 
 
 import uuid as _uuid
-NEW_API_DEF_ID = _uuid.UUID("d352071c-3a6a-4eef-83f7-ac316cc34e0f")
+NEW_API_DEF_ID = _uuid.UUID(os.environ.get(
+    "REGRESSION_API_DEF_ID",
+    "c500b175-7ff4-498a-880a-f596aa4b8cc9",
+))
 UPLOADS = _BACKEND / "data" / "uploads"
 TESTING = _BACKEND.parent / "testing"
 

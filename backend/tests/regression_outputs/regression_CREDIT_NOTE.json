@@ -8,23 +8,19 @@
     "nameOfInvoice": "CREDIT NOTE",
     "invoiceNumber": "CN-2025/519",
     "invoiceDate": "2025-07-15",
-    "totalNetAmount": 709.25,
-    "totalAmount": 709.25,
+    "totalNetAmount": -709.25,
+    "totalAmount": -709.25,
     "currency": "MYR",
     "billToName": "PP CHIN HIN SDN BHD",
     "billToComposite": "LOT PT 168, BLOCK A & B, JLN LAPIS ASRAKAI, BATU 6, JLN TANJUNG LABOH, 83000 BATU PAHAT JOHOR.",
-    "billToCountry": "Malaysia",
-    "billToCountryCode": "MY",
     "billFromName": "PROGRESS WELDED MESH SDN BHD",
     "billFromComposite": "106, JALAN CYBER 5, SENAI INDUSTRIAL ESTATE III, 81400 SENAI, JOHOR.",
-    "billFromCountry": "Malaysia",
-    "billFromCountryCode": "MY",
     "billFromBusinessRegistrationNumber": "201201031154 (1015640-A)",
     "detailOfGoodsOrServices": [
       {
         "articleName": "BEING 2% REBATE FOR EARLY PAYMENT (JUN'25 INVOICE)",
-        "netAmount": 709.25,
-        "grossAmount": 709.25
+        "netAmount": -709.25,
+        "grossAmount": -709.25
       }
     ],
     "originalInvoiceReferences": [

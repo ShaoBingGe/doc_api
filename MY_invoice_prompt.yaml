@@ -192,7 +192,10 @@ prompt_template:
               description: 开票方所在国家的ISO 3166-1 alpha-2国家代码，如：CN, US, MY, SG, JP, GB, DE等。
             billFromTaxIdentificationNumber:
               type: STRING
-              description: 开票方的纳税识别号。如果找不到，则查找税务注册码、'VAT Registration'、'TAX#'。
+              description: |-
+                开票方（卖方）的税务注册码。
+                通用规则：如果找不到，则查找税务注册码、'VAT Registration'、'TAX#'。
+                马来西亚发票补充规则：查找 "TIN"、"TIN No."、"TIN Number"、"Supplier TIN"、"Vendor TIN"、"Seller TIN"、"Income Tax No."；格式必须为 "C" 开头 + 10 位数字（例如 C5884056070、C4908240100），不符合此格式的不要写入该字段；当票面同时存在供应商 TIN 与买方 TIN 时，只取供应商 TIN。**严禁将 SST 号 / Sales Tax No. / SSM 注册号当作 TIN 写入本字段**（SST/SSM 各有专门字段）。
             billFromBusinessRegistrationNumber:
               type: STRING
               description: |-
