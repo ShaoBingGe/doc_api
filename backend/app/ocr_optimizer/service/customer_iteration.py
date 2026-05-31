@@ -305,21 +305,28 @@ def maybe_auto_resume_for_api(api_definition_id: uuid.UUID) -> None:
         waiting = find_waiting_job_for_api(db, api_definition_id)
         if not waiting:
             return
-        # If the upload happened on SOURCE workspace, mirror confirmed
-        # sample IDs onto the fork's config so the rest of the iteration
-        # pipeline (which is fork-centric) sees them.
-        if waiting.source_api_definition_id == api_definition_id and \
-           waiting.new_api_definition_id is not None and \
-           waiting.new_api_definition_id != api_definition_id:
+        # Phase 14a + 16: count confirmed on the SOURCE ApiDef, since
+        # Phase 14a defers the fork until 3/3 are confirmed. Until fork
+        # exists, new_api_definition_id is None — the old code path
+        # tried to count on None and silently returned 0 confirmed,
+        # so the job got stuck in waiting_for_samples even after the
+        # customer marked all 3 docs 已审视.
+        count_id = waiting.source_api_definition_id or waiting.new_api_definition_id
+        if count_id is None:
+            return
+        confirmed, _ = count_confirmed_samples(db, count_id)
+        if confirmed < MIN_SAMPLES_FOR_ITERATION:
+            return
+        # If a fork already exists (legacy: pre-Phase-14a jobs that
+        # forked before sample-gate), mirror sample IDs onto it so the
+        # iteration pipeline finds them.
+        if waiting.new_api_definition_id is not None and \
+           waiting.new_api_definition_id != waiting.source_api_definition_id:
             _mirror_source_samples_to_fork(
                 db,
                 source_id=waiting.source_api_definition_id,
                 fork_id=waiting.new_api_definition_id,
             )
-        # Count using whichever ApiDef the job's sample_document_ids now live on
-        confirmed, _ = count_confirmed_samples(db, waiting.new_api_definition_id)
-        if confirmed < MIN_SAMPLES_FOR_ITERATION:
-            return
         job_id = waiting.id
         logger.info(
             "Auto-resuming customize job %s (confirmed %d/%d)",
@@ -518,6 +525,17 @@ def resume_customize_job(job_id: uuid.UUID) -> bool:
 
     Safe to call multiple times (idempotent): if the job is already past
     `waiting_for_samples`, returns False without doing anything.
+
+    Phase 17: Two execution paths now exist for a waiting job:
+      (a) "post-fork" — legacy jobs that forked first then parked waiting
+          for the FORK's sample count. Resume hands them straight to the
+          iteration runner once the fork has 3 confirmed samples.
+      (b) "pre-fork" — Phase 14a jobs that parked BEFORE reflection / fork
+          to avoid burning LLM credits while the customer was still
+          confirming samples on the SOURCE workspace. For these,
+          `new_api_definition_id` is None. Resume re-enters _execute_pipeline
+          which now sees ≥3 confirmed and proceeds through reflection +
+          fork + iteration in one shot.
     """
     db: Session = SessionLocal()
     try:
@@ -529,10 +547,31 @@ def resume_customize_job(job_id: uuid.UUID) -> bool:
             logger.info("resume_customize_job: job %s not in waiting_for_samples (=%s)",
                         job.id, job.status)
             return False
+
+        # ── Path (b) pre-fork resume ──────────────────────────────────────
         if not job.new_api_definition_id:
-            logger.error("resume_customize_job: job %s has no new_api_definition_id", job.id)
-            return False
-        # Verify the new ApiDef now has enough samples
+            confirmed, total = count_confirmed_samples(db, job.source_api_definition_id)
+            if confirmed < MIN_SAMPLES_FOR_ITERATION:
+                logger.info(
+                    "resume_customize_job(pre-fork): job %s source has %d/%d confirmed, parking",
+                    job.id, confirmed, MIN_SAMPLES_FOR_ITERATION,
+                )
+                return False
+            logger.info(
+                "resume_customize_job(pre-fork): job %s source has %d/%d confirmed — entering _execute_pipeline",
+                job.id, confirmed, MIN_SAMPLES_FOR_ITERATION,
+            )
+            try:
+                _execute_pipeline(db, job)
+            except Exception as exc:
+                logger.exception("pre-fork resume failed for job %s: %s", job.id, exc)
+                _update_job(db, job, status=CustomizeJobStatus.failed.value,
+                            error_message=str(exc)[:1024],
+                            completed_at=datetime.now(timezone.utc))
+                return False
+            return True
+
+        # ── Path (a) post-fork resume ─────────────────────────────────────
         new_api = db.get(ApiDefinition, job.new_api_definition_id)
         if not new_api:
             _update_job(db, job, status=CustomizeJobStatus.failed.value,
@@ -1201,6 +1240,13 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
     # extract on the page.
     new_module_key = src.module_key
     new_json_path = src.json_path
+    # Phase 17 — keep optimizer's display label in sync with the
+    # workspace field column. When the customer renames a field, the
+    # frontend field list shows the NEW camelCase name (cascade rename
+    # in Annotation.field_name). The original Chinese display_name
+    # (e.g. "开票方名称识别") no longer describes the renamed concept,
+    # so we append the new name in parentheses for traceability.
+    new_display_name = src.display_name
     rename_old = patch.get("__rename_old")
     rename_new = patch.get("__rename_new")
     if rename_old and rename_new and rename_old != rename_new:
@@ -1210,6 +1256,13 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
         #   $.billFromName     →  $.supplierName
         if src.json_path and rename_old in src.json_path:
             new_json_path = src.json_path.replace(rename_old, rename_new)
+        # Optimizer-page label: keep the original semantic prefix but
+        # surface the customer's new field name so it matches the
+        # workspace field column at a glance.
+        if src.display_name and rename_new not in src.display_name:
+            new_display_name = f"{src.display_name} → {rename_new}"
+        else:
+            new_display_name = rename_new
         # Append rename hint to the prompt so the LLM gets explicit mapping
         rename_hint = (
             f"\n\n# 字段重命名（Part 3 §3.9）\n"
@@ -1223,7 +1276,7 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
         id=uuid.uuid4(),
         prompt_version_id=new_version_id,
         module_key=new_module_key,
-        display_name=src.display_name,
+        display_name=new_display_name,
         description=new_description,
         json_path=new_json_path,
         schema_fragment=new_schema,
