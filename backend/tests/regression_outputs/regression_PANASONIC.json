@@ -1,0 +1,45 @@
+[
+  {
+    "docType": "invoice",
+    "page": [
+      1
+    ],
+    "invoiceType": "Tax Invoice",
+    "nameOfInvoice": "TAX INVOICE",
+    "invoiceNumber": "9231848653",
+    "invoiceDate": "2025-10-27",
+    "totalNetAmount": 117720.0,
+    "totalAmount": 117720.0,
+    "totalTaxAmount": 0.0,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "A-1-9, PUSAT PERDAGANGAN KUCHAI NO 2, JALAN 1/127 OFF JALAN KUCHAI LAMA KUALA LUMPUR 58200",
+    "billToCountryCode": "MY",
+    "billFromName": "PANASONIC MALAYSIA SDN. BHD.",
+    "billFromComposite": "Lot 10, Jalan 13/2 46200 Petaling Jaya Selangor Darul Ehsan",
+    "billFromCountryCode": "MY",
+    "billFromBusinessRegistrationNumber": "197601000977 (26975-W)",
+    "purchaseOrderNumber": "W1 503372",
+    "dueDate": "2025-12-31",
+    "salesOrderNumber": "9213724089",
+    "deliveryOrderNumber": "9221857772",
+    "detailOfGoodsOrServices": [
+      {
+        "articleName": "R32 RAC Smart (LU) Inv WM 1.0HP",
+        "quantity": 90,
+        "unitOfMeasure": "PC",
+        "unitPrice": 540.0,
+        "netAmount": 48600.0,
+        "grossAmount": 48600.0
+      },
+      {
+        "articleName": "R32 RAC (RU) Inv WM OD 1.0HP",
+        "quantity": 90,
+        "unitOfMeasure": "PC",
+        "unitPrice": 768.0,
+        "netAmount": 69120.0,
+        "grossAmount": 69120.0
+      }
+    ]
+  }
+]

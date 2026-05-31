@@ -1,0 +1,54 @@
+[
+  {
+    "docType": "invoice",
+    "page": [
+      1
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "2604S10083",
+    "invoiceDate": "2026-04-04",
+    "totalNetAmount": 215676.5,
+    "totalAmount": 215676.5,
+    "totalTaxAmount": 0.0,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23,, 8TH & STELLAR, NO.1,, JALAN NAGA EMAS, SRI PETALING, 57000 KUALA LUMPUR, WILAYAH PERSEKUTUAN KUALA LUMPUR, MALAYSIA",
+    "billToCountry": "MALAYSIA",
+    "billToCountryCode": "MY",
+    "billToTaxIdentificationNumber": "C5884056070",
+    "billFromName": "KUMKANG KIND (M) SDN BHD",
+    "billFromComposite": "B-9-01, BLOCK B, OASIS SQUARE NO.2 JALAN PJU 1A/7A, ARA DAMANSARA, 47301 PJ, SELANGOR47301 PETALING JAYA SELANGOR MALAYSIA",
+    "billFromCountry": "MALAYSIA",
+    "billFromCountryCode": "MY",
+    "billFromTaxIdentificationNumber": "C20067004020",
+    "billFromBusinessRegistrationNumber": "200601013195",
+    "detailOfGoodsOrServices": [
+      {
+        "articleName": "SPR330301. ALUMINIUM FORMWORK",
+        "quantity": 1,
+        "unitPrice": 212951.65,
+        "netAmount": 212951.65,
+        "tax": 0,
+        "grossAmount": 212951.65
+      },
+      {
+        "articleName": "SPR330301. STEEL FORMWORK - DOWN FRAME",
+        "description": "*5TH MONTHLY INSTALLMENT - 04/04/2026 TO 03/05/2026 (5/6)",
+        "quantity": 1,
+        "unitPrice": 2724.85,
+        "netAmount": 2724.85,
+        "tax": 0,
+        "grossAmount": 2724.85
+      }
+    ],
+    "detailOfTaxSummary": [
+      {
+        "taxCategory": "SST",
+        "taxRate": "0%",
+        "netTaxableAmount": 215676.5,
+        "tax": 0.0
+      }
+    ]
+  }
+]

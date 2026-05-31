@@ -1,0 +1,38 @@
+field_name	field_value
+billFromBusinessRegistrationNumber	197601000977 (26975-W)
+billFromComposite	Lot 10, Jalan 13/2
+46200 Petaling Jaya Selangor Darul Ehsan
+billFromCountry	Malaysia
+billFromCountryCode	MY
+billFromName	PANASONIC MALAYSIA SDN. BHD.
+billFromTaxIdentificationNumber	W10-2403-32000560
+billToComposite	A-1-9, PUSAT PERDAGANGAN KUCHAI
+NO 2, JALAN 1/127
+OFF JALAN KUCHAI LAMA
+KUALA LUMPUR 58200
+billToCountry	Malaysia
+billToCountryCode	MY
+billToName	PP CHIN HIN SDN BHD
+currency	MYR
+deliveryOrderNumber	9221857772
+detailOfGoodsOrServices[0].articleName	R32 RAC Smart (LU) Inv WM 1.0HP
+detailOfGoodsOrServices[0].netAmount	48600.0
+detailOfGoodsOrServices[0].quantity	90
+detailOfGoodsOrServices[0].unitOfMeasure	PC
+detailOfGoodsOrServices[0].unitPrice	540.0
+detailOfGoodsOrServices[1].articleName	R32 RAC (RU) Inv WM OD 1.0HP
+detailOfGoodsOrServices[1].netAmount	69120.0
+detailOfGoodsOrServices[1].quantity	90
+detailOfGoodsOrServices[1].unitOfMeasure	PC
+detailOfGoodsOrServices[1].unitPrice	768.0
+docType	invoice
+dueDate	2025-12-31
+invoiceDate	2025-10-27
+invoiceNumber	9231848653
+invoiceType	Tax Invoice
+nameOfInvoice	TAX INVOICE
+page[0]	1
+purchaseOrderNumber	503372
+salesOrderNumber	9213724089
+totalAmount	117720.0
+totalNetAmount	117720.0

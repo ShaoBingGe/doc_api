@@ -1,0 +1,42 @@
+field_name	field_value
+billFromBusinessRegistrationNumber	200601013195
+billFromComposite	B-9-01, BLOCK B, OASIS SQUARE NO.2 JALAN PJU 1A/7A, ARA DAMANSARA, 47301 PJ, SELANGOR47301 PETALING JAYA SELANGOR MALAYSIA
+billFromCountry	MALAYSIA
+billFromCountryCode	MY
+billFromName	KUMKANG KIND (M) SDN BHD
+billFromTaxIdentificationNumber	C20067004020
+billToComposite	MENARA CHIN HIN, LEVEL 22-23,, 8TH & STELLAR, NO.1,, JALAN NAGA EMAS, SRI PETALING, 57000 KUALA LUMPUR, WILAYAH PERSEKUTUAN KUALA LUMPUR, MALAYSIA
+billToCountry	MALAYSIA
+billToCountryCode	MY
+billToName	PP CHIN HIN SDN BHD
+billToTaxIdentificationNumber	C5884056070
+currency	MYR
+detailOfGoodsOrServices[0].articleName	ALUMINIUM FORMWORK
+detailOfGoodsOrServices[0].description	SPR330301. ALUMINIUM FORMWORK
+detailOfGoodsOrServices[0].grossAmount	212951.65
+detailOfGoodsOrServices[0].netAmount	212951.65
+detailOfGoodsOrServices[0].quantity	1
+detailOfGoodsOrServices[0].tax	0.0
+detailOfGoodsOrServices[0].taxRate	0%
+detailOfGoodsOrServices[0].unitPrice	212951.65
+detailOfGoodsOrServices[1].articleName	STEEL FORMWORK - DOWN FRAME
+detailOfGoodsOrServices[1].description	SPR330301. STEEL FORMWORK - DOWN FRAME *5TH MONTHLY INSTALLMENT - 04/04/2026 TO 03/05/2026 (5/6)
+detailOfGoodsOrServices[1].grossAmount	2724.85
+detailOfGoodsOrServices[1].netAmount	2724.85
+detailOfGoodsOrServices[1].quantity	1
+detailOfGoodsOrServices[1].tax	0.0
+detailOfGoodsOrServices[1].taxRate	0%
+detailOfGoodsOrServices[1].unitPrice	2724.85
+detailOfTaxSummary[0].netTaxableAmount	215676.5
+detailOfTaxSummary[0].tax	0.0
+detailOfTaxSummary[0].taxCategory	SSV0
+detailOfTaxSummary[0].taxRate	0%
+docType	invoice
+invoiceDate	2026-04-04
+invoiceNumber	2604S10083
+invoiceType	Tax Invoice
+nameOfInvoice	INVOICE
+page[0]	1
+totalAmount	215676.5
+totalNetAmount	215676.5
+totalTaxAmount	0.0
