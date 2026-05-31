@@ -218,6 +218,8 @@ function FieldRow({
   isSelected,
   hasDirtyDraft,
   editedOnOtherDocs,
+  isRenamedFrom,
+  isValueModifiedHere,
   onHover,
   onSelect,
   onStartEdit,
@@ -238,6 +240,12 @@ function FieldRow({
   /** design v8 — true when this field's value was modified on a DIFFERENT
    *  sample doc of the same ApiDef. Shows a soft cyan badge. */
   editedOnOtherDocs?: boolean
+  /** design v8 — when this field was renamed (the current label is the
+   *  NEW name), carries the OLD name for tooltip + subtitle display. */
+  isRenamedFrom?: string | null
+  /** design v8 — true when this field's VALUE was modified on THIS doc
+   *  and persisted to pending_edits.modifications. Shows purple badge. */
+  isValueModifiedHere?: boolean
   onHover: (id: string | null) => void
   onSelect: (id: string | null) => void
   onStartEdit: (id: string) => void
@@ -280,10 +288,20 @@ function FieldRow({
       title={hasDirtyDraft ? '已有待提交修改，双击查看' : '点击聚焦，双击进入字段编辑面板'}
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
-        {/* Label */}
-        <span className="text-gray-400 text-sm w-28 flex-shrink-0 truncate">
-          {annotation.label}
-        </span>
+        {/* Label + (optional rename history subtitle) */}
+        <div className="flex flex-col w-28 flex-shrink-0 min-w-0">
+          <span className="text-gray-400 text-sm truncate">
+            {annotation.label}
+          </span>
+          {isRenamedFrom && (
+            <span
+              className="text-[10px] text-emerald-400/70 truncate"
+              title={`原命名: ${isRenamedFrom}（已重命名为 ${annotation.label}）`}
+            >
+              原: {isRenamedFrom}
+            </span>
+          )}
+        </div>
 
         {/* Value */}
         <span className={cn(
@@ -294,15 +312,32 @@ function FieldRow({
             ? <span className="text-gray-600">—</span>
             : String(value)}
         </span>
+        {/* Badge priority: 已暂存 > 已重命名 > 已保存修改 > 其他文件已修改 */}
         {hasDirtyDraft && (
           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-medium flex-shrink-0">
             已暂存
           </span>
         )}
-        {!hasDirtyDraft && editedOnOtherDocs && (
+        {!hasDirtyDraft && isRenamedFrom && (
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-medium flex-shrink-0"
+            title={`已从 ${isRenamedFrom} 重命名为 ${annotation.label}（全局生效）`}
+          >
+            已重命名
+          </span>
+        )}
+        {!hasDirtyDraft && !isRenamedFrom && isValueModifiedHere && (
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-medium flex-shrink-0"
+            title="本样本已修改此字段值，等待客户化提交"
+          >
+            已保存修改
+          </span>
+        )}
+        {!hasDirtyDraft && !isRenamedFrom && !isValueModifiedHere && editedOnOtherDocs && (
           <span
             className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-medium flex-shrink-0"
-            title="此字段在其他文件中已被修改"
+            title="此字段在其他样本中已被修改"
           >
             其他文件已修改
           </span>
@@ -1303,6 +1338,25 @@ function FieldsView() {
       (f) => !localNames.has(f.field_name) && f.added_at_doc_id !== currentDocId,
     )
   }, [pendingEdits, annotations, currentDocId])
+
+  // design v8 — reverse rename map {new → old} used to:
+  //   - show "原: oldName" subtitle + "已重命名" badge on renamed rows
+  //   - fall back to fieldEditDrafts[oldName] when looking up dirty drafts,
+  //     so cascade-rename doesn't invalidate the editor's draft association
+  const renamesReverse = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const [oldN, newN] of Object.entries(pendingEdits?.renames || {})) {
+      m[newN] = oldN
+    }
+    return m
+  }, [pendingEdits])
+
+  // Set of field names whose value was modified on THIS doc and persisted
+  // to pending_edits.modifications (used for purple "已保存修改" badge).
+  const valueModifiedHere = useMemo(() => {
+    if (!pendingEdits || !currentDocId) return new Set<string>()
+    return new Set(Object.keys(pendingEdits.modifications?.[currentDocId] || {}))
+  }, [pendingEdits, currentDocId])
   const resultMap = useMemo(
     () => new Map(processingResults.map((r) => [r.annotationId, r])),
     [processingResults],
@@ -1467,8 +1521,11 @@ function FieldsView() {
               <p className="text-xs text-gray-500 text-center py-4">暂无字段，等待文档处理完成</p>
             ) : (
               scalars.map((ann) => {
-                // Draft keyed by full label (matches startEditingField).
-                const d = fieldEditDrafts[ann.label]
+                // design v8: lookup drafts by current label OR by the
+                // pre-rename old name (so cascade-rename doesn't make
+                // the editor's draft association vanish).
+                const oldName = renamesReverse[ann.label]
+                const d = fieldEditDrafts[ann.label] ?? (oldName ? fieldEditDrafts[oldName] : undefined)
                 const hasDirtyDraft = !!d && (
                   (d.originalName || '') !== d.correctedName ||
                   String(d.originalValue ?? '') !== d.correctedValue ||
@@ -1483,6 +1540,8 @@ function FieldsView() {
                     isSelected={selectedFieldId === ann.id}
                     hasDirtyDraft={hasDirtyDraft}
                     editedOnOtherDocs={otherDocsEditedFields.has(ann.label)}
+                    isRenamedFrom={oldName ?? null}
+                    isValueModifiedHere={valueModifiedHere.has(ann.label)}
                     onHover={setHoveredFieldId}
                     onSelect={setSelectedFieldId}
                     onStartEdit={startEditingField}
