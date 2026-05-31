@@ -192,67 +192,23 @@ def _build_cross_doc_context_for_diffs(
     return deduped
 
 
-def _mirror_source_samples_to_fork(
-    db: Session,
-    *,
-    source_id: uuid.UUID,
-    fork_id: uuid.UUID,
-) -> int:
-    """Phase 12 single-workspace flow: copy source ApiDef's
-    sample_document_ids onto the fork ApiDef's config + re-bind each
-    Document to fork.api_definition_id.
-
-    This makes the rest of the iteration pipeline (run_orchestrator,
-    annotation queries, etc.) see those samples without rewriting any
-    fork-specific code path. The customer keeps editing on source URL;
-    fork is purely an internal artifact.
-
-    Returns the number of doc-ids mirrored.
-    """
-    from app.models.api_definition import ApiDefinition as _ApiDef
-    from app.models.document import Document as _Document
-
-    src = db.get(_ApiDef, source_id)
-    fork = db.get(_ApiDef, fork_id)
-    if not src or not fork:
-        return 0
-    sample_ids = (src.config or {}).get("sample_document_ids") or []
-    if not sample_ids:
-        return 0
-
-    fork_cfg = dict(fork.config or {})
-    fork_cfg["sample_document_ids"] = [str(s) for s in sample_ids]
-    fork.config = fork_cfg
-
-    # Re-bind the Document rows. They're still physically the same files
-    # on disk; we just transfer the API association. (The customer won't
-    # see this — they're on source URL — but iteration code reads docs by
-    # api_definition_id, so we need to point them at fork.)
-    n = 0
-    for sid in sample_ids:
-        try:
-            doc = db.get(_Document, uuid.UUID(str(sid)))
-            if doc and doc.api_definition_id != fork_id:
-                doc.api_definition_id = fork_id
-                n += 1
-        except Exception:
-            continue
-    db.commit()
-    logger.info(
-        "Mirrored %d sample documents from source %s to fork %s",
-        n, source_id, fork_id,
-    )
-    return n
+# (C4 cleanup) — _mirror_source_samples_to_fork removed.
+# Phase 19 collapsed the fork ApiDef onto source, so there's no longer a
+# second ApiDef to mirror docs to. Every call site was either
+# - the post-fork block in _execute_pipeline (removed in Phase 19), or
+# - the auto-resume branch in maybe_auto_resume_for_api (removed in C5).
 
 
 def find_waiting_job_for_api(db: Session, api_definition_id: uuid.UUID) -> CustomizeJob | None:
     """Return the most-recent `waiting_for_samples` job whose new ApiDef
     OR source ApiDef = api_definition_id.
 
-    Phase 12: extended to also match by source_api_definition_id so that
-    when the customer uploads/confirms samples on the SOURCE workspace
-    (per the single-workspace UX), the same auto-resume hook fires.
-    Used by the sample-upload hook to auto-resume.
+    Phase 19 collapsed the fork onto source, so for any job created
+    after Phase 19 the two foreign keys point at the same row — either
+    side of the OR matches. We intentionally KEEP the OR for backwards
+    compatibility with pre-Phase-19 job rows already in the DB, whose
+    `new_api_definition_id` may point at a separate -c1 ApiDef. Without
+    the OR, those legacy jobs would be invisible to auto-resume.
     """
     from sqlalchemy import or_
     return (
@@ -305,28 +261,17 @@ def maybe_auto_resume_for_api(api_definition_id: uuid.UUID) -> None:
         waiting = find_waiting_job_for_api(db, api_definition_id)
         if not waiting:
             return
-        # Phase 14a + 16: count confirmed on the SOURCE ApiDef, since
-        # Phase 14a defers the fork until 3/3 are confirmed. Until fork
-        # exists, new_api_definition_id is None — the old code path
-        # tried to count on None and silently returned 0 confirmed,
-        # so the job got stuck in waiting_for_samples even after the
-        # customer marked all 3 docs 已审视.
+        # Phase 14a + 16 + 19: count confirmed on the SOURCE ApiDef.
+        # Phase 19 collapsed customize onto source — the iteration runs
+        # on source.id directly, so there's no fork-side count to consult.
         count_id = waiting.source_api_definition_id or waiting.new_api_definition_id
         if count_id is None:
             return
         confirmed, _ = count_confirmed_samples(db, count_id)
         if confirmed < MIN_SAMPLES_FOR_ITERATION:
             return
-        # If a fork already exists (legacy: pre-Phase-14a jobs that
-        # forked before sample-gate), mirror sample IDs onto it so the
-        # iteration pipeline finds them.
-        if waiting.new_api_definition_id is not None and \
-           waiting.new_api_definition_id != waiting.source_api_definition_id:
-            _mirror_source_samples_to_fork(
-                db,
-                source_id=waiting.source_api_definition_id,
-                fork_id=waiting.new_api_definition_id,
-            )
+        # (C5 cleanup) — fork-mirror branch removed. Phase 19 makes
+        # source ≡ fork, so the rebind condition is permanently false.
         job_id = waiting.id
         logger.info(
             "Auto-resuming customize job %s (confirmed %d/%d)",
@@ -1573,18 +1518,7 @@ def _to_snake(name: str) -> str:
     return s3 or "field"
 
 
-def _next_customer_api_code(db: Session, src_api: ApiDefinition) -> str:
-    base = src_api.api_code or "api"
-    m = re.match(r"^(.*)-c(\d+)$", base)
-    if m:
-        base = m.group(1)
-
-    n = 1
-    while True:
-        candidate = f"{base}-c{n}"
-        exists = db.query(ApiDefinition).filter(ApiDefinition.api_code == candidate).first()
-        if not exists:
-            return candidate
-        n += 1
-        if n > 9999:
-            return f"{base}-c{uuid.uuid4().hex[:8]}"
+# (C6 cleanup) — _next_customer_api_code removed.
+# Phase 19 stopped generating a separate "-c1" api_code per customize
+# (the customer's API URL stays the same and the prompt version bumps
+# in place). The helper had no other callers.
