@@ -868,30 +868,11 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
                 new_api_definition_id=new_api.id,
                 new_api_code=new_api.api_code)
 
-    # ── Phase 18 CRITICAL FIX: rebind source's sample docs to fork ──────
-    # Without this, the iteration runner queries fork.id but documents
-    # are still bound to source.id → no docs found → iteration runs on
-    # zero samples → fork's ProcessingResults never get updated → when
-    # the customer navigates to the fork URL after completion, the
-    # workspace loads docs that don't belong to fork (they're still on
-    # source) and the fork shows EMPTY data. Customer reads this as
-    # "everything reverted to original prompt".
-    #
-    # Previously _mirror_source_samples_to_fork only ran from the
-    # auto-resume hook AND only when waiting.new_api_definition_id was
-    # already set — which was always None for Phase-14a pre-fork jobs.
-    # Now we call it explicitly right after the fork is created, so
-    # iteration always finds the samples on the fork.
-    try:
-        n_mirrored = _mirror_source_samples_to_fork(
-            db, source_id=src_id, fork_id=new_api.id,
-        )
-        logger.info(
-            "Post-fork: rebound %d sample docs from source %s to fork %s",
-            n_mirrored, src_id, new_api.id,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Post-fork sample mirror failed: %s", exc)
+    # Phase 19 — no doc rebinding. new_api IS src_api; iteration's
+    # api_definition_id == source.id; ProcessingResults land on the
+    # source workspace's docs directly. The customer's URL never
+    # changes; refreshing the source workspace shows the new prompt's
+    # output in-place.
 
     # Phase 5 revisited (design v8 / June '26 UX fix):
     #
@@ -1045,44 +1026,75 @@ def _fork_api_definition(
     reflections: dict[str, Any],
     user_id: uuid.UUID | None,
 ) -> tuple[ApiDefinition, OcrPromptVersion, list[OcrModule]]:
-    new_api_code = _next_customer_api_code(db, src_api)
-    new_name = f"{src_api.name} (自定义)"
+    """Phase 19 — collapse the customize "fork" onto the source ApiDef.
 
-    src_cfg = dict(src_api.config or {})
-    new_cfg = copy.deepcopy(src_cfg)
-    new_cfg["source_template_id"] = str(src_api.id)
-    new_cfg["fork_origin"] = "customer_customize"
+    Previous design created a separate ApiDef with a `-c1` api_code, which
+    forced the customer to navigate to a different /workspace/api/<id>
+    URL to see the iteration results. Repeated UX feedback: that breaks
+    "step-by-step in one workspace" — the customer's workflow should stay
+    on the source URL forever.
 
-    new_api = ApiDefinition(
-        user_id=user_id,
-        name=new_name,
-        api_code=new_api_code,
-        description=src_api.description,
-        status=ApiDefinitionStatus.draft,
-        version=1,
-        response_schema=src_api.response_schema,
-        processor_type=src_api.processor_type,
-        model_name=src_api.model_name,
-        config=new_cfg,
-    )
-    db.add(new_api)
-    db.flush()
+    New design:
+      - NO new ApiDefinition row
+      - NEW OcrPromptVersion on the SAME source ApiDef (next int version)
+      - NEW OcrModule rows on the new version
+      - source.prompt_version_id flips to point at the new version
+      - source.api_code is unchanged (caller integrations don't break)
+      - Iteration runs on source's docs (no document rebinding)
+      - Job.new_api_definition_id == source.id (we return src_api here)
+
+    Audit trail is preserved via the OcrPromptVersion chain
+    (parent_version_id), and the prior version row stays in DB with
+    status='archived'.
+    """
+    # Mark the prior active version as archived so the new one becomes
+    # the unambiguous active version. (Mirrors _deactivate_others.)
+    db.query(OcrPromptVersion).filter(
+        OcrPromptVersion.api_definition_id == src_api.id,
+        OcrPromptVersion.status == PromptVersionStatus.active.value,
+    ).update({"status": PromptVersionStatus.archived.value})
+
+    # Compute next integer version number on source
+    used_ints: set[int] = set()
+    for (label,) in (
+        db.query(OcrPromptVersion.version)
+        .filter(OcrPromptVersion.api_definition_id == src_api.id)
+        .all()
+    ):
+        if label is None:
+            continue
+        s = str(label)
+        if "." in s:
+            continue
+        try:
+            used_ints.add(int(s))
+        except ValueError:
+            continue
+    next_version_num = 1
+    while next_version_num in used_ints:
+        next_version_num += 1
 
     new_version = OcrPromptVersion(
         id=uuid.uuid4(),
-        api_definition_id=new_api.id,
-        version="1",
+        api_definition_id=src_api.id,
+        version=str(next_version_num),
         parent_version_id=src_version.id,
         status=PromptVersionStatus.active.value,
         origin=VersionOrigin.manual_edit.value,
         composed_prompt="",
         composed_schema=None,
-        # Country-wide rules are version-level and DON'T change on fork.
+        # Country-wide rules are version-level and DON'T change on customize.
         # They stay the same all the way through the 3 rounds.
         country_global_text=src_version.country_global_text,
-        notes=f"forked from {src_api.api_code} v{src_version.version} via customer customize",
+        notes=f"customer customize: v{src_version.version} → v{next_version_num} ({len(diffs)} diffs)",
         activated_at=datetime.now(timezone.utc),
     )
+
+    # `new_api` returned to caller is the SAME src_api now pointing at the
+    # new active version. Keep the variable name to minimize call-site
+    # churn — every downstream reference to `new_api.id` still works
+    # because new_api.id == src_api.id.
+    new_api = src_api
 
     # Build a quick lookup of source module_keys so we can detect
     # "orphan edit diffs" — edits whose module_key has no matching source
@@ -1223,8 +1235,11 @@ def _fork_api_definition(
     for m in new_modules:
         db.add(m)
 
+    # Phase 19 — source ApiDef's active version now points to the new
+    # customize version. status stays whatever it was (don't downgrade
+    # an active ApiDef to draft just because we created a new prompt
+    # version on it).
     new_api.prompt_version_id = new_version.id
-    new_api.status = ApiDefinitionStatus.draft
     db.commit()
 
     # NOTE (design v3): inherited sample annotations are NOT auto-GT'd.

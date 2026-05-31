@@ -1556,16 +1556,27 @@ function CustomizeBar() {
         {customizeJob.errorMessage && (
           <div className="text-xs text-red-300/80">{customizeJob.errorMessage}</div>
         )}
-        {customizeJob.status === 'completed' && customizeJob.newApiDefinitionId && (
-          <button
-            onClick={() => {
-              navigate(`/workspace/api/${customizeJob.newApiDefinitionId}`)
-              clearCustomizeJob()
-            }}
-            className="w-full px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded transition-colors"
-          >
-            打开新模板工作区 →
-          </button>
+        {customizeJob.status === 'completed' && (
+          <div className="space-y-2">
+            <p className="text-[11px] text-emerald-200/80 leading-relaxed">
+              ✓ 新版本已直接激活在本工作区 — 无需切换 URL。
+              字段栏和 JSON 视图已更新为优化后的识别结果。
+            </p>
+            <button
+              onClick={async () => {
+                // Refresh the workspace to load the new active version's
+                // modules + ProcessingResults on source's docs.
+                const apiId = useWorkspaceStore.getState().apiDefinitionId
+                if (apiId) {
+                  await useWorkspaceStore.getState().loadApiDefinition(apiId)
+                }
+                clearCustomizeJob()
+              }}
+              className="w-full px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded transition-colors"
+            >
+              刷新本工作区查看结果
+            </button>
+          </div>
         )}
       </div>
     )
