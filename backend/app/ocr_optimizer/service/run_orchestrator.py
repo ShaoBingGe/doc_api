@@ -314,6 +314,8 @@ def manual_patch(
         origin=VersionOrigin.manual_edit.value,
         composed_prompt="",
         composed_schema=None,
+        # country-wide rules are version-level — inherit from source.
+        country_global_text=source.country_global_text,
         overall_accuracy=None,
         produced_by_run_id=open_run.id if open_run else None,
         produced_in_round=open_run.current_round_num if open_run else None,
@@ -344,7 +346,10 @@ def manual_patch(
 
     try:
         new_version.composed_schema = composer.assemble_schema(new_modules)
-        new_version.composed_prompt = composer.assemble_prompt(new_modules)
+        new_version.composed_prompt = composer.assemble_prompt(
+            new_modules,
+            country_global=new_version.country_global_text,
+        )
     except ValueError as exc:
         raise ValidationError(f"Compose failed for manual patch: {exc}") from exc
 
@@ -850,6 +855,8 @@ def _run_one_round(
         origin=VersionOrigin.round.value,
         composed_prompt="",
         composed_schema=None,
+        # Inherit country-wide rules — rounds don't touch this text.
+        country_global_text=current_version.country_global_text,
         produced_by_run_id=run.id,
         produced_in_round=round_num,
         overall_accuracy=rnd.overall_accuracy,
@@ -868,7 +875,10 @@ def _run_one_round(
 
     try:
         next_version.composed_schema = composer.assemble_schema(new_modules)
-        next_version.composed_prompt = composer.assemble_prompt(new_modules)
+        next_version.composed_prompt = composer.assemble_prompt(
+            new_modules,
+            country_global=next_version.country_global_text,
+        )
     except ValueError as exc:
         logger.warning("Compose failed for round %d, reusing current version: %s",
                        round_num, exc)

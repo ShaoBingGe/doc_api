@@ -115,6 +115,12 @@ class OcrPromptVersion(UUIDMixin, Base):
     )
     activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Country-wide rule text (Part 1 + Part 2 from yaml.prompt_format).
+    # Promoted from the legacy `global_rules` OcrModule row so it lives at
+    # the version level — composer injects it between GLOBAL_PREAMBLE and
+    # the schema block. Nullable so non-templated ApiDefs (no country
+    # context) compose without it.
+    country_global_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     modules: Mapped[list["OcrModule"]] = relationship(
         "OcrModule",

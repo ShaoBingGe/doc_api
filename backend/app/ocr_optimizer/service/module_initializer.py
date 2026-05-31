@@ -163,7 +163,11 @@ def init_version(
     # Compose
     try:
         version.composed_schema = assemble_schema(modules)
-        version.composed_prompt = assemble_prompt(modules)
+        # Legacy path: this initializer doesn't know the country context.
+        # Country-templated init lives in preset_init.py, which sets
+        # OcrPromptVersion.country_global_text directly. Pass None so
+        # composer skips the country section (composed_prompt still well-formed).
+        version.composed_prompt = assemble_prompt(modules, country_global=None)
     except ValueError as exc:
         raise ValidationError(f"Schema composition failed: {exc}")
 

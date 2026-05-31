@@ -685,6 +685,9 @@ def _fork_api_definition(
         origin=VersionOrigin.manual_edit.value,
         composed_prompt="",
         composed_schema=None,
+        # Country-wide rules are version-level and DON'T change on fork.
+        # They stay the same all the way through the 3 rounds.
+        country_global_text=src_version.country_global_text,
         notes=f"forked from {src_api.api_code} v{src_version.version} via customer customize",
         activated_at=datetime.now(timezone.utc),
     )
@@ -756,7 +759,10 @@ def _fork_api_definition(
 
     try:
         new_version.composed_schema = composer.assemble_schema(new_modules)
-        new_version.composed_prompt = composer.assemble_prompt(new_modules)
+        new_version.composed_prompt = composer.assemble_prompt(
+            new_modules,
+            country_global=new_version.country_global_text,
+        )
     except ValueError as exc:
         raise ValidationError(f"Compose failed for forked version: {exc}") from exc
 

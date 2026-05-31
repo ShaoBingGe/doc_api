@@ -293,6 +293,12 @@ Empty lists mean no change.
 
 **文件**: `backend/app/ocr_optimizer/service/composer.py`
 **调用点**: 每轮末尾 + fork 创建 v1 时
+**签名（design v6）**:
+```python
+def assemble_prompt(modules: Iterable, *, country_global: str | None) -> str
+```
+`country_global` 是 **keyword-only 必传**。来源：`OcrPromptVersion.country_global_text` 列。
+fork / round 通过 `new_version.country_global_text = src_version.country_global_text` 继承。
 
 把所有模块组装成完整 composed_prompt + composed_schema。结构：
 
@@ -304,6 +310,9 @@ GLOBAL_PREAMBLE
 2. 字段缺失时输出 null，不要捏造。
 3. 日期统一格式为 YYYY-MM-DD；数字去掉千分位与货币符号。"
 
+country_global_text  ← design v6: 国家全局规则（原 global_rules 模块下放为版本级列）
+<v.country_global_text>     例如 MY 的「# Part 1 国家全局说明 / # Part 2 字段规则」
+
 GLOBAL_OUTPUT_CONTRACT
 "# 整体输出 Schema
 返回的 JSON 必须符合下列 Schema：
@@ -311,7 +320,7 @@ GLOBAL_OUTPUT_CONTRACT
 <composed_schema>
 ```"
 
-PER-MODULE BODIES
+PER-MODULE BODIES (不再含 global_rules — design v6 已下放)
 "# 模块识别指令
 ## 1. {display_name_1}
 {module_1.ocr_prompt}

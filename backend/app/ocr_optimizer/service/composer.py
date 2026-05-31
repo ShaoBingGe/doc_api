@@ -38,12 +38,26 @@ GLOBAL_SELF_CHECK = """
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def assemble_prompt(modules: Iterable) -> str:
+def assemble_prompt(modules: Iterable, *, country_global: str | None) -> str:
     """
-    Concatenate global frame + each module's ocr_prompt into a single string.
+    Concatenate global frame + country-wide rules + each module's ocr_prompt
+    into a single composed prompt string.
 
     `modules` should already be sorted by order_index (the caller's
     responsibility, or rely on the relationship's order_by).
+
+    `country_global` is REQUIRED (keyword-only) to force every caller to
+    decide explicitly. Pass:
+      - the version's `country_global_text` for country-templated ApiDefs
+      - `None` or "" for non-templated ApiDefs (no country section rendered)
+
+    Render order (design v6):
+        GLOBAL_PREAMBLE
+        country_global       ← injected here (skipped when empty)
+        GLOBAL_OUTPUT_CONTRACT (composed schema)
+        # 模块识别指令
+        ## 1..N field modules
+        GLOBAL_SELF_CHECK
     """
     mod_list = list(modules)
     body_parts: list[str] = []
@@ -58,9 +72,14 @@ def assemble_prompt(modules: Iterable) -> str:
         "返回的 JSON 必须符合下列 Schema：\n"
         f"```json\n{schema_json}\n```\n"
     )
+    country_section = ""
+    if country_global and country_global.strip():
+        country_section = f"\n{country_global.strip()}\n"
+
     return (
         GLOBAL_PREAMBLE
         + "\n"
+        + country_section
         + output_contract
         + "\n# 模块识别指令\n"
         + "\n".join(body_parts)

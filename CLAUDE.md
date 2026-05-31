@@ -32,17 +32,32 @@ fork ──► 新 ApiDef（自带 api_code）+ v1 (manual_edit)
 
 ## 五大原则（违反任一条 = bug）
 
-### ① 全局 Rules 永远不能丢
+### ① 国家全局规则（country_global_text）
 
-**文件**: `backend/app/ocr_optimizer/service/composer.py`
+**文件**:
+- `backend/app/ocr_optimizer/models.py` — `OcrPromptVersion.country_global_text`
+- `backend/app/ocr_optimizer/service/composer.py` — 渲染顺序
 
 `GLOBAL_PREAMBLE`、`GLOBAL_OUTPUT_CONTRACT`（schema 引用块）、`GLOBAL_SELF_CHECK` 是写死在 composer 里的字符串，**任何路径都不允许动这三段**。
 
-模块化的"全局规则"以 `global_rules` 这个 module_key 表达，`json_path=""` 不贡献 schema 但贡献 ocr_prompt 文本。它**必须始终存在**于任意版本里。
+国家全局规则文本以 `OcrPromptVersion.country_global_text` 一列持久化（design v6，原 `global_rules` OcrModule 已下放为这一列）。composer 在 `GLOBAL_PREAMBLE` 与 schema 块之间强制注入：
+
+```
+GLOBAL_PREAMBLE
+country_global_text   ← 这里
+GLOBAL_OUTPUT_CONTRACT (schema)
+## 1..N 字段模块
+GLOBAL_SELF_CHECK
+```
+
+`composer.assemble_prompt(modules, *, country_global)` 是 **keyword-only 必传**；
+fork / round 通过 `new_version.country_global_text = src_version.country_global_text` 继承，整个生命周期不变动。
 
 | ❌ 错误 | ✅ 正确 |
 |---|---|
-| 让 meta_optimizer 删 global_rules | global_rules 在 `well_performing` 守护以外，但代码侧已显式约定不允许移除 |
+| 把全局规则塞进 OcrModule 表 | 用 `OcrPromptVersion.country_global_text` 列 |
+| round / fork 改写国家文本 | 直接从 `src_version.country_global_text` 拷贝到 new_version |
+| 在 OcrModule 表里搜 `module_key='global_rules'` | 已迁移；只查 `country_global_text` 列 |
 | 在 round 中改写 GLOBAL_PREAMBLE | 仅可在 composer.py 源码层修改，需 PR 审查 |
 
 ---
@@ -153,7 +168,8 @@ prompt: |
 | 模型 | 约束 |
 |---|---|
 | `OcrPromptVersion.composed_prompt` | UTF-8 字符串，包含 GLOBAL_PREAMBLE 前缀。不允许为空。 |
-| `OcrPromptVersion.composed_schema` | dict，含 `type:"object"`、`properties` 至少含 1 个 key（除 global_rules-only 的早期状态外） |
+| `OcrPromptVersion.composed_schema` | dict，含 `type:"object"`、`properties` 至少含 1 个 key |
+| `OcrPromptVersion.country_global_text` | 国家全局规则文本（design v6）。fork / round 一律继承，不允许 round 内修改。 |
 | `OcrModule.json_path` | `"$"` / `""` 表示全局（贡献到 root.properties）；其他用 jsonpath-lite 语法 |
 | `OcrModule.skill_ids` | 只读，HARD COPY，optimizer 不能写 |
 | `Annotation.is_corrected` | True = GT。由客户在工作区显式"已审视"或编辑触发；**不允许自动批量 True** |

@@ -118,7 +118,7 @@ def decompose_country_template(country: str) -> dict[str, Any]:
     invoice_branch = _extract_invoice_branch(raw_schema)
 
     modules: list[dict[str, Any]] = []
-    modules.append(_build_global_rules_module(rendered_prompt))
+    country_global_text = _extract_global_rules_text(rendered_prompt)
 
     props = invoice_branch.get("properties") or {}
     order_index = 1
@@ -145,6 +145,7 @@ def decompose_country_template(country: str) -> dict[str, Any]:
         "yaml_id": data.get("id"),
         "prompt_format": rendered_prompt,
         "json_schema": raw_schema,  # store original (with anyOf intact)
+        "country_global_text": country_global_text,
         "modules": modules,
     }
 
@@ -165,17 +166,21 @@ def _extract_invoice_branch(raw_schema: dict) -> dict:
     return any_of[0]
 
 
-def _build_global_rules_module(rendered_prompt: str) -> dict[str, Any]:
-    """Extract the global-rules section from prompt_format (see design §6.4 §7).
+def _extract_global_rules_text(rendered_prompt: str) -> str:
+    """Extract the country-global-rules section from prompt_format.
+
+    Replaces the legacy `_build_global_rules_module` — per design v6 the
+    rules live in `OcrPromptVersion.country_global_text` instead of being
+    wrapped as a fake module.
 
     Tries each marker in order. Captures from the FIRST match (inclusive)
-    to the end of prompt_format. Falls back to storing the entire prompt
-    when no marker is found (lenient — better than failing init).
+    to the end of prompt_format. Falls back to the entire prompt when no
+    marker is found (lenient — better than failing init).
 
-    For the design-v5 layout (# Part 1 / # Part 2), captures from "# Part 1"
-    through end of file — this gives the global_rules module the FULL
-    country knowledge AND the cross-field output rules together, which is
-    what the composer ultimately wants in the system prompt anyway.
+    For the design-v5 yaml layout (# Part 1 / # Part 2), captures from
+    "# Part 1" through end of file — country knowledge + cross-field
+    output rules together. That is exactly what composer injects between
+    GLOBAL_PREAMBLE and the schema block.
     """
     rules_text = rendered_prompt
     matched_marker: str | None = None
@@ -188,30 +193,12 @@ def _build_global_rules_module(rendered_prompt: str) -> dict[str, Any]:
     if matched_marker is None:
         logger.warning(
             "No global-rules marker found in yaml.prompt_format (tried %s); "
-            "storing entire prompt as global_rules.ocr_prompt",
+            "storing entire prompt as country_global_text",
             list(_GLOBAL_RULES_MARKERS),
         )
     else:
-        logger.info("Global rules captured using marker %r", matched_marker)
-
-    return {
-        "module_key": "global_rules",
-        "display_name": "全局规则与约束",
-        "json_path": "$",
-        "schema_fragment": {},  # contributes no schema (§6.4 §10 note)
-        "ocr_suggestions": {
-            "semantics": "全局规则不针对单个字段",
-            "position": "适用于所有字段",
-            "most_common_feature": "—",
-            "extra_features": [],
-        },
-        "ocr_prompt": rules_text,
-        "description": (
-            "整张文档级别的提取规则集合：国家全局说明 + 跨字段输出规则。"
-            "由 yaml.prompt_format 中『# Part 1』及之后所有段落组成。"
-        ),
-        "order_index": 0,
-    }
+        logger.info("country_global_text captured using marker %r", matched_marker)
+    return rules_text
 
 
 def _snake(camel: str) -> str:

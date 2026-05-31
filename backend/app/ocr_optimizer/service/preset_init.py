@@ -85,6 +85,7 @@ def init_from_country_template(
         origin=VersionOrigin.init.value,
         composed_prompt=decomposed["prompt_format"],  # §5.2 / §6.4 exception: raw yaml text
         composed_schema=decomposed["json_schema"],
+        country_global_text=decomposed["country_global_text"],
         notes=f"Initial version from preset template {country}_invoice_prompt.yaml",
         activated_at=datetime.now(timezone.utc),
     )
