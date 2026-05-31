@@ -717,9 +717,15 @@ def _fork_api_definition(
     # corrections on `detailOfGoodsOrServices[0..N].field` all route to module
     # `detail_of_goods_or_services`. We accumulate their prompt suffixes so no
     # correction gets dropped; description and schema_type take last-wins.
+    #
+    # add_specs entries are (diff, reflection_key) tuples. The reflection_key
+    # is computed at append time to MIRROR the reflector's keying
+    # (reflector.py line 75: `diff.get("module_key") or f"_new_{idx}"`)
+    # — this avoids the fragile `diffs.index(d)` lookup later, which broke
+    # for Phase-7 promoted dicts that aren't members of the original list.
     edits_by_key: dict[str, dict] = {}
-    add_specs: list[dict] = []
-    for d in diffs:
+    add_specs: list[tuple[dict, str | None]] = []
+    for orig_idx, d in enumerate(diffs):
         if d.get("kind") == "edit":
             mk = d.get("module_key")
             if not mk:
@@ -741,7 +747,9 @@ def _fork_api_definition(
                     "(original_name=%r → corrected_name=%r)",
                     mk, on, cn,
                 )
-                add_specs.append(synth)
+                # Reflector saw this as kind=edit and keyed reflection by
+                # original module_key — reuse it.
+                add_specs.append((synth, mk))
                 continue
             existing = edits_by_key.get(mk, {})
             r = reflections.get(mk)
@@ -788,7 +796,9 @@ def _fork_api_definition(
             if existing:
                 edits_by_key[mk] = existing
         elif d.get("kind") == "add":
-            add_specs.append(d)
+            # Genuine add — reflector keyed by module_key if present, else _new_{idx}
+            rk = d.get("module_key") or f"_new_{orig_idx}"
+            add_specs.append((d, rk))
 
     new_modules: list[OcrModule] = []
     for m in src_modules:
@@ -808,10 +818,11 @@ def _fork_api_definition(
         f"- {m.module_key} ({m.display_name or ''}): {(m.description or '')[:80]}"
         for m in src_modules[:5]
     )
-    for i, d in enumerate(add_specs):
+    for i, (d, reflection_key) in enumerate(add_specs):
+        rout = reflections.get(reflection_key) if reflection_key else None
         new_modules.append(_module_from_add_diff(
             d, new_version_id=new_version.id, order_index=order_start + i,
-            reflection_outputs=reflections.get(f"_new_{diffs.index(d)}"),
+            reflection_outputs=rout,
             sibling_examples=sibling_examples,
             processor_spec=src_api.processor_type or "gemini",
             model_name=src_api.model_name,

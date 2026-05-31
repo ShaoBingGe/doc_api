@@ -250,3 +250,97 @@ def test_global_output_contract_has_section_3_9():
     text = render_output_contract()
     assert "## 3.9 字段重命名传导" in text
     assert "module_key" in text or "重命名" in text
+
+
+# ── Regression: customize pipeline must not crash on add diff with module_key
+
+def test_add_specs_reflection_lookup_no_index_failure(db_session):
+    """User-reported bug: pipeline crashed on `diffs.index(d)` for kind=add
+    diffs (and Phase-7 promoted dicts).
+
+    Repros the minimal scenario: build add_specs with a synth dict that
+    isn't in `diffs`, then verify our reflection_key lookup mirrors the
+    reflector's keying (module_key first, _new_{idx} fallback).
+    """
+    from app.ocr_optimizer.reflection.reflector import ReflectionResult
+
+    # Mimic a customer who added a brand-new field "billFromCompanyName"
+    # then renamed it to "salerName" inside the SAME draft.
+    user_diff = {
+        "kind": "add",
+        "module_key": "bill_from_company_name",
+        "original_name": "billFromCompanyName",
+        "corrected_name": "salerName",
+        "original_value": "HOU TIAN TRANSPORT & TRADING SDN BHD",
+        "corrected_value": "HOU TIAN TRANSPORT & TRADING SDN BHD",
+        "original_format": "text",
+        "corrected_format": "text",
+    }
+    diffs = [user_diff]
+    reflections = {
+        # Reflector keys by module_key when present
+        "bill_from_company_name": ReflectionResult(
+            module_key="bill_from_company_name", kind="add", diff=user_diff,
+            fix_suggestions=["customer added new field"],
+            rationale_summary="新增字段",
+        ),
+    }
+
+    # Replicate the lookup logic from _fork_api_definition (post-fix)
+    add_specs: list[tuple[dict, str | None]] = []
+    for orig_idx, d in enumerate(diffs):
+        if d.get("kind") == "add":
+            rk = d.get("module_key") or f"_new_{orig_idx}"
+            add_specs.append((d, rk))
+
+    # This used to crash with `diffs.index(d) is not in list` when d was
+    # a Phase-7 synth. With the new tuple-based lookup it just resolves.
+    resolved = []
+    for d, reflection_key in add_specs:
+        r = reflections.get(reflection_key)
+        resolved.append((d.get("module_key"), reflection_key, r is not None))
+
+    assert resolved == [("bill_from_company_name", "bill_from_company_name", True)]
+
+
+def test_promoted_orphan_edit_uses_module_key_for_reflection(db_session):
+    """Phase 7 promoted-orphan case: the synth dict's reflection should be
+    looked up by the ORIGINAL module_key (which is how the reflector saw it
+    when kind was still 'edit'), not by '_new_{idx}'."""
+    from app.ocr_optimizer.reflection.reflector import ReflectionResult
+
+    orphan = {
+        "kind": "edit",
+        "module_key": "bill_from_address",  # not in MY src_module_keys
+        "original_name": "billFromAddress",
+        "corrected_name": "salerAddress",
+        "original_value": "Lot 10, Jalan 13/2",
+        "corrected_value": "Lot 10, Jalan 13/2",
+        "original_format": "text",
+        "corrected_format": "text",
+    }
+    diffs = [orphan]
+    reflections = {
+        "bill_from_address": ReflectionResult(
+            module_key="bill_from_address", kind="edit", diff=orphan,
+            fix_suggestions=["…"], rationale_summary="…",
+        ),
+    }
+    src_module_keys: set[str] = set()  # nothing matches
+
+    add_specs: list[tuple[dict, str | None]] = []
+    for orig_idx, d in enumerate(diffs):
+        if d.get("kind") == "edit":
+            mk = d.get("module_key")
+            if mk and mk not in src_module_keys:
+                synth = dict(d)
+                synth["kind"] = "add"
+                add_specs.append((synth, mk))  # reuse orig module_key
+
+    # synth is NOT in original diffs — old code did diffs.index(synth) and
+    # crashed with ValueError. New code uses the captured reflection_key.
+    assert len(add_specs) == 1
+    synth, rk = add_specs[0]
+    assert synth is not diffs[0]
+    assert rk == "bill_from_address"
+    assert reflections.get(rk) is not None

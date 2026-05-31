@@ -482,8 +482,16 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       // other samples' views (and the current view's "其他文件已修改" badges)
       // stay in sync.
       void get().loadPendingEdits()
-    } catch {
-      // fail silently — local state already up to date
+    } catch (err) {
+      // Common cause: the frontend held a stale annotation id (e.g. after
+      // a doc re-OCR or a cascade rename that recreated the row). The
+      // backend will 404. Reload the document so the next interaction
+      // uses fresh ids — but only on the actual 404, not on offline/etc.
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 404 && docId) {
+        void get().loadDocument(docId)
+      }
+      // Otherwise silent — local state is already optimistic-updated.
     }
   },
 
