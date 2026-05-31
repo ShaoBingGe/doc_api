@@ -1184,19 +1184,15 @@ function WaitingForSamplesBanner({
   const documents = useWorkspaceStore((s) => s.documents)
   const samplesReview = useWorkspaceStore((s) => s.samplesReview)
   const addSampleDocument = useWorkspaceStore((s) => s.addSampleDocument)
-  const onNewWorkspace = !!apiDefinitionId && customizeJob.newApiDefinitionId === apiDefinitionId
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploads, setUploads] = useState<PerFileUpload[]>([])
 
-  // Phase 12 — single-workspace UX:
-  // After fork, the customer STAYS on the source workspace URL and uploads
-  // additional samples here. The fork's sample list is mirrored from
-  // source on each confirmation (see _mirror_source_samples_to_fork on
-  // the backend), so iteration runs without the customer ever navigating.
-  if (!onNewWorkspace && customizeJob.newApiDefinitionId) {
-    // samplesReview tracks the SOURCE ApiDef's confirmed-count progress
-    // (same store key used by the per-doc "已审视" toggle).
+  // Phase 19 single-workspace model: there is no separate "fork URL" to
+  // navigate to. Banner state is driven purely by job.status now —
+  // C1 fix removes the `onNewWorkspace` gate (which always evaluated true
+  // post-Phase-19 since newApiDefinitionId == apiDefinitionId).
+  if (customizeJob.status === 'waiting_for_samples') {
     const sampleProgress = useWorkspaceStore.getState().samplesReview
     const confirmed = sampleProgress?.confirmedCount ?? 0
     const required = sampleProgress?.requiredCount ?? 3
@@ -1209,8 +1205,8 @@ function WaitingForSamplesBanner({
             <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0" />
             <span className="text-sm text-amber-200 font-medium">
               {remaining > 0
-                ? `还需 ${remaining} 个已审视样本即可启动优化`
-                : '样本已就绪，优化即将自动启动'}
+                ? `还需 ${remaining} 个已审视样本即可启动反思 + 优化`
+                : '样本已就绪，反思 + 3 轮优化即将自动启动'}
             </span>
           </div>
           <button
@@ -1221,12 +1217,7 @@ function WaitingForSamplesBanner({
             <X className="w-4 h-4" />
           </button>
         </div>
-        {customizeJob.newApiCode && (
-          <div className="text-xs text-amber-100/80">
-            新 api_code: <code className="bg-black/40 px-1.5 py-0.5 rounded text-amber-200">{customizeJob.newApiCode}</code>
-          </div>
-        )}
-        {/* Progress bar — 3 cells */}
+        {/* Progress bar — N cells */}
         <div className="flex gap-1.5">
           {Array.from({ length: required }).map((_, i) => (
             <div
@@ -1239,9 +1230,9 @@ function WaitingForSamplesBanner({
           ))}
         </div>
         <div className="text-[11px] text-amber-100/60 leading-relaxed">
-          请在本工作区继续上传样本（不会切换到新模板工作区）。每张样本完成
-          OCR 后，请点击对应文档的"已审视"开关确认 GT。当 {required} 张
-          都已审视，3 轮迭代优化会自动启动，结果将合并到新 api_code 上。
+          请在本工作区上传至少 {required} 个样本并把每个文档标记为"已审视"。
+          全部已审视后，反思 agent 和 3 轮迭代优化会自动启动，新版本会**直接激活在本工作区**——
+          URL 不会切换，刷新即看到优化后的字段名和识别结果。
           下方字段列表中的"已重命名 / 已新增 / 已删除"标识保留为本次编辑的历史记录。
         </div>
         <div className="flex gap-2">
