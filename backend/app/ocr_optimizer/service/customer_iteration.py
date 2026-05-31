@@ -702,6 +702,17 @@ def _fork_api_definition(
         activated_at=datetime.now(timezone.utc),
     )
 
+    # Build a quick lookup of source module_keys so we can detect
+    # "orphan edit diffs" — edits whose module_key has no matching source
+    # module. When such an orphan carries a rename (corrected_name ≠
+    # original_name), it means the customer renamed a field that the
+    # source template never actually defined (e.g. MY template has
+    # billFromComposite but the user renamed billFromAddress → salerAddress;
+    # the LLM hallucinated billFromAddress in OCR output, and the customer
+    # treated it as if it existed).
+    # Promote those orphans to add diffs so a real new module is created.
+    src_module_keys = {m.module_key for m in src_modules}
+
     # Multiple diffs may share the same module_key — e.g. several array-cell
     # corrections on `detailOfGoodsOrServices[0..N].field` all route to module
     # `detail_of_goods_or_services`. We accumulate their prompt suffixes so no
@@ -712,6 +723,25 @@ def _fork_api_definition(
         if d.get("kind") == "edit":
             mk = d.get("module_key")
             if not mk:
+                continue
+            # Phase 7 fix: orphan edit diff → promote to add diff
+            if mk not in src_module_keys:
+                on = (d.get("original_name") or "").strip()
+                cn = (d.get("corrected_name") or "").strip()
+                # Synthesize an add diff using corrected_name as the new
+                # field's identity. The corrected_value (if any) becomes
+                # the customer's example value for LLM expansion.
+                synth = dict(d)
+                synth["kind"] = "add"
+                synth["corrected_name"] = cn or on or mk
+                if not synth.get("corrected_format"):
+                    synth["corrected_format"] = "string"
+                logger.info(
+                    "Promoting orphan edit diff to add: module_key=%s "
+                    "(original_name=%r → corrected_name=%r)",
+                    mk, on, cn,
+                )
+                add_specs.append(synth)
                 continue
             existing = edits_by_key.get(mk, {})
             r = reflections.get(mk)
@@ -763,6 +793,12 @@ def _fork_api_definition(
     new_modules: list[OcrModule] = []
     for m in src_modules:
         patch = edits_by_key.get(m.module_key, {})
+        # Phase 8: attach the reflection result for this source module so
+        # _clone_module can record it into ocr_suggestions["reflections"].
+        r = reflections.get(m.module_key)
+        if r is not None:
+            patch = dict(patch)  # don't mutate the shared dict
+            patch["__reflection"] = r
         new_modules.append(_clone_module(m, new_version_id=new_version.id, patch=patch))
 
     order_start = max((m.order_index for m in new_modules), default=-1) + 1
@@ -815,6 +851,44 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
     if suffix:
         new_prompt = (src.ocr_prompt or "").rstrip() + "\n\n# 客户反馈补充\n" + suffix.strip()
 
+    # Phase 8 — copy source ocr_suggestions and append reflection entry
+    # (when there was a customer edit on this module). Unchanged modules
+    # keep the source suggestions verbatim; ocr_suggestions["reflections"]
+    # only gets a non-empty list for fields the customer actually touched.
+    new_suggestions = copy.deepcopy(src.ocr_suggestions or {})
+    if not isinstance(new_suggestions, dict):
+        new_suggestions = {}
+    reflection = patch.get("__reflection")
+    if reflection is not None:
+        diff = getattr(reflection, "diff", None) or {}
+        on = (diff.get("original_name") or "").strip()
+        cn = (diff.get("corrected_name") or "").strip()
+        ov = diff.get("original_value")
+        cv = diff.get("corrected_value")
+        entry = {
+            "round": 0,
+            "kind": getattr(reflection, "kind", diff.get("kind", "edit")),
+            "rationale": getattr(reflection, "rationale_summary", "") or "",
+            "fix_suggestions": list(getattr(reflection, "fix_suggestions", []) or []),
+            "original_name": on,
+            "corrected_name": cn or on,
+            "renamed": bool(on and cn and on != cn),
+            "original_value": ov,
+            "corrected_value": cv,
+            # Derived: rules in the original prompt that the reflection
+            # implies should be REMOVED (e.g. "保留字母前缀" when the
+            # customer renamed PO and the fix says "去除前缀"). Best-effort
+            # heuristic — looks for "当前提示词" + "/" + "客户" phrasing in
+            # the rationale to surface a recommendation.
+            "removed_rules": _extract_removed_rules(
+                rationale=getattr(reflection, "rationale_summary", "") or "",
+                src_prompt=src.ocr_prompt or "",
+            ),
+        }
+        reflections_log = list(new_suggestions.get("reflections") or [])
+        reflections_log.append(entry)
+        new_suggestions["reflections"] = reflections_log
+
     new_schema = src.schema_fragment
     schema_type = patch.get("__schema_type")
     if schema_type:
@@ -864,13 +938,42 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
         description=new_description,
         json_path=new_json_path,
         schema_fragment=new_schema,
-        ocr_suggestions=copy.deepcopy(src.ocr_suggestions or {}),
+        ocr_suggestions=new_suggestions,  # Phase 8: includes reflections log
         ocr_prompt=new_prompt,
         skill_ids=list(src.skill_ids or []),
         order_index=src.order_index,
         status=src.status,
         module_accuracy=None,
     )
+
+
+def _extract_removed_rules(*, rationale: str, src_prompt: str) -> list[str]:
+    """Best-effort surfacer: when the reflection rationale points out that
+    the SOURCE prompt has an explicit instruction that contradicts the
+    customer's correction (typical phrasing: "当前提示词…指示…/要求…"），
+    pluck the offending clauses so downstream tooling (or a future Part 3
+    optimizer pass) can decide to delete them from the new prompt.
+
+    Returns an empty list when no obvious "remove this rule" hint is found.
+    """
+    if not rationale or not src_prompt:
+        return []
+    out: list[str] = []
+    # Look for quoted chunks in rationale ("…") that ALSO appear verbatim
+    # in src_prompt — those are likely the offending rules.
+    import re as _re
+    for m in _re.finditer(r'["“]([^"“”\n]{6,160})["”]', rationale):
+        chunk = m.group(1).strip()
+        if chunk and (chunk in src_prompt or chunk[:30] in src_prompt):
+            out.append(chunk)
+    # Dedup while preserving order
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for c in out:
+        if c not in seen:
+            seen.add(c)
+            deduped.append(c)
+    return deduped[:4]  # cap to 4 to avoid bloat
 
 
 def _snake(camel: str) -> str:

@@ -730,12 +730,16 @@ function FieldEditPanel({
   draft,
   onUpdate,
   onCancel,
+  onSaveToOverlay,
 }: {
   annotation: Annotation
   result?: ProcessingResult
   draft: FieldEditDraft
   onUpdate: (patch: Partial<FieldEditDraft>) => void
   onCancel: () => void
+  /** Phase 10 — commits the current draft to backend overlay so badges
+   * + cascade rename fire BEFORE the user clicks the customize button. */
+  onSaveToOverlay: () => Promise<void> | void
 }) {
   const origValue = result?.value ?? annotation.value ?? ''
   const origValueStr = origValue === null || origValue === undefined ? '' : String(origValue)
@@ -820,16 +824,29 @@ function FieldEditPanel({
         </div>
 
         <p className="text-xs text-gray-500 leading-relaxed">
-          修改自动暂存。继续编辑其他字段，全部完成后点字段列表底部的"保存并生成客户专属模板"按钮统一启动迭代优化。
-          原模板不变，会另外 fork 出一个带新 api_code 的客户专属模板。
+          点"保存到模板"会把这条修改立刻提交到客户模板的跨样本 overlay：
+          其他样本的同名字段会自动跟随重命名/同步标识，OCR 新上传样本时也会用新名识别。
+          继续编辑其他字段，全部完成后点字段列表底部的"保存并生成客户专属模板"按钮统一启动迭代优化。
         </p>
-        <button
-          onClick={onCancel}
-          className="w-full px-3 py-2 rounded-md bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-100 text-sm font-medium transition-colors flex items-center justify-center gap-2"
-        >
-          <Check className="w-4 h-4" />
-          暂存修改并返回字段列表
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={async () => {
+              await onSaveToOverlay()
+              onCancel()
+            }}
+            className="flex-1 px-3 py-2 rounded-md bg-purple-500/30 hover:bg-purple-500/40 border border-purple-500/50 text-purple-50 text-sm font-medium transition-colors flex items-center justify-center gap-2"
+          >
+            <Check className="w-4 h-4" />
+            保存到模板（立即生效）
+          </button>
+          <button
+            onClick={onCancel}
+            className="px-3 py-2 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-gray-400 text-sm transition-colors"
+            title="仅暂存到本地，需手工点击客户化按钮才会真正提交"
+          >
+            仅暂存
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -1316,6 +1333,7 @@ function FieldsView() {
     editingFieldId, fieldEditDrafts, startEditingField, cancelEditingField,
     updateEditDraft, addNewFieldDraft, addFieldDrafts,
     pendingEdits,  // design v8 — cross-sample overlay
+    commitCurrentDraft,  // Phase 10
   } = useWorkspaceStore()
 
   // design v8 — derive "edited on OTHER files" set and the list of added
@@ -1453,6 +1471,10 @@ function FieldsView() {
           draft={editingDraft}
           onUpdate={(patch) => updateEditDraft(editingDraftKey!, patch)}
           onCancel={cancelEditingField}
+          onSaveToOverlay={async () => {
+            await commitCurrentDraft()
+            toast.success('已保存到模板，其他样本会自动同步显示')
+          }}
         />
         <CustomizeBar />
       </div>

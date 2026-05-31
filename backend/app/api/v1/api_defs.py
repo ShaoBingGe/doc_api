@@ -136,6 +136,76 @@ def clear_pending_edits(
     return {"ok": True}
 
 
+@router.post(
+    "/{api_def_id}/pending-edits/commit-draft",
+    summary="把 FieldEditorPanel 草稿提交到 overlay（design v8 Phase 10）",
+)
+def commit_draft_to_overlay(
+    api_def_id: uuid.UUID,
+    body: dict = Body(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Persist a workspace draft into ApiDefinition.pending_edits.
+
+    Body shape (all keys optional, only the present operations apply):
+        {
+            "old_name": "billFromName",         # for rename / value mod
+            "new_name": "supplierName",          # for rename
+            "field_type": "string",
+            "description": "...",
+            "added_value": "...",                # marks an add intent
+            "modification": {
+                "document_id": "uuid",
+                "field_name": "billFromName",
+                "value": "..."
+            }
+        }
+
+    This is invoked by the FieldEditorPanel "保存" button (Phase 10) so
+    that draft edits become visible across all samples immediately —
+    badges, cascade rename, OCR overlay enhancement all fire from this
+    single committed source.
+    """
+    old_name = (body.get("old_name") or "").strip()
+    new_name = (body.get("new_name") or "").strip()
+    field_type = body.get("field_type") or "string"
+    description = body.get("description") or ""
+
+    out: dict = {}
+
+    # Case 1: pure rename (old != new, both present)
+    if old_name and new_name and old_name != new_name:
+        out["renames"] = pending_edits_service.record_rename(
+            db, api_def_id, old_name, new_name,
+        )["renames"]
+        pending_edits_service.cascade_rename_annotations(
+            db, api_def_id, old_name, new_name,
+        )
+
+    # Case 2: add new field (no old_name; new_name + value/desc)
+    elif new_name and not old_name:
+        pending_edits_service.record_added_field(
+            db, api_def_id,
+            field_name=new_name,
+            field_type=field_type,
+            description=description,
+            added_at_doc_id=None,
+            default_value=body.get("added_value"),
+        )
+
+    # Case 3: value modification (modification block present)
+    mod = body.get("modification") or {}
+    if mod.get("document_id") and mod.get("field_name") is not None:
+        pending_edits_service.record_modification(
+            db, api_def_id,
+            document_id=uuid.UUID(str(mod["document_id"])),
+            field_name=str(mod["field_name"]),
+            new_value=mod.get("value"),
+        )
+
+    return pending_edits_service.get_overlay(db, api_def_id)
+
+
 @router.get(
     "/{api_def_id}/versions",
     summary="Prompt 版本历史",

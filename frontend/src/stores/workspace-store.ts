@@ -172,6 +172,10 @@ interface WorkspaceStore {
     modifications: Record<string, Record<string, unknown>>  // docId → {field: value}
   } | null
   loadPendingEdits: () => Promise<void>
+  /** Phase 10 — commit the currently-open FieldEditorPanel draft to the
+   * backend pending_edits overlay so badges + cascade rename fire even
+   * BEFORE the customize submit. */
+  commitCurrentDraft: () => Promise<void>
 
   setStep: (step: WorkspaceStep) => void
   setSelectedFieldId: (id: string | null) => void
@@ -1028,6 +1032,57 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   setGlobalPanOffset: (offset) => set({ globalPanOffset: offset }),
 
   // ── Pending-edits overlay (design v8) ──────────────────────────────────
+  commitCurrentDraft: async () => {
+    const { editingFieldId, fieldEditDrafts, annotations, processingResults,
+            apiDefinitionId, selectedDocId } = get()
+    if (!editingFieldId || !apiDefinitionId) return
+    const ann = annotations.find((a) => a.id === editingFieldId)
+    if (!ann) return
+    // Drafts may be keyed by current label (rename case) OR by the
+    // original-pre-rename name — try both.
+    const draft = fieldEditDrafts[ann.label] ?? fieldEditDrafts[
+      Object.keys(fieldEditDrafts).find((k) =>
+        fieldEditDrafts[k].originalName === ann.label) ?? ''
+    ]
+    if (!draft) return
+
+    const oldName = (draft.originalName ?? ann.label) || ''
+    const newName = (draft.correctedName ?? '').trim()
+    const correctedValue = (draft.correctedValue ?? '').trim()
+    const r = processingResults.find((p) => p.annotationId === editingFieldId)
+    const origValue = r?.value ?? ann.value ?? ''
+    const origValueStr = origValue === null || origValue === undefined ? '' : String(origValue)
+
+    const payload: Record<string, unknown> = {}
+    // Rename intent
+    if (newName && oldName && newName !== oldName) {
+      payload.old_name = oldName
+      payload.new_name = newName
+    }
+    // Value modification intent
+    if (correctedValue !== origValueStr && selectedDocId) {
+      payload.modification = {
+        document_id: selectedDocId,
+        field_name: newName || oldName,
+        value: correctedValue,
+      }
+    }
+    if (Object.keys(payload).length === 0) return
+
+    try {
+      await apiClient.post(
+        `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
+        payload,
+      )
+      // Refresh overlay + reload doc so cascade-renamed annotations
+      // and updated values appear immediately.
+      await get().loadPendingEdits()
+      if (selectedDocId) await get().loadDocument(selectedDocId)
+    } catch (err) {
+      console.error('commitCurrentDraft failed', err)
+    }
+  },
+
   loadPendingEdits: async () => {
     const id = get().apiDefinitionId
     if (!id) return
