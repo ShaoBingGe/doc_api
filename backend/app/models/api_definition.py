@@ -77,6 +77,23 @@ class ApiDefinition(UUIDMixin, TimestampMixin, Base):
         JSON, nullable=True, comment="额外处理器配置，如 temperature、max_tokens"
     )
 
+    # ── pending edits overlay (design v8 — multi-sample workspace) ─────────
+    # JSON shape:
+    #   {
+    #     "added_fields":  [{"field_name": "supplierTier", "type": "string",
+    #                        "description": "...", "added_at_doc_id": "..."}],
+    #     "renames":       {"billFromName": "supplierName"},   # old → new
+    #     "modifications": {                                    # per-doc value edits
+    #         "<doc_uuid>": {"<field_name>": "<corrected_value>"},
+    #         ...
+    #     }
+    #   }
+    # See docs/prompt-system.md §11 for the cross-sample workspace invariants.
+    # Cleared on successful customize-job fork (Phase 5).
+    pending_edits: Mapped[Optional[dict]] = mapped_column(
+        JSON, nullable=True, comment="跨样本编辑 overlay：added_fields / renames / modifications"
+    )
+
     # ── source ─────────────────────────────────────────────────────────────
     source_conversation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         nullable=True, comment="从哪个对话创建（原型阶段直接关联）"

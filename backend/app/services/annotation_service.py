@@ -70,6 +70,30 @@ def create_annotation(
     db.add(ann)
     db.commit()
     db.refresh(ann)
+
+    # Mirror manual-added field into ApiDef overlay (design v8) so it
+    # appears in every other sample's "添加" section.
+    if body.source == AnnotationSource.manual:
+        try:
+            from app.services import pending_edits_service
+            doc = db.get(Document, document_id)
+            api_def_id = doc.api_definition_id if doc else None
+            if api_def_id:
+                pending_edits_service.record_added_field(
+                    db,
+                    api_def_id,
+                    field_name=body.field_name,
+                    field_type=body.field_type or "string",
+                    description="",
+                    added_at_doc_id=document_id,
+                    default_value=body.field_value,
+                )
+        except Exception as exc:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning(
+                "pending_edits add mirror failed for ann=%s: %s", ann.id, exc,
+            )
+
     return _to_response(ann)
 
 
@@ -147,6 +171,9 @@ def update_annotation(
 
     # Track corrections: record originals before overwriting
     changed = False
+    old_name = ann.field_name
+    rename_to: str | None = None
+    value_modified = False
 
     if body.field_value is not None and body.field_value != ann.field_value:
         if not ann.is_corrected:
@@ -154,8 +181,10 @@ def update_annotation(
         ann.field_value = body.field_value
         ann.is_corrected = True
         changed = True
+        value_modified = True
 
     if body.field_name is not None and body.field_name != ann.field_name:
+        rename_to = body.field_name
         ann.field_name = body.field_name
         ann.is_corrected = True
         changed = True
@@ -178,6 +207,32 @@ def update_annotation(
 
     db.commit()
     db.refresh(ann)
+
+    # Mirror this edit into ApiDefinition.pending_edits (design v8 overlay)
+    # so other samples of the same ApiDef can render the union of edits.
+    # Rename also cascades to every other Annotation row with the same old name.
+    if rename_to or value_modified:
+        try:
+            from app.services import pending_edits_service
+            doc = db.get(Document, document_id)
+            api_def_id = doc.api_definition_id if doc else None
+            if api_def_id:
+                if rename_to:
+                    pending_edits_service.record_rename(db, api_def_id, old_name, rename_to)
+                    pending_edits_service.cascade_rename_annotations(
+                        db, api_def_id, old_name, rename_to,
+                    )
+                if value_modified:
+                    pending_edits_service.record_modification(
+                        db, api_def_id, document_id, ann.field_name, ann.field_value,
+                    )
+        except Exception as exc:  # noqa: BLE001
+            # Overlay mirroring must never block the primary edit.
+            import logging
+            logging.getLogger(__name__).warning(
+                "pending_edits mirror failed for ann=%s: %s", annotation_id, exc,
+            )
+
     return _to_response(ann)
 
 
@@ -202,18 +257,22 @@ def batch_update(
 ) -> list[AnnotationResponse]:
     _doc_exists(db, document_id)
     results: list[AnnotationResponse] = []
+    overlay_ops: list[tuple[str, tuple]] = []  # (kind, args) collected pre-commit
     for item in body.updates:
         ann = _get_or_404(db, item.annotation_id, document_id)
+        old_name = ann.field_name
 
         if item.field_value is not None and item.field_value != ann.field_value:
             if not ann.is_corrected:
                 ann.original_value = ann.field_value
             ann.field_value = item.field_value
             ann.is_corrected = True
+            overlay_ops.append(("modify", (item.field_name or old_name, item.field_value)))
 
         if item.field_name is not None and item.field_name != ann.field_name:
             ann.field_name = item.field_name
             ann.is_corrected = True
+            overlay_ops.append(("rename", (old_name, item.field_name)))
 
         if item.field_type is not None:
             ann.field_type = item.field_type
@@ -231,4 +290,26 @@ def batch_update(
     db.commit()
     for ann in results:
         db.refresh(ann)
+
+    # Mirror to pending_edits overlay (best-effort; never blocks the primary write)
+    if overlay_ops:
+        try:
+            from app.services import pending_edits_service
+            doc = db.get(Document, document_id)
+            api_def_id = doc.api_definition_id if doc else None
+            if api_def_id:
+                for kind, args in overlay_ops:
+                    if kind == "rename":
+                        old_n, new_n = args
+                        pending_edits_service.record_rename(db, api_def_id, old_n, new_n)
+                        pending_edits_service.cascade_rename_annotations(db, api_def_id, old_n, new_n)
+                    elif kind == "modify":
+                        fname, fval = args
+                        pending_edits_service.record_modification(db, api_def_id, document_id, fname, fval)
+        except Exception as exc:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning(
+                "pending_edits batch mirror failed for doc=%s: %s", document_id, exc,
+            )
+
     return [_to_response(a) for a in results]

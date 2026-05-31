@@ -217,6 +217,7 @@ function FieldRow({
   isHovered,
   isSelected,
   hasDirtyDraft,
+  editedOnOtherDocs,
   onHover,
   onSelect,
   onStartEdit,
@@ -234,6 +235,9 @@ function FieldRow({
   isSelected: boolean
   /** True when this field has a pending customer edit not yet submitted. */
   hasDirtyDraft: boolean
+  /** design v8 — true when this field's value was modified on a DIFFERENT
+   *  sample doc of the same ApiDef. Shows a soft cyan badge. */
+  editedOnOtherDocs?: boolean
   onHover: (id: string | null) => void
   onSelect: (id: string | null) => void
   onStartEdit: (id: string) => void
@@ -293,6 +297,14 @@ function FieldRow({
         {hasDirtyDraft && (
           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-medium flex-shrink-0">
             已暂存
+          </span>
+        )}
+        {!hasDirtyDraft && editedOnOtherDocs && (
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-medium flex-shrink-0"
+            title="此字段在其他文件中已被修改"
+          >
+            其他文件已修改
           </span>
         )}
       </div>
@@ -1268,7 +1280,29 @@ function FieldsView() {
     addPendingField, drawingFieldId, setDrawingFieldId,
     editingFieldId, fieldEditDrafts, startEditingField, cancelEditingField,
     updateEditDraft, addNewFieldDraft, addFieldDrafts,
+    pendingEdits,  // design v8 — cross-sample overlay
   } = useWorkspaceStore()
+
+  // design v8 — derive "edited on OTHER files" set and the list of added
+  // fields from OTHER files not yet present locally. See pending_edits_service.py.
+  const currentDocId = documentInfo?.id
+  const otherDocsEditedFields = useMemo(() => {
+    if (!pendingEdits || !currentDocId) return new Set<string>()
+    const out = new Set<string>()
+    for (const [docId, fieldsObj] of Object.entries(pendingEdits.modifications || {})) {
+      if (docId === currentDocId) continue
+      for (const fname of Object.keys(fieldsObj)) out.add(fname)
+    }
+    return out
+  }, [pendingEdits, currentDocId])
+
+  const otherDocsAddedFields = useMemo(() => {
+    if (!pendingEdits) return [] as Array<{ field_name: string; type: string; description: string }>
+    const localNames = new Set(annotations.map((a) => a.label))
+    return (pendingEdits.added_fields || []).filter(
+      (f) => !localNames.has(f.field_name) && f.added_at_doc_id !== currentDocId,
+    )
+  }, [pendingEdits, annotations, currentDocId])
   const resultMap = useMemo(
     () => new Map(processingResults.map((r) => [r.annotationId, r])),
     [processingResults],
@@ -1448,6 +1482,7 @@ function FieldsView() {
                     isHovered={hoveredFieldId === ann.id}
                     isSelected={selectedFieldId === ann.id}
                     hasDirtyDraft={hasDirtyDraft}
+                    editedOnOtherDocs={otherDocsEditedFields.has(ann.label)}
                     onHover={setHoveredFieldId}
                     onSelect={setSelectedFieldId}
                     onStartEdit={startEditingField}
@@ -1479,6 +1514,43 @@ function FieldsView() {
           onStartEdit={startEditingField}
         />
       ))}
+
+      {/* design v8 — fields added on OTHER files, missing in this doc.
+          Rendered as empty rows with a cyan "其他文件新增" badge so the user
+          can manually annotate them on this sample. */}
+      {otherDocsAddedFields.length > 0 && (
+        <div className="bg-[#2a2a32] rounded-lg border border-cyan-500/20 overflow-hidden">
+          <div className="w-full flex items-center justify-between p-3 bg-cyan-500/10">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded bg-cyan-500/20 flex items-center justify-center text-cyan-300">
+                <Plus className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-sm font-medium text-gray-200">其他文件已新增字段</span>
+              <span className="text-xs text-gray-500 ml-2">{otherDocsAddedFields.length} 字段待补充</span>
+            </div>
+          </div>
+          <div className="p-3 space-y-2">
+            <p className="text-[11px] text-gray-500 leading-relaxed">
+              下列字段在其他样本中已新增。本样本若也有此字段，请手工补充值；如本样本确无此字段，可留空。
+            </p>
+            {otherDocsAddedFields.map((f) => (
+              <div
+                key={f.field_name}
+                className="flex items-center justify-between py-1.5 px-2 rounded bg-cyan-500/5 border border-cyan-500/15"
+                title={f.description || '其他样本中新增的字段'}
+              >
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <span className="text-gray-300 text-sm w-32 truncate">{f.field_name}</span>
+                  <span className="text-gray-600 text-xs">—（待标注）</span>
+                </div>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-medium flex-shrink-0">
+                  其他文件新增
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Summary section */}
       <div className="bg-[#2a2a32] rounded-lg border border-white/5 overflow-hidden">

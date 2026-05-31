@@ -22,6 +22,7 @@ from app.schemas.api_definition import (
 from app.schemas.common import PaginatedResponse
 from app.schemas.document import DocumentResponse, DocumentUploadResponse
 from app.services import api_definition_service as svc
+from app.services import pending_edits_service
 
 router = APIRouter(prefix="/api-definitions", tags=["API Definitions"])
 
@@ -101,6 +102,38 @@ def update_api_status(
     db: Session = Depends(get_db),
 ) -> ApiDefinitionResponse:
     return svc.update_api_status(db, api_def_id, body)
+
+
+@router.get(
+    "/{api_def_id}/pending-edits",
+    summary="跨样本编辑 overlay（design v8）",
+)
+def get_pending_edits(
+    api_def_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return the live cross-sample edit overlay for this ApiDef.
+
+    Frontend unions this with the active document's annotations to render:
+      - added_fields (template-level)
+      - renames (template-level)
+      - modifications (per-doc value edits)
+
+    See backend/app/services/pending_edits_service.py for the shape.
+    """
+    return pending_edits_service.get_overlay(db, api_def_id)
+
+
+@router.delete(
+    "/{api_def_id}/pending-edits",
+    summary="清空跨样本编辑 overlay",
+)
+def clear_pending_edits(
+    api_def_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    pending_edits_service.clear_overlay(db, api_def_id)
+    return {"ok": True}
 
 
 @router.get(

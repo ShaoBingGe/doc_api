@@ -155,6 +155,24 @@ interface WorkspaceStore {
   customizeJob: CustomizeJobStatus | null
   customizeSubmitting: boolean
 
+  // ── Cross-sample edit overlay (design v8 — pending_edits) ───────────────
+  // Mirrors ApiDefinition.pending_edits from the backend. Used to render the
+  // union of edits across all sample documents (so a field added on doc1
+  // appears in doc2's view, a rename on doc1 shows in doc2's annotation
+  // labels, etc.). See backend/app/services/pending_edits_service.py.
+  pendingEdits: {
+    added_fields: Array<{
+      field_name: string
+      type: string
+      description: string
+      added_at_doc_id: string | null
+      default_value: unknown
+    }>
+    renames: Record<string, string>           // old → new
+    modifications: Record<string, Record<string, unknown>>  // docId → {field: value}
+  } | null
+  loadPendingEdits: () => Promise<void>
+
   setStep: (step: WorkspaceStep) => void
   setSelectedFieldId: (id: string | null) => void
   setHoveredFieldId: (id: string | null) => void
@@ -375,6 +393,8 @@ const initialState = {
   fieldEditDrafts: {} as Record<string, FieldEditDraft>,
   addFieldDrafts: [] as FieldEditDraft[],
   customizeJob: null as CustomizeJobStatus | null,
+  // design v8 — pending_edits overlay; reloaded after every save
+  pendingEdits: null as WorkspaceStore['pendingEdits'],
   customizeSubmitting: false,
   // Per-annotation pan offset (extra translate on top of the focus zoom).
   // Updated while the user pans the document with the hand tool, replayed
@@ -454,6 +474,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   saveAnnotation: async (docId, fieldId, data) => {
     try {
       await updateAnnotation(docId, fieldId, data)
+      // Backend mirrors edits to ApiDef.pending_edits — refresh overlay so
+      // other samples' views (and the current view's "其他文件已修改" badges)
+      // stay in sync.
+      void get().loadPendingEdits()
     } catch {
       // fail silently — local state already up to date
     }
@@ -577,6 +601,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     } finally {
       set({ documentLoading: false })
     }
+    // Refresh overlay so this doc's view shows other-files' adds/renames
+    void get().loadPendingEdits()
   },
 
   addPendingField: (name, value = '', fieldType = 'text') =>
@@ -719,6 +745,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       } catch {
         // No active job — fine
       }
+
+      // 1c. fetch pending_edits overlay (design v8) — async, non-blocking
+      void get().loadPendingEdits()
 
       // 2. fetch sample set
       const res = await apiClient.get(
@@ -997,6 +1026,43 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }),
 
   setGlobalPanOffset: (offset) => set({ globalPanOffset: offset }),
+
+  // ── Pending-edits overlay (design v8) ──────────────────────────────────
+  loadPendingEdits: async () => {
+    const id = get().apiDefinitionId
+    if (!id) return
+    try {
+      const res = await apiClient.get(
+        `/api/v1/api-definitions/${id}/pending-edits`,
+      )
+      const d = (res.data || {}) as {
+        added_fields?: Array<{
+          field_name: string
+          type?: string
+          description?: string
+          added_at_doc_id?: string | null
+          default_value?: unknown
+        }>
+        renames?: Record<string, string>
+        modifications?: Record<string, Record<string, unknown>>
+      }
+      set({
+        pendingEdits: {
+          added_fields: (d.added_fields || []).map((f) => ({
+            field_name: f.field_name,
+            type: f.type || 'string',
+            description: f.description || '',
+            added_at_doc_id: f.added_at_doc_id ?? null,
+            default_value: f.default_value ?? null,
+          })),
+          renames: d.renames || {},
+          modifications: d.modifications || {},
+        },
+      })
+    } catch {
+      // non-fatal
+    }
+  },
 
   // ── Sample GT review ────────────────────────────────────────────────────
   loadSamplesReview: async () => {
