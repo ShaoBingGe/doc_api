@@ -188,7 +188,17 @@ def _build_cross_doc_block(
         fn = r.get("doc_filename") or r.get("doc_id") or f"sample_{i}"
         bbox = r.get("bbox")
         bbox_hint = f"，位置 bbox={bbox}" if bbox else ""
-        lines.append(f"{i}. [{gt_flag}] `{fn}`: {v_str}{bbox_hint}")
+        # Phase 15 dedup: when the same (value, is_corrected) occurred on
+        # multiple docs, surface "(× N samples) [other: ...]" so the LLM
+        # sees the repetition without being shown duplicate rows.
+        dup_count = int(r.get("dup_count") or 0)
+        dup_hint = ""
+        if dup_count > 1:
+            others = r.get("dup_doc_filenames") or []
+            dup_hint = f" (× {dup_count} 个样本相同值)"
+            if others:
+                dup_hint += f" — 其他样本: {', '.join(str(o) for o in others[:3])}"
+        lines.append(f"{i}. [{gt_flag}] `{fn}`: {v_str}{bbox_hint}{dup_hint}")
     return "\n".join(lines)
 
 

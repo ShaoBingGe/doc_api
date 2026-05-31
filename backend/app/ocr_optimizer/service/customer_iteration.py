@@ -163,8 +163,33 @@ def _build_cross_doc_context_for_diffs(
             "is_corrected": bool(ann.is_corrected),
             "bbox": ann.bounding_box,
         })
-    # Drop fields with no samples to keep the prompt clean
-    return {k: v for k, v in out.items() if v}
+
+    # Phase 15 — dedup duplicate values within each field's sample list.
+    # If two docs show the same (value, is_corrected) tuple, we collapse
+    # them and annotate "× N docs" so the LLM doesn't see the same data
+    # point repeated. Preserves the first occurrence's doc_filename + bbox.
+    deduped: dict[str, list[dict]] = {}
+    for field, samples in out.items():
+        if not samples:
+            continue
+        # Key by (value, is_corrected) — bbox usually varies across docs
+        # even when value is identical, so we keep the first one seen.
+        by_key: dict[tuple, dict] = {}
+        for s in samples:
+            key = (
+                # repr handles None / strings / numbers consistently
+                repr(s.get("value")),
+                bool(s.get("is_corrected")),
+            )
+            if key in by_key:
+                by_key[key]["dup_count"] = by_key[key].get("dup_count", 1) + 1
+                # accumulate doc filenames for transparency
+                other_files = by_key[key].setdefault("dup_doc_filenames", [])
+                other_files.append(s.get("doc_filename"))
+            else:
+                by_key[key] = dict(s)
+        deduped[field] = list(by_key.values())
+    return deduped
 
 
 def _mirror_source_samples_to_fork(

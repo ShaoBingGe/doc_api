@@ -263,6 +263,33 @@ def test_cross_doc_context_builder_collects_per_field_samples(db_session):
     assert values == ["ABC123", "DEF456"]
 
 
+def test_cross_doc_context_dedupes_identical_values(db_session):
+    """Phase 15 — when the same field has the same value on multiple docs,
+    collapse to a single entry with dup_count + dup_doc_filenames."""
+    from app.ocr_optimizer.service.customer_iteration import (
+        _build_cross_doc_context_for_diffs,
+    )
+
+    api_def, d1, d2 = _setup_api_def(db_session)
+    # SAME value on both docs — should dedup
+    _add_annotation(db_session, d1.id, "billFromName", "PANASONIC SDN BHD")
+    _add_annotation(db_session, d2.id, "billFromName", "PANASONIC SDN BHD")
+    api_def.config = {"sample_document_ids": [str(d1.id), str(d2.id)]}
+    db_session.commit()
+
+    diffs = [
+        {"kind": "edit", "module_key": "bill_from_name",
+         "original_name": "billFromName", "corrected_name": "billFromName"},
+    ]
+    ctx = _build_cross_doc_context_for_diffs(db_session, api_def.id, diffs)
+    samples = ctx["billFromName"]
+    # Collapsed to 1 entry with dup_count = 2
+    assert len(samples) == 1
+    assert samples[0]["dup_count"] == 2
+    assert samples[0]["value"] == "PANASONIC SDN BHD"
+    assert len(samples[0]["dup_doc_filenames"]) == 1  # the second doc's filename
+
+
 # ── Phase 14c: per-round suggestion merge ─────────────────────────────────────
 
 
