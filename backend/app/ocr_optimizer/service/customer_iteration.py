@@ -526,6 +526,16 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
                 new_api_definition_id=new_api.id,
                 new_api_code=new_api.api_code)
 
+    # Phase 5 (design v8): clear the source ApiDef's pending_edits overlay.
+    # The edits have been persisted into the fork's OcrModule rows; the
+    # overlay is a transient buffer and should not bleed into future edits.
+    try:
+        from app.services import pending_edits_service
+        pending_edits_service.clear_overlay(db, src_api.id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to clear pending_edits on src ApiDef %s: %s",
+                       src_api.id, exc)
+
     # ── Phase 3: sample gate ──────────────────────────────────────────────
     # We require at least MIN_SAMPLES_FOR_ITERATION samples whose annotations
     # the customer has confirmed as GT. Raw upload count is NOT sufficient.
@@ -711,6 +721,20 @@ def _fork_api_definition(
             # Schema type: last non-empty wins
             if d.get("corrected_format") and d.get("corrected_format") != d.get("original_format"):
                 existing["__schema_type"] = d["corrected_format"]
+            # Rename: when corrected_name differs from original_name, propagate
+            # to module_key + json_path so the fork's composed_schema emits the
+            # new key. The diff's original_name may be a dotted path (e.g.
+            # "detailOfGoodsOrServices[0].quantity") — only treat top-level
+            # scalar renames here (no bracket / no dot).
+            old_name = (d.get("original_name") or "").strip()
+            new_name = (d.get("corrected_name") or "").strip()
+            if (
+                old_name and new_name and old_name != new_name
+                and "[" not in old_name and "." not in old_name
+                and "[" not in new_name and "." not in new_name
+            ):
+                existing["__rename_old"] = old_name
+                existing["__rename_new"] = new_name
             # Suffix: accumulate per-cell hints + reflection fix_suggestions
             suffix_parts: list[str] = []
             if r:
@@ -806,13 +830,39 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
         if schema_type.lower() == "date":
             new_schema["format"] = "date"
 
+    # Rename propagation (design v8 §3.9):
+    # When the diff carried a top-level scalar rename (corrected_name ≠
+    # original_name), rewrite module_key + json_path leaf so the fork's
+    # assemble_schema emits the new key. The renamed_from_key is recorded
+    # in the prompt suffix so the LLM still knows what semantic field to
+    # extract on the page.
+    new_module_key = src.module_key
+    new_json_path = src.json_path
+    rename_old = patch.get("__rename_old")
+    rename_new = patch.get("__rename_new")
+    if rename_old and rename_new and rename_old != rename_new:
+        new_module_key = _snake(rename_new)
+        # Replace the leaf segment in json_path:
+        #   $[*].billFromName  →  $[*].supplierName
+        #   $.billFromName     →  $.supplierName
+        if src.json_path and rename_old in src.json_path:
+            new_json_path = src.json_path.replace(rename_old, rename_new)
+        # Append rename hint to the prompt so the LLM gets explicit mapping
+        rename_hint = (
+            f"\n\n# 字段重命名（Part 3 §3.9）\n"
+            f"该字段原命名为 `{rename_old}`，现已重命名为 `{rename_new}`。\n"
+            f"请在票面上按 `{rename_old}` 的语义/位置/格式识别，但输出 JSON 时\n"
+            f"key 必须使用新命名 `{rename_new}`，不要输出旧名 `{rename_old}`。"
+        )
+        new_prompt = (new_prompt or "").rstrip() + rename_hint
+
     return OcrModule(
         id=uuid.uuid4(),
         prompt_version_id=new_version_id,
-        module_key=src.module_key,
+        module_key=new_module_key,
         display_name=src.display_name,
         description=new_description,
-        json_path=src.json_path,
+        json_path=new_json_path,
         schema_fragment=new_schema,
         ocr_suggestions=copy.deepcopy(src.ocr_suggestions or {}),
         ocr_prompt=new_prompt,
@@ -821,6 +871,13 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
         status=src.status,
         module_accuracy=None,
     )
+
+
+def _snake(camel: str) -> str:
+    """billFromName → bill_from_name. Keep snake-cased input unchanged."""
+    import re as _re
+    s1 = _re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", camel)
+    return _re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
 
 
 _NEW_FIELD_LLM_SYSTEM = (

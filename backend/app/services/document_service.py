@@ -665,6 +665,12 @@ def _resolve_active_composed_prompt(db: Session, api_def_id: uuid.UUID) -> str |
 
     Used by reprocess_document when no explicit prompt is supplied — lets the
     §6.4 country-template flow drive OCR with the raw yaml prompt stored in v1.
+
+    Design v8: if the ApiDef has a non-empty pending_edits overlay
+    (added_fields / renames), augment the prompt with a "PENDING EDITS"
+    appendix so newly-uploaded samples are OCR'd with the user's in-flight
+    field set + rename mapping. The overlay is NOT written back to DB —
+    each call recomputes it from the current overlay state.
     """
     from app.ocr_optimizer.models import OcrPromptVersion, PromptVersionStatus
 
@@ -676,7 +682,55 @@ def _resolve_active_composed_prompt(db: Session, api_def_id: uuid.UUID) -> str |
         )
         .first()
     )
-    return v.composed_prompt if v else None
+    if not v:
+        return None
+    base = v.composed_prompt or ""
+    return _augment_with_overlay(db, api_def_id, base)
+
+
+def _augment_with_overlay(db: Session, api_def_id: uuid.UUID, base_prompt: str) -> str:
+    """Append a 'PENDING EDITS' appendix to base_prompt describing the
+    user's in-flight added fields + rename mappings, so the LLM extracts
+    the same union field set across all samples of this ApiDef.
+
+    See backend/app/services/pending_edits_service.py for overlay shape and
+    docs/prompt-system.md §11 for the cross-sample workspace invariants.
+    """
+    try:
+        from app.services import pending_edits_service
+        overlay = pending_edits_service.get_overlay(db, api_def_id)
+    except Exception:
+        return base_prompt
+
+    added = overlay.get("added_fields") or []
+    renames = overlay.get("renames") or {}
+    if not added and not renames:
+        return base_prompt
+
+    blocks: list[str] = ["", "# 跨样本 Pending Edits 补充（design v8 overlay）",
+                         "用户在其他样本上已进行以下编辑。本次识别请同样适用，找不到的字段输出 null。"]
+
+    if renames:
+        blocks.append("")
+        blocks.append("## 字段重命名映射（{旧字段命名} → {新字段命名}）")
+        blocks.append("识别到下列字段时，请在输出 JSON 中**使用新字段命名**作为 key（不要保留旧 key，也不要同时输出两者）：")
+        for old, new in renames.items():
+            blocks.append(f"- 在票面看到通常对应 `{old}` 的内容 → 输出到 JSON key `{new}`")
+
+    if added:
+        blocks.append("")
+        blocks.append("## 用户在其他样本中新增的字段")
+        blocks.append("请尝试从本样本中识别下列字段；找不到则该字段输出 null（不要省略 key）：")
+        for f in added:
+            name = f.get("field_name") or ""
+            ftype = f.get("type") or "string"
+            desc = (f.get("description") or "").strip()
+            if desc:
+                blocks.append(f"- `{name}` (type: {ftype}) — {desc}")
+            else:
+                blocks.append(f"- `{name}` (type: {ftype})")
+
+    return base_prompt.rstrip() + "\n" + "\n".join(blocks) + "\n"
 
 
 def reprocess_document(
