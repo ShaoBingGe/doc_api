@@ -30,10 +30,15 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 # yaml.prompt_format. Per design §6.4 / Q tax_categories.
 TAX_CATEGORIES_DEFAULT = "请使用文档中出现的原名"
 
-# Marker that delimits the global-rules section in yaml.prompt_format.
-# Everything from this marker (inclusive) to the end of prompt_format is
-# considered global rules; everything before is opening narrative.
-_GLOBAL_RULES_MARKER = "**提取规则：**"
+# Markers that delimit the global-rules section in yaml.prompt_format.
+# Everything from the FIRST marker found (inclusive) to the end of
+# prompt_format is captured as the `global_rules` module.
+#
+# Markers in priority order:
+#   1. "# Part 1"        — design v5 country template (Part 1 = country
+#                          global rules; Part 2 = per-field rules + schema)
+#   2. "**提取规则：**" — legacy marker used by pre-v5 country YAMLs
+_GLOBAL_RULES_MARKERS = ("# Part 1", "**提取规则：**")
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -161,19 +166,33 @@ def _extract_invoice_branch(raw_schema: dict) -> dict:
 
 
 def _build_global_rules_module(rendered_prompt: str) -> dict[str, Any]:
-    """Extract the global-rules section from prompt_format (see design §6.4 §7)."""
-    idx = rendered_prompt.find(_GLOBAL_RULES_MARKER)
-    if idx == -1:
-        # Be lenient: if the marker is missing, store the whole rendered text
-        # as global rules — better than failing the whole init.
+    """Extract the global-rules section from prompt_format (see design §6.4 §7).
+
+    Tries each marker in order. Captures from the FIRST match (inclusive)
+    to the end of prompt_format. Falls back to storing the entire prompt
+    when no marker is found (lenient — better than failing init).
+
+    For the design-v5 layout (# Part 1 / # Part 2), captures from "# Part 1"
+    through end of file — this gives the global_rules module the FULL
+    country knowledge AND the cross-field output rules together, which is
+    what the composer ultimately wants in the system prompt anyway.
+    """
+    rules_text = rendered_prompt
+    matched_marker: str | None = None
+    for marker in _GLOBAL_RULES_MARKERS:
+        idx = rendered_prompt.find(marker)
+        if idx >= 0:
+            rules_text = rendered_prompt[idx:]
+            matched_marker = marker
+            break
+    if matched_marker is None:
         logger.warning(
-            "global rules marker '%s' not found in yaml.prompt_format; "
+            "No global-rules marker found in yaml.prompt_format (tried %s); "
             "storing entire prompt as global_rules.ocr_prompt",
-            _GLOBAL_RULES_MARKER,
+            list(_GLOBAL_RULES_MARKERS),
         )
-        rules_text = rendered_prompt
     else:
-        rules_text = rendered_prompt[idx:]
+        logger.info("Global rules captured using marker %r", matched_marker)
 
     return {
         "module_key": "global_rules",
@@ -188,8 +207,8 @@ def _build_global_rules_module(rendered_prompt: str) -> dict[str, Any]:
         },
         "ocr_prompt": rules_text,
         "description": (
-            "整张文档级别的提取规则集合：日期、数字格式、税种简称、跨页合并等。"
-            "由 yaml.prompt_format 中『提取规则：』及之后所有段落组成。"
+            "整张文档级别的提取规则集合：国家全局说明 + 跨字段输出规则。"
+            "由 yaml.prompt_format 中『# Part 1』及之后所有段落组成。"
         ),
         "order_index": 0,
     }

@@ -73,15 +73,19 @@ def reflect_on_diffs(
 
     for idx, diff in enumerate(diffs):
         key = diff.get("module_key") or f"_new_{idx}"
-        skills = route(diff)
         result = ReflectionResult(module_key=key, kind=diff.get("kind", "edit"), diff=diff)
 
         ctx = _build_context(diff, modules_by_key)
 
-        # ── Country agent FIRST (richer, country-specific signal) ───────
-        # Its output uses the same schema as global skills (rationale,
-        # fix_suggestion, description_patch); we append it to skill_outputs
-        # under the agent's key so the downstream aggregation works as-is.
+        # ── Country-only routing (design v5) ────────────────────────────
+        # If the source ApiDef is country-templated AND has an agent for
+        # this diff kind, use ONLY that agent. Do not layer global skills
+        # on top — the country agent already encodes the country-specific
+        # knowledge (taxonomy, tax-ID conventions, format rules) that
+        # would otherwise be in global skills.
+        # If no country agent is configured (e.g. non-templated ApiDef
+        # OR a country without agent files), fall back to global skills
+        # so reflection still happens.
         agent = country_agents.get(diff.get("kind", "edit"))
         if agent:
             output = _invoke_country_agent(
@@ -96,23 +100,22 @@ def reflect_on_diffs(
                     if isinstance(output.get("description_patch"), str) and output["description_patch"].strip():
                         if not result.description_patch:
                             result.description_patch = output["description_patch"].strip()
-
-        for skill in skills:
-            output = _invoke_skill(
-                skill, diff, ctx,
-                processor_spec=processor_spec, model_name=model_name,
-            )
-            if output is None:
-                continue
-            result.skill_outputs.append({"skill": skill.key, "output": output})
-            # Extract convenience fields
-            if isinstance(output, dict):
-                if isinstance(output.get("fix_suggestion"), str) and output["fix_suggestion"].strip():
-                    result.fix_suggestions.append(output["fix_suggestion"].strip())
-                if isinstance(output.get("description_patch"), str) and output["description_patch"].strip():
-                    # First non-empty wins
-                    if not result.description_patch:
-                        result.description_patch = output["description_patch"].strip()
+        else:
+            # Fallback: no country agent → run global skills
+            for skill in route(diff):
+                output = _invoke_skill(
+                    skill, diff, ctx,
+                    processor_spec=processor_spec, model_name=model_name,
+                )
+                if output is None:
+                    continue
+                result.skill_outputs.append({"skill": skill.key, "output": output})
+                if isinstance(output, dict):
+                    if isinstance(output.get("fix_suggestion"), str) and output["fix_suggestion"].strip():
+                        result.fix_suggestions.append(output["fix_suggestion"].strip())
+                    if isinstance(output.get("description_patch"), str) and output["description_patch"].strip():
+                        if not result.description_patch:
+                            result.description_patch = output["description_patch"].strip()
 
         # Summarize rationale
         rats = [

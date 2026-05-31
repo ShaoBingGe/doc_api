@@ -1,60 +1,93 @@
-id: '7_6'
-remark: gemini的 json schema, 使用了 anyof
-structure_prompt_version: '4'
+id: '7_7'
+remark: gemini json schema, anyof. Restructured into Part1 (MY country global) + Part2 (per-field rules + output format).
+structure_prompt_version: '5'
 prompt_template:
   prompt_format: |-
-    **任务描述：**
-    请识别并提取用户提供的票据信息。文档中可能包含多张不同类型的票据，且部分票据可能跨越多页。
-        
-    **输入说明：**
-    - 用户上传的文档可能是PDF文件或图片文件；
-    - 文档中可能存在排版混乱、印刷不清等情况，请尽可能准确识别关键信息。
-    
-    **处理要求：**
-    1.票据识别：识别文档中的所有票据，一页可能包含多张票据
-    2.跨页处理：对于跨越多页的票据，请合并信息后作为单个完整票据输出
-    3.分类处理：根据票据类型采用不同的提取策略
-    4.结构化输出：以JSON格式输出结果
-    
-    
-    **票据分类标准：**
-    - invoice：正式的付款凭证，通常包含供应商和客户信息、发票号码、日期、税务信息（如增值税号）、付款条款、银行信息、商品或服务详情及总金额。
-      特别说明：以下类型均属于 invoice，即使名称中包含易混淆词汇，也必须优先归类为 invoice：
-      standard invoice、proforma invoice、credit note、debit note、請求書（日语“请求书”）
-      quotation（报价单）：尽管名称为“报价单”，但只要包含供应商/客户信息、商品/服务详情、金额等 invoice 核心要素，即属于 invoice
-      receipt/tax invoice（收据/税务发票）：因包含税务信息（如增值税号），区别于普通 receipt，故属于 invoice
-    - receipt：通常为较小金额的付款凭证，一般不包含详细税务信息，常见于零售交易、餐饮、交通等消费场景。通常包括各种小票、收据、领収書等。此外，标题明确为「支払明細書」的文档归类为 receipt。
-    - other：不符合上述标准的文档，如合同、订单确认书等
-    
-    **提取规则：**
-    - 保持原文：提取内容保留票据原文语言，不进行翻译
-    - 数据格式：
-      - **【强制规则】金额处理必须分两步执行：**
-        - **第一步：识别该票据的币种及其数字格式习惯。** 不同国家/地区对"."和","的含义可能完全相反，必须先判断再处理：
-          - 以"."作为千分位、","作为小数点的格式（常见于越南 VND、部分欧洲国家等）：票面上的 `6.000` 实际值为 **6000**，`1.234.567,89` 实际值为 **1234567.89**
-          - 以","作为千分位、"."作为小数点的格式（常见于 USD、CNY、GBP 等）：票面上的 `6,000` 实际值为 **6000**，`1,234,567.89` 实际值为 **1234567.89**
-          - 判断依据：优先参考票面明确标注的币种符号及国家/地区信息；其次观察票面数字的整体规律（如是否同时出现两种分隔符）。
-        - **第二步：将识别出的实际数值转换为纯数字格式输出**（如：`1234567.89`），严禁在输出中保留任何千分位符号。
-      - 税率以百分比字符串形式输出（如："10%"）
-    - 日期处理规则: 这是一个绝对规则，必须严格遵守。
-      1. **核心原则：年份必须是近期年份**。所有发票的年份 **必须** 大于等于2015年。任何解析出年份小于2015（如2014, 2012, 2006）的结果都是 **绝对错误** 的，决不能输出。
-      2. **解决歧义的强制步骤**: 当你看到一个像 '07-09-24' 这样的日期时，你必须按以下步骤思考来消除歧义：
-         a. **列出可能性**: 这个字符串可能是 YY-MM-DD, MM-DD-YY, 或 DD-MM-YY 格式。
-         b. **应用年份原则进行筛选**:
-            - 如果按 YY-MM-DD 解析，日期是 2007年09月24日。年份是2007，小于2015，所以这个解析 **是错误的，必须抛弃**。
-            - 如果按 MM-DD-YY 解析，日期是 2024年07月09日。年份是2024，大于2015，所以这个解析 **是可能的**。
-            - 如果按 DD-MM-YY 解析，日期是 2024年09月07日。年份是2024，大于2015，所以这个解析 **也是可能的**。
-         c. **最终决策**: 在所有通过“年份原则”筛选的、可能的解析中，选择最合理的一个；
-      3. **输出格式**: 最终所有日期字段都必须统一转换为 YYYY-MM-DD 格式输出。
-    - 必填字段：
-      - invoice/receipt类型：docType、invoiceType、page、currency必须输出。如果票面上没有currency信息，则根据上下文推断。
-      - other类型：仅docType、page必须输出
-    - 缺失信息：无法找到的字段不输出，不进行推断或填充
-    - 税种简称映射：detailOfTaxSummary.taxCategory字段必须使用以下标准简称（如果识别的税种不在此列表中，则使用你识别出的税种名称）：{tax_categories_text}
-    - 必须全面提取票据上出现的所有税种信息，不漏掉任何一种税种
-    - 发票上可能同时存在多种不同的税种（如增值税、预扣税等），需要逐一识别并提取
-    - 注意识别加项税种（如VAT）和减项税种（如WHT、预扣税等）
-    
+    # 任务
+    请识别并提取这张马来西亚（MY）票据文档（PDF / 图片），按下方 JSON Schema 输出合法 JSON。
+    文档可能包含多张票据、跨页票据、印刷模糊等情况，请尽可能准确识别。
+
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Part 1 · 马来西亚（MY）国家全局说明
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    ## 1.1 票据种类分类（docType + invoiceType）
+    - **invoice**：正式付款凭证，包含供应商和客户信息、发票号码、日期、税务信息、付款条款、商品或服务明细、总金额。
+      下列子类型一律归为 invoice（即使名称含 quotation / credit / proforma 等）：
+      - Commercial Invoice（标准发票，默认子类）
+      - Proforma Invoice（形式发票；票面含 PROFORMA / PRO FORMA 等关键词）
+      - Credit Note（贷项发票；票面含 AVOIR / CREDIT 等关键词，或 totalAmount < 0）
+      - Tax Invoice（税务发票；票面含 "Tax Invoice" / "Faktur Pajak"，MY 多数 SST 发票属此类）
+      - Debit Note（借项发票）
+      - Quotation 报价单：若含供应商/客户/明细/金额等 invoice 核心要素，亦归 invoice
+      - Receipt/Tax Invoice 收据税票：含税务信息（如 SST/TIN）的归 invoice
+    - **receipt**：小额付款凭证，一般无详细税务信息，如各种小票、收据。
+    - **other**：合同、订单确认书等不属 invoice/receipt 的文档。
+
+    ## 1.2 内容与格式统一要求
+    - **语言**：MY 票据以英文为主，部分中/马来文。**保持原文，不翻译**。
+    - **货币**：默认 MYR / RM。
+      - 千分位 `,` + 小数点 `.`（同 USD/CNY/GBP）：`6,000.00` → 实际值 `6000.00`；`1,234,567.89` → `1234567.89`。
+      - 注意区分越南 VND / 部分欧洲格式（`.` 千分位、`,` 小数点）—— 若票面出现 VND 等标识或数字规律明显相反，按相反规则解析。
+      - **输出统一为纯数字字符串/数值，严禁保留千分位符号或货币符号。**
+    - **税率**：以百分比字符串输出，如 `"6%"`、`"10%"`。
+    - **日期处理（绝对规则，必须严格遵守）**：
+      1. **核心原则：年份必须 ≥ 2015**。任何解析出 < 2015（如 2014/2012/2006）的结果一律抛弃。
+      2. **歧义消除**：MY 主流为 `DD-MM-YYYY`；遇到 `07-09-24` 这种二位年时按上述年份原则筛选；剩余多个合理解析中取最合理者。
+      3. **输出格式**：最终所有日期字段 **统一 YYYY-MM-DD**。
+
+    ## 1.3 MY 税号/税编强制规定
+    - **TIN（Tax Identification Number）**：所有 MY 实体的纳税识别号。
+      - 格式：`C` + 10 位数字（如 `C5884056070`、`C4908240100`）。
+      - 一张票面上若同时出现卖方 TIN 与买方 TIN：
+        - 卖方 TIN → `billFromTaxIdentificationNumber`
+        - 买方 TIN → `billToTaxIdentificationNumber`
+      - 关键词：`TIN`、`TIN No.`、`Supplier TIN`、`Buyer TIN`、`Customer Tin No.`
+    - **SSM / Company Reg. No.（业务登记号）**：MY 公司注册号，**仅供应商提取，不取买方**。
+      - 格式：12 位纯数字（新号，如 `199201000276`），或旧号带连字符（如 `518287-T`、`424868-V`），或并列（如 `199701009372 (424868-V)`）—— 完整保留原文。
+      - 关键词：`Company Reg.No`、`Registration No`、`SSM`，或公司名称右侧括号内的 12 位数字。
+      - 字段：`billFromBusinessRegistrationNumber`。
+    - **SST Number（销售与服务税号）**：与 TIN / SSM 完全不同，**不要混用**。MY 票面常单独标注 `Sales Tax No.` / `SST ID`。
+      - **严禁将 SST 号当作 invoice number / TIN / SSM**。
+    - **发票号 invoiceNumber**：
+      - 关键词：`Invoice No`、`INVOICE NO:`、`E INV NO`、`No.`
+      - 典型格式：`PT-148862`、`S-25/10-0059`、`INV13398`、`IN2601/1024`、`25FC011847`
+      - **严禁将 Sales Tax No 或 SST ID 误取为 invoice number。**
+
+    ## 1.4 必填字段与缺失处理
+    - **invoice / receipt 类型**：`docType`、`invoiceType`、`page`、`currency` 必须输出；若票面无 currency，按 MY 上下文推断（默认 MYR）。
+    - **other 类型**：仅 `docType`、`page` 必须输出。
+    - **缺失信息**：无法找到的字段一律不输出，**不要推断、不要捏造**。
+
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Part 2 · 字段识别规则与输出格式
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    ## 2.1 字段级规则
+    下方 JSON Schema 中每个字段的 `description` 已经包含了：
+    - 该字段的业务含义
+    - MY 票面常见关键词与典型格式
+    - 取值位置锚点
+    - 易混淆字段的辨别要点
+
+    **请严格按 schema 中每字段的 description 提取。**
+
+    ## 2.2 跨字段输出规则
+    - **金额相关字段**（`totalNetAmount`、`totalAmount`、`totalTaxAmount`，以及明细行 `unitPrice` / `netAmount` / `grossAmount` / `tax`）：按 Part 1·1.2 货币规则去千分位、去货币符号后输出，严禁保留任何 `,` 千分位。
+    - **税额提取**（`detailOfTaxSummary` + `totalTaxAmount`）：
+      - **语义优先**：优先提取明确标识为 `Tax` / `SST` / `VAT` / `GST` / `Tax Amount` 的数值。
+      - **结构识别**：若票面有多行税率汇总表（Tax Summary），提取表中每个税种的金额合计，而不是简单取表底的 `Total` / `Subtotal`。
+      - **严禁推算**：不要用 `totalAmount - 某项` 反推税额，必须在票面找到对应的税金标识。
+      - 同一票据可能同时存在加项税（VAT / SST）与减项税（WHT / 预扣税），都要逐一提取并放入 `detailOfTaxSummary` 数组。
+      - `detailOfTaxSummary.taxCategory` 字段使用标准简称：{tax_categories_text}；不在列表中的用票面原名。
+    - **行项目明细**（`detailOfGoodsOrServices`）：
+      - 一行 = 一项；若一行的"数量/单价"分多列子标题（如 PCS / BDL / MT），优先取计费用单位对应的列，确认 quantity × unitPrice ≈ netAmount。
+      - `purchaseOrderNumber` / `salesOrderNumber` / `deliveryOrderNumber`：
+        - 若该单号对整张发票适用 → 填到票头字段；
+        - 若该单号仅对某行适用 → 填到对应行；**两边都填一份的做法是错的**。
+    - **跨页票据**：合并所有页的内容作为单张票据输出，`page` 字段填全部连续页码数组（如 `[2, 3, 4]`）。
+    - **Credit Note**：必须填 `originalInvoiceReferences` 数组（原发票号、原日期、原代码）。
+
   json_schema:
     title: invoice_and_receipts
     type: ARRAY
