@@ -60,12 +60,31 @@ export interface FieldEditDraft {
   /** module_key — undefined for new fields (kind=add) */
   moduleKey?: string
   kind: 'edit' | 'add'
+  /** Document this draft was made against. Edits and add-row values are
+   * per-document because the same field has different correct values on
+   * different files. */
+  documentId?: string
   originalName?: string
   correctedName: string
   originalValue?: string | number | boolean | null
   correctedValue: string
   originalFormat?: string
   correctedFormat: string
+}
+
+/**
+ * Add-field rows are TEMPLATE-level (name + format shared across all docs)
+ * but each document has its own value evidence. `values[docId]` lets the
+ * customer fill in the new field's value on whichever sample they're looking
+ * at without losing the row when they switch docs.
+ */
+export interface AddFieldRow {
+  /** Stable id for the row (independent of name to allow renaming) */
+  rowId: string
+  correctedName: string
+  correctedFormat: string
+  /** Per-document value evidence; key = documentId */
+  values: Record<string, string>
 }
 
 export type CustomizeJobPhase =

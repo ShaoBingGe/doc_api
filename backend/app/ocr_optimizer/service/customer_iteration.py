@@ -441,9 +441,39 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
     src_api = db.get(ApiDefinition, src_id)
     if not src_api:
         raise NotFoundError(f"ApiDefinition {src_id} not found")
-    src_version = persistence.get_active_version(db, src_id)
-    if not src_version:
-        raise ValidationError("Source API has no active prompt version")
+
+    # ── Defensive source-version pick ─────────────────────────────────────
+    # If the source's currently-active version has been mutated down to a
+    # near-empty module set (e.g. a previous run hit the legacy meta bug),
+    # the customer would inherit that damage on every subsequent fork —
+    # a cascading loss of fields. Prefer the version with the MOST modules
+    # among all the source's versions; tie-break by latest. Falls back to
+    # the active version when no modules exist at all.
+    from sqlalchemy import func
+    candidates = (
+        db.query(OcrPromptVersion, func.count(OcrModule.id).label('mc'))
+        .outerjoin(OcrModule, OcrModule.prompt_version_id == OcrPromptVersion.id)
+        .filter(OcrPromptVersion.api_definition_id == src_id)
+        .group_by(OcrPromptVersion.id)
+        .all()
+    )
+    if not candidates:
+        raise ValidationError("Source API has no prompt versions")
+    # max modules; tie-break = newest created_at
+    candidates.sort(key=lambda x: (-int(x[1] or 0), -(x[0].created_at.timestamp() if x[0].created_at else 0)))
+    src_version = candidates[0][0]
+    chosen_module_count = int(candidates[0][1] or 0)
+    active_version = persistence.get_active_version(db, src_id)
+    if active_version and active_version.id != src_version.id:
+        logger.warning(
+            "Fork using v%s (origin=%s, modules=%d) instead of active v%s — "
+            "active had only %d modules (recovery path)",
+            src_version.version, src_version.origin, chosen_module_count,
+            active_version.version if active_version else "?",
+            db.query(func.count(OcrModule.id)).filter(
+                OcrModule.prompt_version_id == active_version.id
+            ).scalar() if active_version else 0,
+        )
     src_modules: list[OcrModule] = (
         db.query(OcrModule)
         .filter(OcrModule.prompt_version_id == src_version.id)
