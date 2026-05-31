@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..service.llm_failover import llm_text_completion_failover
+from .country_agents_loader import CountryAgent, load_country_agents
 from .master import route
 from .skills_loader import Skill
 
@@ -48,6 +49,7 @@ def reflect_on_diffs(
     modules_by_key: dict[str, dict] | None = None,
     processor_spec: str = "gemini",
     model_name: str | None = None,
+    country: str | None = None,
 ) -> dict[str, ReflectionResult]:
     """
     Run reflection for each diff.
@@ -57,6 +59,8 @@ def reflect_on_diffs(
         modules_by_key: optional context for each existing module:
             {module_key: {"description": str, "ocr_prompt": str, "schema_fragment": dict}}
         processor_spec / model_name: passed through to llm_text_completion
+        country: ISO country code (e.g. "MY"). When set, the country-specific
+                 add_field/edit_field agent runs in ADDITION to global skills.
 
     Returns:
         {module_key (or temp key for adds): ReflectionResult}
@@ -64,12 +68,34 @@ def reflect_on_diffs(
     modules_by_key = modules_by_key or {}
     results: dict[str, ReflectionResult] = {}
 
+    # Country-scoped agents (one per kind). Loaded once per call.
+    country_agents = load_country_agents(country) if country else {}
+
     for idx, diff in enumerate(diffs):
         key = diff.get("module_key") or f"_new_{idx}"
         skills = route(diff)
         result = ReflectionResult(module_key=key, kind=diff.get("kind", "edit"), diff=diff)
 
         ctx = _build_context(diff, modules_by_key)
+
+        # ── Country agent FIRST (richer, country-specific signal) ───────
+        # Its output uses the same schema as global skills (rationale,
+        # fix_suggestion, description_patch); we append it to skill_outputs
+        # under the agent's key so the downstream aggregation works as-is.
+        agent = country_agents.get(diff.get("kind", "edit"))
+        if agent:
+            output = _invoke_country_agent(
+                agent, diff, ctx,
+                processor_spec=processor_spec, model_name=model_name,
+            )
+            if output:
+                result.skill_outputs.append({"skill": agent.key, "output": output})
+                if isinstance(output, dict):
+                    if isinstance(output.get("fix_suggestion"), str) and output["fix_suggestion"].strip():
+                        result.fix_suggestions.append(output["fix_suggestion"].strip())
+                    if isinstance(output.get("description_patch"), str) and output["description_patch"].strip():
+                        if not result.description_patch:
+                            result.description_patch = output["description_patch"].strip()
 
         for skill in skills:
             output = _invoke_skill(
@@ -148,4 +174,32 @@ def _invoke_skill(
         return None
     except Exception as exc:
         logger.exception("Skill %s LLM call failed: %s", skill.key, exc)
+        return None
+
+
+def _invoke_country_agent(
+    agent: CountryAgent,
+    diff: dict,
+    ctx: dict,
+    *,
+    processor_spec: str,
+    model_name: str | None,
+) -> dict | None:
+    """Same as _invoke_skill but uses the agent's OWN system_prompt instead
+    of the global _REFLECTION_SYSTEM. Returns parsed JSON or None on error."""
+    user_prompt = agent.render(diff, ctx)
+    try:
+        result = llm_text_completion_failover(
+            processor_spec=processor_spec,
+            model_name=model_name,
+            system_instruction=agent.system_prompt or _REFLECTION_SYSTEM,
+            user_prompt=user_prompt,
+            as_json=True,
+        )
+        if isinstance(result, dict):
+            return result
+        logger.warning("Country agent %s returned non-dict: %r", agent.key, type(result))
+        return None
+    except Exception as exc:
+        logger.exception("Country agent %s LLM call failed: %s", agent.key, exc)
         return None

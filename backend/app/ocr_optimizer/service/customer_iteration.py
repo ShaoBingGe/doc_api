@@ -492,11 +492,15 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
     _update_job(db, job,
                 status=CustomizeJobStatus.reflecting.value,
                 phase_detail="正在为每个字段调用反思 agent")
+    # Country code (e.g. "MY") drives the per-country reflection agents.
+    # Falls back to None for ApiDefs that didn't come from a country template.
+    src_country = (src_api.config or {}).get("source_country") or None
     reflections = reflect_on_diffs(
         diffs,
         modules_by_key=modules_by_key,
         processor_spec=src_api.processor_type or "gemini",
         model_name=src_api.model_name,
+        country=src_country,
     )
     reflection_summary = [
         {

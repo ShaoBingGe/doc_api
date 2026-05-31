@@ -19,6 +19,7 @@ from .conversations import router as conversations_router
 from .country_templates import router as country_templates_router
 from .documents import router as documents_router
 from .extract import router as extract_router
+from .reflection_agents import router as reflection_agents_router
 from app.ocr_optimizer.router import router as ocr_optimizer_router
 from .templates import router as templates_router
 from .usage import router as usage_router
@@ -34,4 +35,5 @@ v1_router.include_router(extract_router)
 v1_router.include_router(ocr_optimizer_router)
 v1_router.include_router(templates_router)
 v1_router.include_router(country_templates_router)
+v1_router.include_router(reflection_agents_router)
 v1_router.include_router(usage_router)

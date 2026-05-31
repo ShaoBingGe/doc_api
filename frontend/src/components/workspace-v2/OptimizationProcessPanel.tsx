@@ -28,6 +28,7 @@ import {
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { toast } from '../../lib/toast'
+import CountryReflectionAgents from './CountryReflectionAgents'
 import {
   fetchOcrVersions,
   fetchOcrVersion,
@@ -382,6 +383,9 @@ export default function OptimizationProcessPanel({
 
   return (
     <div className="flex flex-col h-full bg-[#18181c] text-white">
+      {/* Country-scoped reflection agents — product-tech maintained,
+          shared across all customer iterations for this country. */}
+      <CountryReflectionAgents apiDefinitionId={apiDefinitionId} />
       <div className="border-b border-white/5">
         <VersionChips
           versions={versions}
