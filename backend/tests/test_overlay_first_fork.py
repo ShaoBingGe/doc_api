@@ -301,3 +301,55 @@ def test_post_customize_sweep_rewrites_all_docs(db_session):
         )
         assert "salerCompany" in pr.structured_data[0]
         assert "billFromName" not in pr.structured_data[0]
+
+
+# ── Phase 25: post-finalize re-OCR sweep ──────────────────────────────────────
+
+
+def test_post_finalize_reocr_sweeps_all_docs(db_session, monkeypatch):
+    """Phase 25 — after the 3-round iteration finalizes, EVERY doc bound to
+    the ApiDef must be re-OCR'd with the now-active final prompt so the JSON
+    output panel is consistent across samples.
+
+    Verifies the sweep:
+      • calls reprocess_document once per eligible doc with prompt=None
+        (→ reprocess_document resolves the ApiDef's ACTIVE/final prompt),
+      • skips docs that have no storage_path,
+      • survives a per-doc OCR failure (graceful degradation; job continues),
+      • returns accurate (succeeded, failed) counts.
+    """
+    import app.services.document_service as ds
+    from app.ocr_optimizer.service.customer_iteration import (
+        _reocr_all_docs_with_active_prompt,
+    )
+
+    api_def, docs, _v, _m = _setup_full_apidef(db_session)
+
+    # doc[1] has no storage_path → must be skipped, not counted.
+    # (storage_path is NOT NULL in the schema; an empty string is the
+    # "no file" sentinel the helper guards on via `if not doc.storage_path`.)
+    docs[1].storage_path = ""
+    db_session.commit()
+
+    called: list[tuple] = []
+
+    def fake_reprocess(db, doc_id, body):
+        called.append((doc_id, body.prompt))
+        if doc_id == docs[2].id:
+            raise RuntimeError("simulated OCR outage")
+        return None
+
+    monkeypatch.setattr(ds, "reprocess_document", fake_reprocess)
+
+    ok, bad = _reocr_all_docs_with_active_prompt(db_session, api_def.id)
+
+    # doc0 ok, doc1 skipped (no storage_path), doc2 failed
+    assert ok == 1, f"expected 1 success, got {ok}"
+    assert bad == 1, f"expected 1 failure, got {bad}"
+    called_ids = {c[0] for c in called}
+    assert docs[0].id in called_ids
+    assert docs[2].id in called_ids
+    assert docs[1].id not in called_ids, "doc with no storage_path must be skipped"
+    # Every call uses prompt=None so reprocess_document resolves the ACTIVE
+    # (just-finalized) composed_prompt — never a stale/explicit prompt.
+    assert all(p is None for (_id, p) in called)

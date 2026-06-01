@@ -243,6 +243,84 @@ def _rewrite_all_docs_structured_data(
     return touched
 
 
+def _reocr_all_docs_with_active_prompt(
+    db: Session,
+    api_def_id: uuid.UUID,
+) -> tuple[int, int]:
+    """Phase 25 — after the 3-round iteration finalizes (the final prompt is
+    now the ACTIVE OcrPromptVersion), re-run OCR on every sample document of
+    the ApiDef so each doc's persisted ProcessingResult.structured_data
+    reflects the SAME final prompt.
+
+    Why this is needed
+    ------------------
+    During the 3 rounds, `run_orchestrator._run_one_round` OCRs the samples
+    only to *evaluate* accuracy — the output lives on
+    OcrOptimizationRound.ocr_raw_outputs and is never written back to the
+    documents. `finalize_run` only flips the active-version pointer. So each
+    doc's structured_data still reflects whatever prompt last extracted IT
+    (initial upload, the augmented new-sample upload, a manual retry) — which
+    differs per doc. The workspace's middle field column papers over this with
+    a client-side rename overlay, but the JSON output panel reads the raw
+    per-doc structured_data and exposes the drift: one file shows 38 fields
+    with `billFromName`, another shows 14 fields with `salerName`, etc.
+
+    Phase 23.3's `_rewrite_all_docs_structured_data` only renames TOP-LEVEL
+    keys — it can't reconcile genuinely different field SETS / nesting / new
+    fields. A real re-extraction with the unified final prompt is the only
+    fix that makes every doc's JSON output consistent.
+
+    GT safety (CLAUDE.md invariants)
+    --------------------------------
+    `reprocess_document` creates a NEW ProcessingResult version with fresh
+    `ai_detected` annotations (is_corrected=False) and does NOT delete prior
+    annotations. `ground_truth.build` reads is_corrected/manual annotations
+    across ALL versions, so the customer's confirmed GT survives untouched
+    and no OCR output is auto-promoted to GT.
+
+    Graceful degradation: a per-doc OCR failure marks that doc failed and is
+    skipped; the job still completes. Returns (succeeded, failed).
+    """
+    from app.models.document import Document, DocumentStatus
+    from app.schemas.document import ReprocessRequest
+    from app.services.document_service import reprocess_document
+
+    docs = (
+        db.query(Document)
+        .filter(Document.api_definition_id == api_def_id)
+        .all()
+    )
+    succeeded = failed = 0
+    for doc in docs:
+        if not doc.storage_path:
+            continue
+        try:
+            # prompt=None → reprocess_document resolves the ApiDef's ACTIVE
+            # composed_prompt, which is the just-finalized final version.
+            reprocess_document(db, doc.id, ReprocessRequest(prompt=None))
+            succeeded += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Phase 25 re-OCR failed for doc=%s of ApiDef %s — %s",
+                doc.id, api_def_id, exc,
+            )
+            # _run_extraction set status=failed + re-raised without commit;
+            # roll back its partial txn, then persist the failure marker.
+            db.rollback()
+            d = db.get(Document, doc.id)
+            if d:
+                d.status = DocumentStatus.failed
+                d.error_message = (str(exc) or "post-iteration re-OCR failed")[:1024]
+                db.commit()
+            failed += 1
+    logger.info(
+        "Phase 25: re-OCR'd %d/%d docs of ApiDef %s with final active prompt "
+        "(%d failed)",
+        succeeded, succeeded + failed, api_def_id, failed,
+    )
+    return succeeded, failed
+
+
 def find_waiting_job_for_api(db: Session, api_definition_id: uuid.UUID) -> CustomizeJob | None:
     """Return the most-recent `waiting_for_samples` job whose new ApiDef
     OR source ApiDef = api_definition_id.
@@ -985,14 +1063,40 @@ def _run_three_rounds(db: Session, job: CustomizeJob, new_api: ApiDefinition) ->
 
     # Finalize → activate the best version
     overall_acc: float | None = None
+    finalized = False
     if best_version_id:
         try:
             run_orchestrator.finalize_run(db, run.id, best_version_id)
+            finalized = True
             final_v = db.get(OcrPromptVersion, best_version_id)
             if final_v:
                 overall_acc = final_v.overall_accuracy
         except Exception as exc:
             logger.exception("finalize_run failed for job %s: %s", job.id, exc)
+
+    # Phase 25 — re-OCR ALL sample docs with the now-active final prompt so
+    # every doc's persisted structured_data (and therefore the workspace's
+    # JSON / XML / CSV output panel) reflects the SAME final prompt. Without
+    # this, only the docs that happened to be extracted last with the final
+    # prompt look right; the rest keep stale per-doc output and the JSON panel
+    # shows inconsistent field sets/names across samples. See
+    # `_reocr_all_docs_with_active_prompt` for the GT-safety rationale.
+    if finalized:
+        try:
+            _update_job(db, job,
+                        phase_detail="正在用最终 prompt 刷新所有样本的识别结果...")
+            ok, bad = _reocr_all_docs_with_active_prompt(db, new_api.id)
+            logger.info(
+                "Phase 25 post-finalize re-OCR for job %s: %d ok, %d failed",
+                job.id, ok, bad,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Non-fatal: the new version is still active; the workspace just
+            # keeps stale per-doc output until a manual retry. Don't fail the job.
+            logger.warning(
+                "Phase 25 post-finalize re-OCR sweep failed for job %s: %s",
+                job.id, exc,
+            )
 
     _update_job(db, job,
                 status=CustomizeJobStatus.completed.value,
