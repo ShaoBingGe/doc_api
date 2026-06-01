@@ -393,7 +393,7 @@ function FieldRow({
         <button
           onClick={() => onDeleteField(annotation.id)}
           className="opacity-0 group-hover:opacity-100 p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-all"
-          title="删除字段"
+          title="删除此字段（所有样本 + 优化器同步生效）"
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
@@ -1637,6 +1637,7 @@ function FieldsView() {
     commitCurrentDraft,  // Phase 10
     commitFieldDeletion,  // Phase 11c
     requiredFields,  // Phase 13 — canonical field set
+    apiDefinitionId,  // Phase 25 — needed for in-row cascade delete
   } = useWorkspaceStore()
 
   // design v8 — derive "edited on OTHER files" set and the list of added
@@ -1872,14 +1873,31 @@ function FieldsView() {
     toast.success('字段已确认')
   }, [docId, saveAnnotation])
 
-  const handleDeleteField = useCallback((id: string) => {
-    if (!docId) {
-      removeAnnotation(id)
+  // Phase 25 — the in-row trash icon now mirrors the edit-panel's
+  // "删除此字段（所有样本 + 优化器同步生效）" button: it cascades the deletion
+  // to every doc of the ApiDef AND drops the field from the next customize
+  // fork's modules (no meta, no reflection, no schema slot) via the overlay.
+  // The old per-doc-only deleteAnnotationRemote path is retained as a
+  // fallback when there's no ApiDef context (draft-only workspace).
+  const handleDeleteField = useCallback(async (id: string) => {
+    const ann = annotations.find((a) => a.id === id)
+    const label = ann?.label ?? id
+    if (!apiDefinitionId) {
+      // No ApiDef → local/per-doc removal only.
+      if (!docId) { removeAnnotation(id); return }
+      deleteAnnotationRemote(docId, id)
+      toast.success('字段已删除')
       return
     }
-    deleteAnnotationRemote(docId, id)
-    toast.success('字段已删除')
-  }, [docId, removeAnnotation, deleteAnnotationRemote])
+    if (!confirm(
+      `确认从所有样本中删除字段 "${label}"？\n\n` +
+      `· 所有文件中该字段的标注将被永久删除\n` +
+      `· 客户化时不再生成该字段的 module / 反思 / schema\n` +
+      `· 此操作不可撤销`,
+    )) return
+    await commitFieldDeletion(id)
+    toast.success('字段已从所有样本中删除')
+  }, [annotations, apiDefinitionId, docId, removeAnnotation, deleteAnnotationRemote, commitFieldDeletion])
 
   const handleQueueField = useCallback((name: string, value: string) => {
     addPendingField(name, value)

@@ -183,11 +183,15 @@ interface WorkspaceStore {
    * single source of truth: sample upload (so file 2's first OCR sees
    * file 1's edits), customize submit, etc. */
   flushDraftsToOverlay: () => Promise<void>
-  /** Phase 11c — delete the currently-edited field. Cascades across all
-   * docs of the ApiDef, removes from overlay's added_fields/modifications,
-   * and excludes the field from the next customize fork's modules entirely
-   * (no meta, no reflection, no schema slot). */
-  commitFieldDeletion: () => Promise<void>
+  /** Phase 11c — delete a field. Cascades across all docs of the ApiDef,
+   * removes from overlay's added_fields/modifications, and excludes the
+   * field from the next customize fork's modules entirely (no meta, no
+   * reflection, no schema slot).
+   *
+   * Phase 25 — accepts an optional annotationId so the in-row trash icon
+   * can trigger the SAME cascade as the edit-panel delete button. When
+   * omitted, falls back to editingFieldId (the edit-panel path). */
+  commitFieldDeletion: (annotationId?: string) => Promise<void>
 
   /** Phase 13 — canonical field set the customer wants on every sample.
    * Computed by the backend as:
@@ -1234,20 +1238,23 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
   },
 
-  commitFieldDeletion: async () => {
+  commitFieldDeletion: async (annotationId?: string) => {
     const { editingFieldId, annotations, apiDefinitionId, selectedDocId } = get()
-    if (!editingFieldId || !apiDefinitionId) return
-    const ann = annotations.find((a) => a.id === editingFieldId)
+    // Phase 25 — target the explicit annotationId (in-row trash icon) or
+    // fall back to the currently-edited field (edit-panel delete button).
+    const targetId = annotationId ?? editingFieldId
+    if (!targetId || !apiDefinitionId) return
+    const ann = annotations.find((a) => a.id === targetId)
     if (!ann) return
     try {
       await apiClient.post(
         `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
         { deleted: true, field_name: ann.label },
       )
-      // Drop locally + close the editor pane
+      // Drop locally + close the editor pane if it was showing this field.
       set((s) => ({
-        annotations: s.annotations.filter((a) => a.id !== editingFieldId),
-        editingFieldId: null,
+        annotations: s.annotations.filter((a) => a.id !== targetId),
+        editingFieldId: s.editingFieldId === targetId ? null : s.editingFieldId,
       }))
       await get().loadPendingEdits()
       await get().loadRequiredFields()
