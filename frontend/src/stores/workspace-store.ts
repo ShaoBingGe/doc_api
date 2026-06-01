@@ -1193,6 +1193,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     if (tasks.length === 0) return
     try {
       await Promise.all(tasks)
+      // Added-field drafts are now committed to overlay.added_fields. Clear
+      // them so they stop rendering as global rows in the top "新增识别字段"
+      // table (which showed the SAME value on every doc); from here on each
+      // sample fills its own value via the per-doc "其他文件已新增字段" section.
+      set({ addFieldDrafts: [] })
       await get().loadPendingEdits()
       await get().loadRequiredFields()
     } catch (err) {

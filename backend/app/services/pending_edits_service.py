@@ -316,8 +316,71 @@ def compute_required_field_set(db: Session, api_def_id: uuid.UUID) -> list[str]:
             renamed.append(name)
             seen.add(name)
 
+    # ── Monotonic parity union (issue-1 fix) ──────────────────────────────
+    # Fields the LLM produced on a CONFIRMED sample but that aren't modules
+    # (e.g. nameOfInvoice, detailOfTaxSummary, billToTaxIdentificationNumber)
+    # are legitimate GT-reviewed fields. Without unioning them in, a newly
+    # uploaded sample is padded only to the module-derived set and the
+    # cross-sample field set silently SHRINKS — the user's "文件 1 确认的
+    # 字段集在上传文件 2/3 后丢失" report. A confirmed field must never
+    # vanish unless the user explicitly deletes/renames it, so we fold every
+    # confirmed sample's observed top-level keys into the required set.
+    for name in _observed_top_level_keys_from_confirmed(db, api_def_id, renames):
+        if name and name not in seen:
+            renamed.append(name)
+            seen.add(name)
+
     deleted = set(overlay.get("deleted_fields") or [])
     return [f for f in renamed if f not in deleted]
+
+
+def _observed_top_level_keys_from_confirmed(
+    db: Session,
+    api_def_id: uuid.UUID,
+    renames: dict[str, str],
+) -> list[str]:
+    """Top-level keys observed in the latest structured_data of every
+    CONFIRMED sample (one that has at least one GT annotation) bound to this
+    ApiDef, with renames applied. Confirmed-only bounds pollution: an
+    un-reviewed sample's hallucinated key can't enter the parity set.
+
+    Array/flattened keys ("foo[0]", "a.b") are skipped — the parity set is
+    top-level only, matching the module-derived leaf names.
+    """
+    from app.models.document import Document, ProcessingResult
+    from app.ocr_optimizer.service.ground_truth import has_ground_truth
+
+    out: list[str] = []
+    seen: set[str] = set()
+    docs = (
+        db.query(Document)
+        .filter(Document.api_definition_id == api_def_id)
+        .all()
+    )
+    for d in docs:
+        if not has_ground_truth(db, d.id):
+            continue
+        pr = (
+            db.query(ProcessingResult)
+            .filter(ProcessingResult.document_id == d.id)
+            .order_by(ProcessingResult.version.desc())
+            .first()
+        )
+        if not pr or not pr.structured_data:
+            continue
+        sd = pr.structured_data
+        records = sd if isinstance(sd, list) else [sd]
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            for k in rec.keys():
+                if not k or "[" in k or "." in k:
+                    continue
+                nk = renames.get(k, k)
+                if nk not in seen:
+                    seen.add(nk)
+                    out.append(nk)
+    return out
 
 
 def clear_overlay(db: Session, api_def_id: uuid.UUID) -> None:

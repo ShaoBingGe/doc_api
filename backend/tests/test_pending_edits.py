@@ -298,6 +298,157 @@ def test_compute_required_field_set_helper(db_session):
     assert "billFromName" not in fields
 
 
+# ── issue-1: monotonic parity union of confirmed-observed fields ──────────────
+
+
+def _add_pr(db, doc_id, structured_data, version=1):
+    from app.models.document import ProcessingResult
+    pr = ProcessingResult(
+        id=uuid.uuid4(),
+        document_id=doc_id,
+        version=version,
+        processor_type="mock",
+        model_name="mock",
+        prompt_used="",
+        raw_output={"text": ""},
+        structured_data=structured_data,
+        inferred_schema={},
+        processing_time_ms=0,
+    )
+    db.add(pr)
+    db.commit()
+    return pr
+
+
+def _confirm(db, doc_id, field_name="invoiceNumber", value="X"):
+    """Make a doc 'confirmed' by adding a GT annotation (source=manual)."""
+    from app.models.annotation import Annotation, AnnotationSource, FieldType
+    ann = Annotation(
+        id=uuid.uuid4(),
+        document_id=doc_id,
+        field_name=field_name,
+        field_value=value,
+        field_type=FieldType.string.value,
+        source=AnnotationSource.manual.value,
+        is_corrected=True,
+    )
+    db.add(ann)
+    db.commit()
+    return ann
+
+
+def test_required_set_unions_confirmed_observed_fields(db_session):
+    """A field the LLM produced on a CONFIRMED sample (but that is not a
+    module) must persist in the required set — so uploading more samples
+    never shrinks the cross-sample field set."""
+    from app.services import pending_edits_service
+
+    api_def, d1, _d2 = _setup_api_def(db_session)
+    _confirm(db_session, d1.id)
+    _add_pr(db_session, d1.id, [{
+        "invoiceNumber": "X",
+        "nameOfInvoice": "INVOICE",                 # extra, non-module
+        "detailOfGoodsOrServices[0].desc": "skip",  # flattened → ignored
+        "a.b": "skip",                              # dotted → ignored
+    }])
+
+    fields = pending_edits_service.compute_required_field_set(db_session, api_def.id)
+    assert "nameOfInvoice" in fields
+    assert "invoiceNumber" in fields
+    assert "detailOfGoodsOrServices[0].desc" not in fields
+    assert "a.b" not in fields
+
+
+def test_required_set_ignores_unconfirmed_observed_fields(db_session):
+    """An UN-confirmed sample's observed keys must NOT pollute the parity
+    set (only GT-reviewed samples contribute)."""
+    from app.services import pending_edits_service
+
+    api_def, _d1, d2 = _setup_api_def(db_session)
+    # d2 has a ProcessingResult but NO GT annotation → not confirmed.
+    _add_pr(db_session, d2.id, [{"junkField": "hallucinated"}])
+
+    fields = pending_edits_service.compute_required_field_set(db_session, api_def.id)
+    assert "junkField" not in fields
+
+
+def test_create_manual_annotation_upserts_structured_data(db_session):
+    """Saving a manual field (the '其他文件已新增字段' / missing-field flow)
+    must write the value into the doc's latest structured_data so the field
+    view + JSON panel show it and it leaves the 待补充 section — not just
+    create an invisible Annotation row."""
+    from app.schemas.annotation import CreateAnnotationRequest
+    from app.services import annotation_service
+
+    api_def, d1, _d2 = _setup_api_def(db_session)
+    _add_pr(db_session, d1.id, [{"invoiceNumber": "X"}])
+
+    annotation_service.create_annotation(
+        db_session, d1.id,
+        CreateAnnotationRequest(
+            field_name="PO", field_value="W1538012",
+            field_type="string", source="manual",
+        ),
+    )
+
+    from app.models.document import ProcessingResult
+    pr = (
+        db_session.query(ProcessingResult)
+        .filter(ProcessingResult.document_id == d1.id)
+        .order_by(ProcessingResult.version.desc())
+        .first()
+    )
+    assert pr.structured_data[0]["PO"] == "W1538012"   # value now visible
+    assert pr.structured_data[0]["invoiceNumber"] == "X"  # existing kept
+
+    # overlay still mirrors the add so other docs see it in their section
+    from app.services import pending_edits_service
+    overlay = pending_edits_service.get_overlay(db_session, api_def.id)
+    assert any(f["field_name"] == "PO" for f in overlay["added_fields"])
+
+
+def test_create_manual_annotation_none_writes_null(db_session):
+    """Ticking '无此字段' (field_value=None) records the key as null so the
+    field is 'covered' (present) and leaves the 待补充 list."""
+    from app.schemas.annotation import CreateAnnotationRequest
+    from app.services import annotation_service
+    from app.models.document import ProcessingResult
+
+    _api, d1, _d2 = _setup_api_def(db_session)
+    _add_pr(db_session, d1.id, [{"invoiceNumber": "X"}])
+
+    annotation_service.create_annotation(
+        db_session, d1.id,
+        CreateAnnotationRequest(
+            field_name="DO", field_value=None,
+            field_type="string", source="manual",
+        ),
+    )
+    pr = (
+        db_session.query(ProcessingResult)
+        .filter(ProcessingResult.document_id == d1.id)
+        .order_by(ProcessingResult.version.desc())
+        .first()
+    )
+    assert "DO" in pr.structured_data[0]
+    assert pr.structured_data[0]["DO"] is None
+
+
+def test_required_set_delete_wins_over_confirmed_observed(db_session):
+    """A field the user explicitly deleted must NOT be resurrected by the
+    confirmed-observed union (user intent beats observation)."""
+    from app.services import pending_edits_service
+
+    api_def, d1, _d2 = _setup_api_def(db_session)
+    _confirm(db_session, d1.id)
+    _add_pr(db_session, d1.id, [{"invoiceNumber": "X", "ghostField": "v"}])
+    pending_edits_service.record_deleted_field(db_session, api_def.id, "ghostField")
+
+    fields = pending_edits_service.compute_required_field_set(db_session, api_def.id)
+    assert "ghostField" not in fields
+    assert "invoiceNumber" in fields
+
+
 def test_cross_doc_context_dedupes_identical_values(db_session):
     """Phase 15 — when the same field has the same value on multiple docs,
     collapse to a single entry with dup_count + dup_doc_filenames."""

@@ -46,6 +46,89 @@ def _to_response(ann: Annotation) -> AnnotationResponse:
     return AnnotationResponse.model_validate(ann)
 
 
+def _coerce_value(raw, field_type: str | None):
+    """Best-effort coerce a string field_value into its declared type so the
+    JSON output panel renders numbers/bools natively, not as quoted strings."""
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        return raw
+    if field_type == "number":
+        try:
+            return int(raw) if "." not in raw else float(raw)
+        except ValueError:
+            return raw
+    if field_type == "boolean":
+        return raw.strip().lower() in ("true", "1", "yes", "y")
+    return raw
+
+
+def _upsert_field_in_latest_structured_data(
+    db: Session,
+    document_id: uuid.UUID,
+    field_name: str,
+    field_value,
+    field_type: str | None = None,
+) -> None:
+    """Write a TOP-LEVEL field into the document's latest ProcessingResult
+    structured_data so the workspace field view + JSON output panel reflect
+    a manually-added/answered field immediately.
+
+    Why this matters: the frontend rebuilds the field list from
+    `latest_result.structured_data` (NOT the Annotation table). Creating an
+    Annotation row alone is invisible to that view — the field would keep
+    showing as "missing / 待补充" with an empty input after a successful save.
+    Upserting the key here keeps the Annotation row (GT) and the displayed
+    structured_data in agreement.
+
+    Top-level only, mirroring the parity/pad contract. Flattened labels
+    ("foo[0].bar") are skipped — array-cell answers go through a different
+    path. Idempotent on the (name, value) pair.
+    """
+    from sqlalchemy import desc
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.document import ProcessingResult
+
+    if not field_name or "[" in field_name or "." in field_name:
+        return
+
+    pr = (
+        db.query(ProcessingResult)
+        .filter(ProcessingResult.document_id == document_id)
+        .order_by(desc(ProcessingResult.version))
+        .first()
+    )
+    if pr is None or pr.structured_data is None:
+        return
+
+    value = _coerce_value(field_value, field_type)
+    sd = pr.structured_data
+
+    if isinstance(sd, list):
+        new_sd = []
+        touched = False
+        for rec in sd:
+            if isinstance(rec, dict):
+                rec = dict(rec)
+                rec[field_name] = value
+                touched = True
+            new_sd.append(rec)
+        if not touched:
+            # structured_data was an empty list → seed one record
+            new_sd = [{field_name: value}]
+        pr.structured_data = new_sd
+    elif isinstance(sd, dict):
+        new_sd = dict(sd)
+        new_sd[field_name] = value
+        pr.structured_data = new_sd
+    else:
+        return
+
+    flag_modified(pr, "structured_data")
+    db.commit()
+
+
 # ── Create ────────────────────────────────────────────────────────────────────
 
 def create_annotation(
@@ -92,6 +175,20 @@ def create_annotation(
             import logging
             logging.getLogger(__name__).warning(
                 "pending_edits add mirror failed for ann=%s: %s", ann.id, exc,
+            )
+        # Reflect the answer into this doc's latest structured_data so the
+        # field view + JSON panel show it (and it leaves the "待补充"/missing
+        # section). Without this the save looks like a no-op: the input
+        # clears but the field reappears empty. Best-effort, never blocks.
+        try:
+            _upsert_field_in_latest_structured_data(
+                db, document_id, body.field_name, body.field_value,
+                body.field_type,
+            )
+        except Exception as exc:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning(
+                "structured_data upsert failed for ann=%s: %s", ann.id, exc,
             )
 
     return _to_response(ann)

@@ -888,7 +888,52 @@ interface MissingDraft {
   isNone: boolean   // user confirmed: this doc really doesn't have it
 }
 
-function MissingFieldsList({ names, docId }: { names: string[]; docId?: string }) {
+// Two visual variants sharing one interaction model. Class strings are
+// written as LITERALS (not interpolated) so Tailwind's scanner emits them.
+type FieldListVariant = 'missing' | 'added'
+
+const FIELD_LIST_STYLE: Record<FieldListVariant, {
+  ring: string; head: string; iconBg: string; iconText: string
+  rowBg: string; inputFocus: string; checkbox: string; saveBtn: string
+}> = {
+  missing: {
+    ring: 'border-orange-500/25',
+    head: 'bg-orange-500/10',
+    iconBg: 'bg-orange-500/20',
+    iconText: 'text-orange-300',
+    rowBg: 'bg-orange-500/5 border-orange-500/15',
+    inputFocus: 'focus:border-orange-400',
+    checkbox: 'accent-orange-400',
+    saveBtn: 'bg-orange-500/30 hover:bg-orange-500/45 text-orange-100',
+  },
+  added: {
+    ring: 'border-cyan-500/25',
+    head: 'bg-cyan-500/10',
+    iconBg: 'bg-cyan-500/20',
+    iconText: 'text-cyan-300',
+    rowBg: 'bg-cyan-500/5 border-cyan-500/15',
+    inputFocus: 'focus:border-cyan-400',
+    checkbox: 'accent-cyan-400',
+    saveBtn: 'bg-cyan-500/30 hover:bg-cyan-500/45 text-cyan-100',
+  },
+}
+
+function MissingFieldsList({
+  names,
+  docId,
+  variant = 'missing',
+  title = '本样本未识别字段',
+  countLabel = '个待补齐',
+  description = '下列字段是本 ApiDef 的必填字段集（模板 + 客户新增 − 删除字段），本样本的 OCR 输出未包含它们。直接填写票面实际值，或勾选"无此字段"表示本样本确无此字段；保存后会跨样本同步去重。',
+}: {
+  names: string[]
+  docId?: string
+  variant?: FieldListVariant
+  title?: string
+  countLabel?: string
+  description?: string
+}) {
+  const st = FIELD_LIST_STYLE[variant]
   const apiDefinitionId = useWorkspaceStore((s) => s.apiDefinitionId)
   const [drafts, setDrafts] = useState<Record<string, MissingDraft>>({})
   const [savingNames, setSavingNames] = useState<Set<string>>(new Set())
@@ -975,21 +1020,21 @@ function MissingFieldsList({ names, docId }: { names: string[]; docId?: string }
   }, [apiDefinitionId])
 
   return (
-    <div className="bg-[#2a2a32] rounded-lg border border-orange-500/25 overflow-hidden">
-      <div className="flex items-center justify-between p-3 bg-orange-500/10">
+    <div className={cn('bg-[#2a2a32] rounded-lg border overflow-hidden', st.ring)}>
+      <div className={cn('flex items-center justify-between p-3', st.head)}>
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded bg-orange-500/20 flex items-center justify-center text-orange-300">
-            <AlertCircle className="w-3.5 h-3.5" />
+          <div className={cn('w-6 h-6 rounded flex items-center justify-center', st.iconBg, st.iconText)}>
+            {variant === 'added'
+              ? <Plus className="w-3.5 h-3.5" />
+              : <AlertCircle className="w-3.5 h-3.5" />}
           </div>
-          <span className="text-sm font-medium text-gray-200">本样本未识别字段</span>
-          <span className="text-xs text-gray-500 ml-2">{names.length} 个待补齐</span>
+          <span className="text-sm font-medium text-gray-200">{title}</span>
+          <span className="text-xs text-gray-500 ml-2">{names.length} {countLabel}</span>
         </div>
       </div>
       <div className="p-3 space-y-2">
         <p className="text-[11px] text-gray-500 leading-relaxed">
-          下列字段是本 ApiDef 的必填字段集（模板 + 客户新增 − 删除字段），
-          本样本的 OCR 输出未包含它们。直接填写票面实际值，或勾选
-          "无此字段" 表示本样本确无此字段；保存后会跨样本同步去重。
+          {description}
         </p>
         {/* Column header */}
         <div className="grid grid-cols-[7rem_1fr_4rem_3.5rem_2rem] gap-2 text-[10px] text-gray-500 uppercase tracking-wide pb-1 border-b border-white/5">
@@ -1006,7 +1051,7 @@ function MissingFieldsList({ names, docId }: { names: string[]; docId?: string }
           return (
             <div
               key={name}
-              className="grid grid-cols-[7rem_1fr_4rem_3.5rem_2rem] gap-2 items-center py-1 px-1.5 rounded bg-orange-500/5 border border-orange-500/15"
+              className={cn('grid grid-cols-[7rem_1fr_4rem_3.5rem_2rem] gap-2 items-center py-1 px-1.5 rounded border', st.rowBg)}
             >
               {/* Field name with a styled hover tooltip showing the full name
                   (the column truncates at 7rem so long camelCase names like
@@ -1028,7 +1073,7 @@ function MissingFieldsList({ names, docId }: { names: string[]; docId?: string }
                 onKeyDown={(e) => { if (e.key === 'Enter') void saveOne(name) }}
                 placeholder={d.isNone ? '— 无此字段 —' : '直接输入实际值'}
                 disabled={d.isNone || saving || deleting}
-                className="w-full bg-[#1e1e24] border border-white/10 focus:border-orange-400 rounded px-1.5 py-1 text-xs text-white outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+                className={cn('w-full bg-[#1e1e24] border border-white/10 rounded px-1.5 py-1 text-xs text-white outline-none disabled:opacity-40 disabled:cursor-not-allowed', st.inputFocus)}
               />
               <label className="flex items-center justify-center cursor-pointer" title="本样本无此字段">
                 <input
@@ -1036,13 +1081,13 @@ function MissingFieldsList({ names, docId }: { names: string[]; docId?: string }
                   checked={d.isNone}
                   onChange={(e) => updateDraft(name, { isNone: e.target.checked, value: e.target.checked ? '' : d.value })}
                   disabled={deleting}
-                  className="w-3.5 h-3.5 accent-orange-400 cursor-pointer disabled:opacity-40"
+                  className={cn('w-3.5 h-3.5 cursor-pointer disabled:opacity-40', st.checkbox)}
                 />
               </label>
               <button
                 onClick={() => void saveOne(name)}
                 disabled={saving || deleting || (!d.isNone && !d.value.trim())}
-                className="px-2 py-1 rounded bg-orange-500/30 hover:bg-orange-500/45 disabled:bg-white/5 disabled:text-gray-600 text-orange-100 text-[11px] font-medium transition-colors flex items-center justify-center gap-1"
+                className={cn('px-2 py-1 rounded disabled:bg-white/5 disabled:text-gray-600 text-[11px] font-medium transition-colors flex items-center justify-center gap-1', st.saveBtn)}
               >
                 {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : '保存'}
               </button>
@@ -1692,31 +1737,23 @@ function FieldsView() {
     return out
   }, [pendingEdits, currentDocId, draftValueEditedFields])
 
-  const otherDocsAddedFields = useMemo(() => {
+  // Fields the customer ADDED (committed to overlay) that this doc has no
+  // value for yet. Rendered in the "其他文件已新增字段" section with the SAME
+  // fillable interaction as the missing-fields list. The add handler stores
+  // these in overlay.added_fields with NO per-doc annotation, so every doc
+  // that lacks a local annotation for the name should offer to fill it.
+  const otherDocsAddedFieldNames = useMemo(() => {
     const localNames = new Set(annotations.map((a) => a.label))
     const seen = new Set<string>()
-    const out: Array<{ field_name: string; type: string; description: string }> = []
-    // (a) committed overlay adds NOT on this doc
+    const out: string[] = []
     for (const f of pendingEdits?.added_fields || []) {
-      if (localNames.has(f.field_name)) continue
-      if (f.added_at_doc_id === currentDocId) continue
-      if (seen.has(f.field_name)) continue
-      seen.add(f.field_name)
-      out.push(f)
-    }
-    // (b) Phase 21 — uncommitted addFieldDrafts (the "+ 添加识别字段" rows)
-    for (const d of addFieldDrafts) {
-      const name = (d.correctedName || '').trim()
+      const name = f.field_name
       if (!name || localNames.has(name) || seen.has(name)) continue
       seen.add(name)
-      out.push({
-        field_name: name,
-        type: d.correctedFormat || 'string',
-        description: '（草稿，尚未保存到模板）',
-      })
+      out.push(name)
     }
     return out
-  }, [pendingEdits, annotations, currentDocId, addFieldDrafts])
+  }, [pendingEdits, annotations])
 
   // Phase 13 + 23.4 fix — fields the LLM should have produced but didn't
   // on this doc. requiredFields uses POST-rename names (from the
@@ -1738,7 +1775,19 @@ function FieldsView() {
       covered.add(a.label)
       const mappedNew = forwardMap[a.label]
       if (mappedNew) covered.add(mappedNew)
+      // Array/flattened labels like `detailOfGoodsOrServices[0].description`
+      // cover the top-level base name `detailOfGoodsOrServices`, so an array
+      // field that's clearly present (its rows render above) is NOT wrongly
+      // listed as "未识别".
+      const brk = a.label.indexOf('[')
+      const dot = a.label.indexOf('.')
+      let cut = -1
+      if (brk >= 0) cut = brk
+      if (dot >= 0) cut = cut < 0 ? dot : Math.min(cut, dot)
+      if (cut > 0) covered.add(a.label.slice(0, cut))
     }
+    // Overlay-added fields are surfaced in their OWN "其他文件已新增字段"
+    // section (also fillable), so exclude them here to avoid double-listing.
     const overlayAdded = new Set(
       (pendingEdits?.added_fields || []).map((f) => f.field_name),
     )
@@ -2097,41 +2146,18 @@ function FieldsView() {
         </div>
       )}
 
-      {/* design v8 — fields added on OTHER files, missing in this doc.
-          Rendered as empty rows with a cyan "其他文件新增" badge so the user
-          can manually annotate them on this sample. */}
-      {otherDocsAddedFields.length > 0 && (
-        <div className="bg-[#2a2a32] rounded-lg border border-cyan-500/20 overflow-hidden">
-          <div className="w-full flex items-center justify-between p-3 bg-cyan-500/10">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded bg-cyan-500/20 flex items-center justify-center text-cyan-300">
-                <Plus className="w-3.5 h-3.5" />
-              </div>
-              <span className="text-sm font-medium text-gray-200">其他文件已新增字段</span>
-              <span className="text-xs text-gray-500 ml-2">{otherDocsAddedFields.length} 字段待补充</span>
-            </div>
-          </div>
-          <div className="p-3 space-y-2">
-            <p className="text-[11px] text-gray-500 leading-relaxed">
-              下列字段在其他样本中已新增。本样本若也有此字段，请手工补充值；如本样本确无此字段，可留空。
-            </p>
-            {otherDocsAddedFields.map((f) => (
-              <div
-                key={f.field_name}
-                className="flex items-center justify-between py-1.5 px-2 rounded bg-cyan-500/5 border border-cyan-500/15"
-                title={f.description || '其他样本中新增的字段'}
-              >
-                <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <span className="text-gray-300 text-sm w-32 truncate">{f.field_name}</span>
-                  <span className="text-gray-600 text-xs">—（待标注）</span>
-                </div>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-medium flex-shrink-0">
-                  其他文件新增
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
+      {/* 其他文件已新增字段 — fields added (committed) on the ApiDef that this
+          doc has no value for yet. Same fillable interaction as the
+          missing-fields list (input / 无此字段 / 保存 / 删除), per-doc value. */}
+      {otherDocsAddedFieldNames.length > 0 && (
+        <MissingFieldsList
+          names={otherDocsAddedFieldNames}
+          docId={docId}
+          variant="added"
+          title="其他文件已新增字段"
+          countLabel="字段待补充"
+          description="下列字段是你（或在其他样本上）新增的识别字段。本样本若也有此字段，请直接填写票面实际值；如本样本确无此字段，勾选“无此字段”。保存后即作为本样本该字段的值，删除则从所有样本中移除该新增字段。"
+        />
       )}
 
       {/* Summary section */}
