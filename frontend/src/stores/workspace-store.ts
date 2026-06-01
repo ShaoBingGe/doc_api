@@ -177,6 +177,12 @@ interface WorkspaceStore {
    * backend pending_edits overlay so badges + cascade rename fire even
    * BEFORE the customize submit. */
   commitCurrentDraft: () => Promise<void>
+  /** Phase 24 — flush ALL fieldEditDrafts + addFieldDrafts to the backend
+   * pending_edits overlay. Idempotent (POSTs are no-ops on unchanged
+   * state). Called before any operation that needs overlay to be the
+   * single source of truth: sample upload (so file 2's first OCR sees
+   * file 1's edits), customize submit, etc. */
+  flushDraftsToOverlay: () => Promise<void>
   /** Phase 11c — delete the currently-edited field. Cascades across all
    * docs of the ApiDef, removes from overlay's added_fields/modifications,
    * and excludes the field from the next customize fork's modules entirely
@@ -848,6 +854,17 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       toast.error('请先保存 API 后再添加样本')
       return null
     }
+    // Phase 24 — sync any pending FieldEditPanel drafts to overlay
+    // BEFORE the new sample's OCR fires. The backend's
+    // _resolve_active_composed_prompt augments the prompt with
+    // pending_edits.renames + added_fields; without this flush, file 1's
+    // uncommitted renames don't reach file 2's first OCR call → file 2
+    // emits the OLD field names → cross-doc parity broken.
+    try {
+      await get().flushDraftsToOverlay()
+    } catch (err) {
+      console.warn('Pre-upload draft flush failed, uploading anyway', err)
+    }
     set({ uploadingSample: true })
     try {
       const fd = new FormData()
@@ -967,57 +984,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       return null
     }
 
-    // Phase 23.1 — FLUSH all in-memory drafts to backend pending_edits
-    // overlay BEFORE creating the customize job. The fork step (Phase
-    // 23.2) reads renames/added/deleted from overlay as the SINGLE
-    // source of truth; if drafts haven't been committed via the
-    // "保存到模板（立即生效）" path, this flush guarantees the overlay
-    // is in sync at customize time.
-    const flushed: Array<Promise<unknown>> = []
-    for (const d of editDiffs) {
-      const oldN = (d.originalName || '').trim()
-      const newN = (d.correctedName || '').trim()
-      const valChanged = String(d.originalValue ?? '') !== d.correctedValue
-      // Rename branch
-      if (oldN && newN && oldN !== newN) {
-        flushed.push(apiClient.post(
-          `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
-          { old_name: oldN, new_name: newN },
-        ))
-      }
-      // Value modification branch (per-doc)
-      const docIdForMod = d.documentId ?? get().selectedDocId
-      if (valChanged && docIdForMod) {
-        flushed.push(apiClient.post(
-          `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
-          {
-            modification: {
-              document_id: docIdForMod,
-              field_name: newN || oldN,
-              value: d.correctedValue,
-            },
-          },
-        ))
-      }
-    }
-    for (const d of addDiffs) {
-      const newN = (d.correctedName || '').trim()
-      if (!newN) continue
-      flushed.push(apiClient.post(
-        `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
-        {
-          new_name: newN,
-          field_type: d.correctedFormat || 'string',
-          added_value: d.correctedValue || null,
-        },
-      ))
-    }
-    try {
-      await Promise.all(flushed)
-      await get().loadPendingEdits()
-    } catch (err) {
-      console.warn('Phase 23.1 draft-flush had errors, proceeding anyway', err)
-    }
+    // Phase 23.1 (now via flushDraftsToOverlay) — sync drafts → overlay
+    // before fork. Single source of truth contract.
+    await get().flushDraftsToOverlay()
     const payload = {
       diffs: [...editDiffs, ...addDiffs].map((d) => ({
         kind: d.kind,
@@ -1166,6 +1135,64 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       if (selectedDocId) await get().loadDocument(selectedDocId)
     } catch (err) {
       console.error('commitCurrentDraft failed', err)
+    }
+  },
+
+  flushDraftsToOverlay: async () => {
+    // Phase 24 — single source of truth contract: any FieldEditPanel
+    // draft (rename / value mod) and any addFieldDraft (new field row)
+    // must reach pending_edits before backend code reads it as ground
+    // truth. Called from submitCustomize AND addSampleDocument so both
+    // critical points (customize fork + new-sample OCR) see the same
+    // overlay.
+    const { apiDefinitionId, fieldEditDrafts, addFieldDrafts, selectedDocId } = get()
+    if (!apiDefinitionId) return
+    const tasks: Array<Promise<unknown>> = []
+    for (const d of Object.values(fieldEditDrafts)) {
+      const oldN = (d.originalName || '').trim()
+      const newN = (d.correctedName || '').trim()
+      const valChanged = String(d.originalValue ?? '') !== d.correctedValue
+      // Rename branch
+      if (oldN && newN && oldN !== newN) {
+        tasks.push(apiClient.post(
+          `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
+          { old_name: oldN, new_name: newN },
+        ))
+      }
+      // Value modification branch (per-doc)
+      const docIdForMod = d.documentId ?? selectedDocId
+      if (valChanged && docIdForMod) {
+        tasks.push(apiClient.post(
+          `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
+          {
+            modification: {
+              document_id: docIdForMod,
+              field_name: newN || oldN,
+              value: d.correctedValue,
+            },
+          },
+        ))
+      }
+    }
+    for (const d of addFieldDrafts) {
+      const newN = (d.correctedName || '').trim()
+      if (!newN) continue
+      tasks.push(apiClient.post(
+        `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
+        {
+          new_name: newN,
+          field_type: d.correctedFormat || 'string',
+          added_value: d.correctedValue || null,
+        },
+      ))
+    }
+    if (tasks.length === 0) return
+    try {
+      await Promise.all(tasks)
+      await get().loadPendingEdits()
+      await get().loadRequiredFields()
+    } catch (err) {
+      console.warn('flushDraftsToOverlay had errors', err)
     }
   },
 

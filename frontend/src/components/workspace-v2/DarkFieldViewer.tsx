@@ -1717,24 +1717,34 @@ function FieldsView() {
     return out
   }, [pendingEdits, annotations, currentDocId, addFieldDrafts])
 
-  // Phase 13 — fields the LLM should have produced but didn't on this doc.
-  // requiredFields = union(active modules, overlay.added) − deleted, renames
-  // applied. Any required field with no annotation here is shown as a
-  // "未识别 — 待标注" placeholder.
+  // Phase 13 + 23.4 fix — fields the LLM should have produced but didn't
+  // on this doc. requiredFields uses POST-rename names (from the
+  // /required-fields endpoint, which already applies overlay.renames).
+  // Bug: an annotation labeled `billFromName` doesn't equal
+  // `salerCompany` in the simple set check, so the renamed field
+  // wrongly appears in the missing list. Fix by considering an
+  // annotation as covering BOTH its current label AND the rename
+  // target (forward map) of that label. Same for draft renames so
+  // uncommitted intent is also honored.
   const missingRequiredFields = useMemo(() => {
     if (!requiredFields || requiredFields.length === 0) return [] as string[]
-    const localNames = new Set(annotations.map((a) => a.label))
+    const forwardMap: Record<string, string> = {
+      ...(pendingEdits?.renames || {}),
+      ...draftRenameMap,
+    }
+    const covered = new Set<string>()
+    for (const a of annotations) {
+      covered.add(a.label)
+      const mappedNew = forwardMap[a.label]
+      if (mappedNew) covered.add(mappedNew)
+    }
     const overlayAdded = new Set(
       (pendingEdits?.added_fields || []).map((f) => f.field_name),
     )
     return requiredFields.filter(
-      (f) =>
-        !localNames.has(f) &&
-        // Avoid double-listing fields already covered by the
-        // "其他文件已新增字段" section below.
-        !overlayAdded.has(f),
+      (f) => !covered.has(f) && !overlayAdded.has(f),
     )
-  }, [requiredFields, annotations, pendingEdits])
+  }, [requiredFields, annotations, pendingEdits, draftRenameMap])
 
   // design v8 + Phase 21 — reverse rename map {new → old} used to:
   //   - show "原: oldName" subtitle + "已重命名" badge on renamed rows
