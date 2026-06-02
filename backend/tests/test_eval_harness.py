@@ -73,6 +73,30 @@ def test_ocr_error_marker_scores_zero_and_is_collected():
     assert mm["bill_from_name"].accuracy == 0.5
 
 
+# ── GT-root alignment (production scoring bug fix) ────────────────────────────
+
+def test_align_for_path_wraps_dict_for_array_path():
+    from app.ocr_optimizer.service.ground_truth import align_for_path
+    gt = {"invoiceNumber": "X"}
+    assert align_for_path(gt, "$[*].invoiceNumber") == [gt]   # dict + array path → wrap
+    assert align_for_path([gt], "$[*].invoiceNumber") == [gt]  # already list → unchanged
+    assert align_for_path(gt, "$.invoiceNumber") == gt         # dict-rooted path → unchanged
+    assert align_for_path(None, "$[*].x") is None
+
+
+def test_dict_rooted_gt_scores_correctly_after_fix():
+    """The production bug: a DICT-rooted GT (build() output) sliced with array
+    paths returned None for every field. After align_for_path it scores for
+    real."""
+    gt = {"doc1": {"invoiceNumber": "INV-1", "billFromName": "ACME"}}   # DICT root
+    ocr = {"doc1": [{"invoiceNumber": "INV-1", "billFromName": "ACME"}]}  # list OCR
+    r = score_outputs(_MODULES, ocr, gt)
+    assert r.overall_accuracy == 1.0          # was ~0 before the fix
+    # strict mode on the same dict GT also works
+    rs = score_outputs(_MODULES, ocr, gt, strict=True)
+    assert rs.overall_accuracy == 1.0
+
+
 # ── strict golden-gate scoring (reqs 1/2/3) ──────────────────────────────────
 
 def test_strict_skips_empty_gt_no_false_pass():

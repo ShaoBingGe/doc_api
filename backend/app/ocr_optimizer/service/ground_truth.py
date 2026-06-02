@@ -56,6 +56,34 @@ def build(db: Session, document_id: uuid.UUID) -> dict:
     return root
 
 
+def align_for_path(gt: Any, json_path: str | None) -> Any:
+    """Make a ground-truth value structurally match a module's json_path.
+
+    THE BUG THIS FIXES: build() reassembles a DICT root (the annotation
+    field_names lost the leading "[0]" when the list-rooted structured_data was
+    flattened). But module json_paths are array-rooted ("$[*].invoiceNumber")
+    and the OCR output is a list. So slicer.extract(dict_gt, "$[*].x") returns
+    None for EVERY field — making per-field accuracy a root-type coincidence
+    (both-None → false 1.0 → spurious early-stop; list-vs-None → false 0.0)
+    instead of a real measurement.
+
+    Fix: when the path is array-rooted but the GT is a dict, wrap the GT in a
+    single-element list so it matches the array path + list OCR output. No-op
+    when GT is already a list, or the path is not array-rooted (dict-rooted
+    schemas keep working). Idempotent.
+    """
+    if not isinstance(gt, dict) or not json_path:
+        return gt
+    p = json_path.strip()
+    if p.startswith("$"):
+        p = p[1:]
+    if p.startswith("."):
+        p = p[1:]
+    if p.startswith("["):  # "$[*]..." / "$[0]..." → array-rooted
+        return [gt]
+    return gt
+
+
 def _coerce_value(raw: str | None, field_type: str | None) -> Any:
     """Coerce a string field_value back into its declared type."""
     if raw is None:

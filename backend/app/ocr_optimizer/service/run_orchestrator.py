@@ -647,14 +647,23 @@ def _run_one_round(
                 per_sample.append({
                     "sample_doc_id": sid_str,
                     "ocr_sliced": None,
-                    "ground_truth": slicer.extract(ground_truths.get(sid_str), mod.json_path),
+                    "ground_truth": slicer.extract(
+                        ground_truth.align_for_path(ground_truths.get(sid_str), mod.json_path),
+                        mod.json_path,
+                    ),
                     "matched": False,
                     "field_accuracy": 0.0,
                     "diff_detail": f"OCR error: {ocr_full.get('_error', '')[:200]}",
                 })
                 continue
             sliced = slicer.extract(ocr_full, mod.json_path)
-            gt_sliced = slicer.extract(ground_truths.get(sid_str), mod.json_path)
+            # Align GT root to the (array-rooted) json_path before slicing —
+            # otherwise a dict GT slices to None for every field and accuracy
+            # becomes a root-type coincidence. See ground_truth.align_for_path.
+            gt_sliced = slicer.extract(
+                ground_truth.align_for_path(ground_truths.get(sid_str), mod.json_path),
+                mod.json_path,
+            )
             matched, acc, diff = evaluator.compare(sliced, gt_sliced, mod.schema_fragment)
             per_sample.append({
                 "sample_doc_id": sid_str,

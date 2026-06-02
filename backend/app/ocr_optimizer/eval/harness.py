@@ -21,7 +21,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..service import evaluator, slicer
+from ..service import evaluator, ground_truth, slicer
 
 
 # ── Lightweight, ORM-decoupled module spec ────────────────────────────────────
@@ -144,7 +144,12 @@ def score_outputs(
     for spec in modules:
         per_sample: list[dict] = []
         for d in doc_ids:
-            gt_sliced = slicer.extract(ground_truths.get(d), spec.json_path)
+            # Align GT root to the json_path (dict GT + "$[*]." path → wrap in
+            # list). No-op for already-list golden GT. See align_for_path.
+            gt_sliced = slicer.extract(
+                ground_truth.align_for_path(ground_truths.get(d), spec.json_path),
+                spec.json_path,
+            )
             ocr_full = ocr_outputs.get(d)
 
             if strict and _is_empty_slice(gt_sliced):
