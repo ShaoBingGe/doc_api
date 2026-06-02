@@ -1,0 +1,71 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Commercial Invoice",
+    "page": [
+      1,
+      2
+    ],
+    "currency": "MYR",
+    "invoiceNumber": "25FC015689",
+    "invoiceDate": "2025-09-29",
+    "salerName": "Mapei Malaysia SDN BHD",
+    "billFromAddress": "D3A-10, BLOCK D3A, DANA 1 COMMERCIAL CENTRE JALAN PJU 1A/46\n47301 SELANGOR DARUL EHSAN\nSelangor\nMYS, SELANGOR DARUL EHSAN, 47301, 10",
+    "billFromTaxIdentificationNumber": "C4908240100",
+    "billFromBusinessRegistrationNumber": "199201000276",
+    "buyerName": "PP CHIN HIN SDN BHD",
+    "billToAddress": "A-1-9,PUSAT PERDAGANGAN KUCHAI NO.2, JLN 1/127,OFF\nJLN KUCHAI LAMA\n58200 KUALA LUMPUR\nKuala Lumpur\nMYS, KUALA LUMPUR, 58200, 14, MYS",
+    "billToTaxIdentificationNumber": "C5884056070",
+    "paymentMethod": "Cheque",
+    "paymentTerms": "060 Days End of Month",
+    "purchaseOrderNumber": "25S0015401",
+    "deliveryOrderNumber": "25DN015113",
+    "dueDate": "2025-11-30",
+    "detailOfGoodsOrServices": [
+      {
+        "description": "002225 KERABOND T GREY BAGS 25 KG",
+        "quantity": 23.0,
+        "unitPrice": 15.62381,
+        "netAmount": 359.35,
+        "taxRate": "5%",
+        "tax": 17.97,
+        "grossAmount": 377.32
+      },
+      {
+        "description": "097525 ISOLASTIC 50% JERRYCAN 25 KG",
+        "quantity": 8.0,
+        "unitPrice": 156.2381,
+        "netAmount": 1249.9,
+        "taxRate": "5%",
+        "tax": 62.5,
+        "grossAmount": 1312.4
+      },
+      {
+        "description": "TRASP20 Transport Charges",
+        "quantity": 1.0,
+        "unitPrice": 61.29,
+        "netAmount": 61.29,
+        "taxRate": "0%",
+        "tax": 0,
+        "grossAmount": 61.29
+      }
+    ],
+    "totalNetAmount": 1670.53,
+    "totalTaxAmount": 80.47,
+    "totalAmount": 1751.0,
+    "detailOfTaxSummary": [
+      {
+        "taxCategory": "Sales Tax",
+        "taxRate": "5%",
+        "netTaxableAmount": 1609.25,
+        "tax": 80.47
+      },
+      {
+        "taxCategory": "Sales Tax",
+        "taxRate": "0%",
+        "netTaxableAmount": 61.29,
+        "tax": 0
+      }
+    ]
+  }
+]

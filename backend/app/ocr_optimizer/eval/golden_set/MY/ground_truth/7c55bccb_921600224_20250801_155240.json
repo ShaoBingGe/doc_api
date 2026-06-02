@@ -1,0 +1,55 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "921600224",
+    "invoiceCode": "NETC0R37RDJXD4QCH28TYE1K10",
+    "invoiceDate": "2025-07-31",
+    "totalNetAmount": 2234.55,
+    "totalAmount": 2234.55,
+    "totalTaxAmount": 0.0,
+    "currency": "MYR",
+    "buyerName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "A-1-9, PUSAT PERDAGANGAN KUCHAI, NO.2, JLN 1/127 OFF JLN KUCHAI LAMA 58200 KUALA LUMPUR MALAYSIA",
+    "billToCountry": "MALAYSIA",
+    "billToCountryCode": "MY",
+    "salerName": "NS BlueScope Lysaght Malaysia Sdn Bhd",
+    "billFromComposite": "NS BlueScope Lysaght Malaysia Sdn Bhd (7896-D)\nShah Alam Factory: No. 6, Persiaran Kemajuan, Seksyen 16, 40200 Shah Alam, Selangor",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "PO": "518296",
+    "DO": "6932224",
+    "page": [
+      1
+    ],
+    "detailOfGoodsOrServices": [
+      {
+        "articleName": "LYSAGHT® TRIMDEK OPTIMA®1015",
+        "description": "0.53mmTCT COLORBOND®® G550 Stl 2120mm Armour Grey",
+        "quantity": 38.732,
+        "unitOfMeasure": "M2",
+        "unitPrice": 51.0,
+        "netAmount": 1975.35,
+        "grossAmount": 1975.35
+      },
+      {
+        "articleName": "LYSAGHT® Cstm Flashing 600",
+        "description": "0.53mmTCT COLORBOND®® AZ150 G550 3600mm Armour Grey",
+        "quantity": 7.2,
+        "unitOfMeasure": "M",
+        "unitPrice": 36.0,
+        "netAmount": 259.2,
+        "grossAmount": 259.2
+      }
+    ],
+    "detailOfTaxSummary": [
+      {
+        "taxCategory": "SALES TAX",
+        "taxRate": "0%",
+        "netTaxableAmount": 2234.55,
+        "tax": 0.0
+      }
+    ]
+  }
+]

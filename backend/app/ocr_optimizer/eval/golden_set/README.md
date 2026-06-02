@@ -29,10 +29,42 @@ golden_set/
 
 ## What's present
 
-- ✅ `MY/golden_prompt.md` — 17-field gold-standard MY prompt (from the
-  user-provided template, RTF-decoded 2026-06-02).
-- ⛔ `MY/docs/` + `MY/ground_truth/` — **empty**. This is the gating gap for
-  Phase 4.
+- ✅ `MY/golden_prompt.md` — 17-field gold-standard MY prompt (RTF-decoded).
+- ✅ `MY/ground_truth/*.json` + `MY/manifest.json` — **37 MY docs**, exported
+  from existing 已审视 samples via `build_golden_set.py` (deduped by file
+  content hash; field counts 9–57; covers SST invoices, Credit Notes, Panasonic,
+  PP Chin Hin rentals, etc.).
+- 📁 `MY/docs/` — the 37 source invoice scans live here LOCALLY but are
+  **gitignored** (PII + 11 MB binary + regenerable). Rebuild any time with
+  `python build_golden_set.py` (invoked with `app.models` imported first to
+  dodge the cold-start circular import).
+
+### Rebuild / refresh
+
+```
+cd backend
+python -c "import app.models, app.ocr_optimizer; \
+  from app.ocr_optimizer.eval.build_golden_set import main; main(['--country','MY'])"
+```
+
+## ⚠️ Ground-truth root shape — and a production scoring bug it exposed
+
+`ground_truth.build()` reassembles a **dict** root (the annotation field_names
+lost the leading `[0]` when the list-rooted `structured_data` was flattened).
+But module `json_path`s are **array-rooted** (`$[*].invoiceNumber`) and the OCR
+output is a **list**. So `slicer.extract(dict_gt, "$[*].x")` returns `None` for
+*every* field.
+
+This is not just a golden-set concern — it's a **live bug in
+`run_orchestrator._run_one_round`**: it slices the dict GT with `$[*].` paths,
+so per-field accuracy is driven by root-type coincidence, not correctness
+(both-None → false 1.0 → spurious early-stop; list-vs-None → false 0.0). Recorded
+round accuracies (1.0 / 0.0 / 0.6667) are therefore not measuring real accuracy.
+
+The golden set sidesteps this by storing GT **list-wrapped** (`[gt_dict]`), so it
+matches the array json_paths + list OCR root and measures truth. **Fixing the
+live scoring is the real Phase-4 prerequisite** (more impactful than the
+reconciler) — the golden set is exactly the gate to validate that fix.
 
 ## To START Phase 4 (the gate), we need golden docs + ground truth
 

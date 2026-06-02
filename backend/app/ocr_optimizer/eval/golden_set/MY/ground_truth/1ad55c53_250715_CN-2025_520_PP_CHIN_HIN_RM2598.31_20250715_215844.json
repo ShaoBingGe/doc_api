@@ -1,0 +1,24 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "credit note",
+    "page": [
+      1
+    ],
+    "currency": "RM",
+    "invoiceNumber": "CN-2025/520",
+    "invoiceDate": "2025-07-15",
+    "vendorName": "PROGRESS WELDED MESH SDN BHD",
+    "vendorAddress": "106, JALAN CYBER 5, SENAI INDUSTRIAL ESTATE III, 81400 SENAI, JOHOR.",
+    "vendorTaxId": "201201031154 (1015640-A)",
+    "customerName": "PP CHIN HIN SDN BHD (60DAYS)",
+    "customerAddress": "LOT PT 168, BLOCK A & B, JLN LAPIS ASRAKAI, BATU 6, JLN TANJUNG LABOH, 83000 BATU PAHAT JOHOR.",
+    "totalAmount": 2598.31,
+    "details": [
+      {
+        "description": "BEING 2% REBATE FOR EARLY PAYMENT (JUN'25 INVOICE)",
+        "amount": 2598.31
+      }
+    ]
+  }
+]

@@ -1,0 +1,36 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Commercial Invoice",
+    "page": [
+      1
+    ],
+    "currency": "MYR",
+    "invoiceNumber": "153901",
+    "invoiceDate": "2026-02-07",
+    "billFromCompanyName": "ASIA WIRE STEEL MESH MANUFACTURERS SDN. BHD.",
+    "billFromAddress": "Lot 975, Batu 3, Jalan Kapar, P.O. Box 75, 41700 Klang, Selangor Darul Ehsan, Malaysia.",
+    "billFromBusinessRegistrationNumber": "009532-K",
+    "billFromPhoneNumber": "603-33425433/4/5, 3342 7731 D/L: 3344 5175/6",
+    "billFromFaxNumber": "603-3342 0797",
+    "billFromEmail": "asiawire@awsmklang.com",
+    "billToCompanyName": "PP CHIN HIN SDN BHD (KL)",
+    "billToAddress": "MENARA CHIN HIN\nLEVEL 22-23, 8TH & STELLAR,\nNO. 1, JALAN NAGA EMAS, SRI PETALING,\n57000 KUALA LUMPUR, MALAYSIA.",
+    "deliveryToCompanyName": "PEMBINAAN BINTANG BARU SDN BHD",
+    "deliveryToAddress": "(PO 93463) C270 MZENYA KL\nKEPONG METROPOLITAN\nLAKE GARDEN, 52100 KL",
+    "purchaseOrderNumber": "W1 538886",
+    "deliveryOrderNumber": "DO-118003",
+    "paymentTerms": "60 DAYS",
+    "detailOfGoodsOrServices": [
+      {
+        "itemDescription": "RA8 6.00M X 2.20M",
+        "quantity": 360.0,
+        "unitOfMeasure": "PCS",
+        "unitPrice": 352.44,
+        "netAmount": 42707.27
+      }
+    ],
+    "totalNetAmount": 42707.27,
+    "totalAmount": 42707.27
+  }
+]

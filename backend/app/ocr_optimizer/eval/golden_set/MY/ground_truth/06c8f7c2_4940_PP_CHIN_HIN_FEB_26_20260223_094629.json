@@ -1,0 +1,45 @@
+[
+  {
+    "invoiceType": "Commercial Invoice",
+    "invoiceNumber": "DB-4940",
+    "invoiceDate": "2026-02-12",
+    "totalNetAmount": 8845.0,
+    "totalAmount": 8845.0,
+    "currency": "MYR",
+    "buyerName": "PP CHIN HIN SDN BHD",
+    "buyerComposite": "PP CHIN HIN SDN BHD\nMENARA CHIN HIN, Level 22-23,\n8TH & STELLAR,\nNo. 1, Jalan Naga Emas,\nSri Petaling,\n57000 Kuala Lumpur, Malaysia",
+    "salerName": "DAY BRIGHT WOOD INDUSTRIES SDN. BHD.",
+    "salerTAXNO": "201801001993 (1264006-M)",
+    "PO": "W1540307",
+    "page": [
+      1
+    ],
+    "detailOfGoodsOrServices": [
+      {
+        "articleName": "MHW- 1\" X 2\" X 8 ft. UP (7/8\" X 1 6/8\")",
+        "description": "MHW- 1\" X 2\" X 8 ft. UP (7/8\" X 1 6/8\")",
+        "quantity": 6.0,
+        "unitOfMeasure": "TON",
+        "unitPrice": 1020.0,
+        "netAmount": 6120.0
+      },
+      {
+        "articleName": "MHW- 2\" X 3\" X 8 ft. UP (1 5/8 X 2 6/8)",
+        "description": "MHW- 2\" X 3\" X 8 ft. UP (1 5/8 X 2 6/8)",
+        "quantity": 3.0,
+        "unitOfMeasure": "TON",
+        "unitPrice": 825.0,
+        "netAmount": 2475.0
+      },
+      {
+        "articleName": "TRANSPORT CHARGES",
+        "description": "TRANSPORT CHARGES",
+        "quantity": 1.0,
+        "unitOfMeasure": "TRIP",
+        "unitPrice": 250.0,
+        "netAmount": 250.0
+      }
+    ],
+    "paymentTerm": "60 Days"
+  }
+]

@@ -1,0 +1,64 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Commercial Invoice",
+    "page": [
+      1
+    ],
+    "currency": "MYR",
+    "billFrom": {
+      "name": "GREENSEAL PRODUCTS (M) SDN BHD",
+      "address": "NO. 5 & 7 JALAN 35/10A, TAMAN PERINDUSTRIAN IKS, MUKIM BATU 68100 BATU CAVES KUALA LUMPUR",
+      "telephoneNumber": "+603-6188 2298",
+      "faxNumber": "+603-6186 1298",
+      "businessRegistrationNumber": "198601003000"
+    },
+    "billTo": {
+      "name": "PP CHIN HIN SDN BHD",
+      "address": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO 1, JALAN NAGA EMAS, SRI PETALING, 57000 KL",
+      "telephoneNumber": "0123596755"
+    },
+    "invoiceNumber": "0170226",
+    "invoiceDate": "2026-02-06",
+    "paymentTerms": "14DAYS",
+    "deliveryOrderNumber": "00020655",
+    "purchaseOrderNumber": "W1 539472",
+    "purchaseOrderDate": "2026-01-28",
+    "detailOfGoodsOrServices": [
+      {
+        "itemNo": "1",
+        "description": "GSP GS107P GSH PRIMER(20L) (20L)",
+        "quantity": 8.0,
+        "unitOfMeasurement": "PAIL",
+        "unitPrice": 156.0,
+        "netAmount": 1248.0,
+        "taxRate": "10%",
+        "tax": 124.8,
+        "grossAmount": 1372.8
+      },
+      {
+        "itemNo": "2",
+        "description": "PLW(SP) P2001 POLYDEK WHITE(SP) P2001(SUPER P)",
+        "quantity": 16.0,
+        "unitOfMeasurement": "PAIL",
+        "unitPrice": 260.0,
+        "netAmount": 4160.0,
+        "taxRate": "10%",
+        "tax": 416.0,
+        "grossAmount": 4576.0
+      }
+    ],
+    "totalNetAmount": 5408.0,
+    "totalTaxAmount": 540.8,
+    "totalDiscountAmount": 0.0,
+    "totalAmount": 5948.8,
+    "detailOfTaxSummary": [
+      {
+        "taxCategory": "SST",
+        "taxRate": "10%",
+        "netTaxableAmount": 5408.0,
+        "tax": 540.8
+      }
+    ]
+  }
+]

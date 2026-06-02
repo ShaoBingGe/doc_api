@@ -1,0 +1,36 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Commercial Invoice",
+    "page": [
+      1
+    ],
+    "currency": "MYR",
+    "invoiceNumber": "26032923",
+    "invoiceDate": "2026-03-31",
+    "totalNetAmount": 460.0,
+    "totalAmount": 460.0,
+    "buyerName": "PP CHIN HIN SDN BHD",
+    "billToAddress": "MENARA CHIN HIN,LEVEL 22-23, 8TH & STELLAR, NO 1, JALAN NAGA EMAS SRI PETALING,57000 KUALA LUMPUR, WILAYAH PERSEKUTUAN, MALAYSIA",
+    "billToPhoneNumber": "60123596755",
+    "salerName": "FUTT KONG MARKETING SDN. BHD.",
+    "billFromAddress": "Lot 1309, 12.5km(Batu 7), Jalan Kampung Jawa, Bukit Kemuning, 42450 Klang (Shah Alam), Selangor D.E.",
+    "billFromPhoneNumber": "03-5121 8445, 5121 8446, 5121 9078, 5122 2304",
+    "billFromFaxNumber": "03-5121 8449 (Sales), 03-5121 0942 (A/C)",
+    "billFromEmail": "futtkongmarketing@yahoo.com.my",
+    "billFromWebsite": "www.futtkongmarketing.epage.com.my, www.infopages.net.my",
+    "billFromBusinessRegistrationNumber": "199401000228(285906-U)",
+    "paymentTerms": "60 DAYS",
+    "salespersonName": "OFF",
+    "deliveryAddress": "CK PLUS BUILDERS S/B W1 544580 KL 49342",
+    "detailOfGoodsOrServices": [
+      {
+        "description": "25kg Sika Grout 215 硬灰",
+        "quantity": 20.0,
+        "unitOfMeasure": "BAG",
+        "unitPrice": 23.0,
+        "netAmount": 460.0
+      }
+    ]
+  }
+]

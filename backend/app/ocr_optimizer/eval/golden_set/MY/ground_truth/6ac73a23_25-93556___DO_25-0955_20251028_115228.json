@@ -1,0 +1,26 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "invoice",
+    "page": [
+      1
+    ],
+    "currency": "MYR",
+    "invoiceNumber": "25-93556",
+    "invoiceDate": "2025-10-16",
+    "totalNetAmount": 5741.37,
+    "totalAmount": 5741.37,
+    "totalTaxAmount": 0,
+    "salerName": "MAXWOOD MARKETING (M) SDN. BHD.",
+    "salerTAXNO": "201901043497 (1352827-P)",
+    "buyerName": "PP CHIN HIN SDN BHD",
+    "buyerComposite": "A-1-9, Pusat Perdagangan Kuchai, No.2, Jalan 1/127, Off Jalan Kuchai Lama, 58200 Kuala Lumpur.",
+    "PO": "W1 526527",
+    "DO": "DO 25-0955",
+    "paymentTerm": "60 Days",
+    "detailOfGoodsOrServices": [
+      "SCANT SAWN TIMBER 1\" X 2\"",
+      "SCANT SAWN TIMBER 2\" X 3\""
+    ]
+  }
+]

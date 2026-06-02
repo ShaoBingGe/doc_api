@@ -1,0 +1,36 @@
+[
+  {
+    "billFromAddress": "No. 55 Jalan Selat Selatan 22, Pandamaran, 42000 Port Klang, Selangor Darul Ehsan.",
+    "billFromBusinessRegistrationNumber": "202101033325(1433625-W)",
+    "billFromEmail": "sttan1977@yahoo.com.sg",
+    "billFromFaxNumber": "03-3163 1643",
+    "billFromName": "BUILDER CONCEPT SDN. BHD.",
+    "billFromPhoneNumber": "012-312 0633",
+    "billToAddress": "Level 22-23, 8th & Stellar, No. 1, Jalan Naga Emas, Sri Petaling, 57000 KUALA LUMPUR.",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToPhoneNumber": "010 270 2698",
+    "currency": "MYR",
+    "deliveryToAddress": "C/O SD GUTHRIE BERHAD EAST ESTATE, 42960 CAREY ISLAND",
+    "deliveryToName": "KL CEMERLANG SDN BHD",
+    "detailOfGoodsOrServices": [
+      {
+        "description": "PLASTIC BAR CHAIR Model: PBC 100 Std Pkg: 200pcs/Bag Total - 10 Bags",
+        "netAmount": 1100.0,
+        "quantity": 2000,
+        "unitPrice": 0.55
+      }
+    ],
+    "docType": "invoice",
+    "deliveryOrderNumber": "9728/25/D",
+    "invoiceDate": "2025-10-29",
+    "invoiceNumber": "9728/25/I",
+    "invoiceType": "Commercial Invoice",
+    "page": [
+      1
+    ],
+    "paymentTerms": "Net 30 days",
+    "purchaseOrderNumber": "W1 529054",
+    "totalAmount": 1100.0,
+    "totalNetAmount": 1100.0
+  }
+]

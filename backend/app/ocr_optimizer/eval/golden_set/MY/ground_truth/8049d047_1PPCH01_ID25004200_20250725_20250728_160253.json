@@ -1,0 +1,41 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Commercial Invoice",
+    "invoiceNumber": "ID25004200",
+    "invoiceDate": "2025-07-25",
+    "totalNetAmount": 47341.5,
+    "totalAmount": 47341.5,
+    "totalTaxAmount": 0.0,
+    "currency": "MYR",
+    "buyerName": "PP CHIN HIN SDN BHD",
+    "buyerComposite": "PP CHIN HIN SDN BHD (CO NO.334885H) NO 400 & 401 JALAN PERUSAHAAN 5 TMN BANDAR BARU MERGONG LEBUHRAYA SULTANAH BAHIYAH 05150 ALOR SETAR, KEDAH",
+    "buyerTAXNO": "C5884056070",
+    "salerName": "ANN JOO STEEL BERHAD",
+    "salerTAXNO": "196101000364 (4405-M)",
+    "PO": "K2 513875",
+    "DO": "LTA2507250095",
+    "page": [
+      1
+    ],
+    "detailOfGoodsOrServices": [
+      {
+        "description": "HR Ribbed Weldable Reinforcing Steel B500B, 10.0mm * 12.000M, 138 PCS, FLD",
+        "quantity": 10.22,
+        "unitPrice": 2340.0,
+        "netAmount": 23914.8,
+        "tax": 0.0,
+        "grossAmount": 23914.8
+      },
+      {
+        "description": "HR Ribbed Weldable Reinforcing Steel B500B, 12.0mm * 12.000M,96 PCS, FLD",
+        "quantity": 10.23,
+        "unitPrice": 2290.0,
+        "netAmount": 23426.7,
+        "tax": 0.0,
+        "grossAmount": 23426.7
+      }
+    ],
+    "paymentTerm": "14 days"
+  }
+]

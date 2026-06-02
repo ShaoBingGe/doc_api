@@ -1,0 +1,302 @@
+{
+  "country": "MY",
+  "count": 37,
+  "items": [
+    {
+      "doc": "docs/75d8efa2_Angel_Foo_202603301713_20260330_171942.pdf",
+      "ground_truth": "ground_truth/75d8efa2_Angel_Foo_202603301713_20260330_171942.json",
+      "gt_fields": 57,
+      "source_api_code": "my-invoice-74b99e",
+      "source_doc_id": "f54eeba2bbb34e4b8c97a4e3b676547c",
+      "file_md5": "75d8efa25d33f9803efb01dbba9dfea3"
+    },
+    {
+      "doc": "docs/b0b9e5a5_25FC015689_20250929_162100.pdf",
+      "ground_truth": "ground_truth/b0b9e5a5_25FC015689_20250929_162100.json",
+      "gt_fields": 51,
+      "source_api_code": "my-invoice-6514c9",
+      "source_doc_id": "316628d2e84443b68a5e1661a5416234",
+      "file_md5": "b0b9e5a5e6e8dd2f0fcb4cd976ca3ebb"
+    },
+    {
+      "doc": "docs/71c70590_Angel_Foo_202602250950_20260225_095416.pdf",
+      "ground_truth": "ground_truth/71c70590_Angel_Foo_202602250950_20260225_095416.json",
+      "gt_fields": 44,
+      "source_api_code": "my-invoice-d7e658",
+      "source_doc_id": "985708b041a7428ab6094b1de9b6e262",
+      "file_md5": "71c705905e22fd9afb27bcba9c0bd30c"
+    },
+    {
+      "doc": "docs/5f510603_26FC005460_20260407_084507.pdf",
+      "ground_truth": "ground_truth/5f510603_26FC005460_20260407_084507.json",
+      "gt_fields": 42,
+      "source_api_code": "my-invoice-1ad9de",
+      "source_doc_id": "a724cdfb554d4489be9635bb615e1d1c",
+      "file_md5": "5f5106039bee0e0598396174df32771a"
+    },
+    {
+      "doc": "docs/827132b4_2604SI0083_-_PP_CHIN_HIN__AVANTRO_BLK_B_PT_1__5TH_MONTH_RENTAL_APR_2026_SO_W1_829173_PO_W1_548594_20260430_135409.pdf",
+      "ground_truth": "ground_truth/827132b4_2604SI0083_-_PP_CHIN_HIN__AVANTRO_BLK_B_PT_1__5TH_MONTH_RENTAL_APR_2026_SO_W1_829173_PO_W1_548594_20260430_135409.json",
+      "gt_fields": 41,
+      "source_api_code": "my-invoice-ccb394-c1",
+      "source_doc_id": "e2030276d58c4d9f9f11b154db78383a",
+      "file_md5": "827132b4d475a04b78286675b6376dc1"
+    },
+    {
+      "doc": "docs/76dd6b3c_48024_20260511_124728.pdf",
+      "ground_truth": "ground_truth/76dd6b3c_48024_20260511_124728.json",
+      "gt_fields": 40,
+      "source_api_code": "my-invoice-4ee57b",
+      "source_doc_id": "036d8299f5064cee92b49822f5ceeb95",
+      "file_md5": "76dd6b3cf1fdae8d7dfb3c2874fd989e"
+    },
+    {
+      "doc": "docs/dcc6f8b0_2604SI0084_-_PP_CHIN_HIN__AVANTRO_BLK_B_PT_2__2ND_MONTH_RENTAL_APRL_2026_SO_829176_DO_MS2603040009_PO_W1_548595_20260430",
+      "ground_truth": "ground_truth/dcc6f8b0_2604SI0084_-_PP_CHIN_HIN__AVANTRO_BLK_B_PT_2__2ND_MONTH_RENTAL_APRL_2026_SO_829176_DO_MS2603040009_PO_W1_548595_20260430.json",
+      "gt_fields": 40,
+      "source_api_code": "my-invoice-74b99e-c1",
+      "source_doc_id": "c864a8ecc63a475dbccd4636b121b215",
+      "file_md5": "dcc6f8b0bfbaed7368a153855bc7b324"
+    },
+    {
+      "doc": "docs/7c55bccb_921600224_20250801_155240.pdf",
+      "ground_truth": "ground_truth/7c55bccb_921600224_20250801_155240.json",
+      "gt_fields": 39,
+      "source_api_code": "my-invoice-b9ff88-c1",
+      "source_doc_id": "e095ecac739645f5934f878c8591cc97",
+      "file_md5": "7c55bccb2b403d597a19f0a04fe3ac36"
+    },
+    {
+      "doc": "docs/20d548d1_9231848661_1__PANASONIC_20251028_115127.pdf",
+      "ground_truth": "ground_truth/20d548d1_9231848661_1__PANASONIC_20251028_115127.json",
+      "gt_fields": 37,
+      "source_api_code": "my-invoice-11ec4a-c1",
+      "source_doc_id": "8a80b663e34d488ca8b5038d4390272d",
+      "file_md5": "20d548d1d5b0a9aace01e3cefd775bfb"
+    },
+    {
+      "doc": "docs/6148591d_99._Ezi_Invoice__SST__-_EM-IV-38360_-_PP_CHIN_HIN_SDN_BHD_20251021_084417.pdf",
+      "ground_truth": "ground_truth/6148591d_99._Ezi_Invoice__SST__-_EM-IV-38360_-_PP_CHIN_HIN_SDN_BHD_20251021_084417.json",
+      "gt_fields": 37,
+      "source_api_code": "my-invoice-11ec4a-c1",
+      "source_doc_id": "8dd45e4845d14b688f6723064ba5d419",
+      "file_md5": "6148591d41408de65657bbfd44805867"
+    },
+    {
+      "doc": "docs/72557209_9100219981.PDF_20260401_185340.pdf",
+      "ground_truth": "ground_truth/72557209_9100219981.PDF_20260401_185340.json",
+      "gt_fields": 37,
+      "source_api_code": "my-invoice-74b99e-c1",
+      "source_doc_id": "bf9eb2d7de7b4adbbe2bdb1b0b548b18",
+      "file_md5": "72557209a954809dffa3f023a105fad6"
+    },
+    {
+      "doc": "docs/3711f1cd_Angel_Foo_202603121728_20260312_173219.pdf",
+      "ground_truth": "ground_truth/3711f1cd_Angel_Foo_202603121728_20260312_173219.json",
+      "gt_fields": 34,
+      "source_api_code": "my-invoice-2bcb62-c1",
+      "source_doc_id": "a09a930de1d34baa8e26c6953ee4e7fb",
+      "file_md5": "3711f1cd7478a9180ba4c9facc457678"
+    },
+    {
+      "doc": "docs/a06a28b3_9231848653_1__PANASONIC_20251028_115126.pdf",
+      "ground_truth": "ground_truth/a06a28b3_9231848653_1__PANASONIC_20251028_115126.json",
+      "gt_fields": 33,
+      "source_api_code": "my-invoice-ccb394-c1",
+      "source_doc_id": "334aa9f8a4384623965833b061f81dd2",
+      "file_md5": "a06a28b35d9b8e93d6ef7adce1c76506"
+    },
+    {
+      "doc": "docs/53b1714f_Angel_Foo_202602121005_20260212_101234.pdf",
+      "ground_truth": "ground_truth/53b1714f_Angel_Foo_202602121005_20260212_101234.json",
+      "gt_fields": 32,
+      "source_api_code": "my-invoice-af7647",
+      "source_doc_id": "019f049867064b758d962a4e7f6da435",
+      "file_md5": "53b1714fe0e92972b86a9619e0aa6e1f"
+    },
+    {
+      "doc": "docs/06c8f7c2_4940_PP_CHIN_HIN_FEB_26_20260223_094629.pdf",
+      "ground_truth": "ground_truth/06c8f7c2_4940_PP_CHIN_HIN_FEB_26_20260223_094629.json",
+      "gt_fields": 31,
+      "source_api_code": "my-invoice-3081d0",
+      "source_doc_id": "c0952e9b8e2c45d8b3c3079f5b702c18",
+      "file_md5": "06c8f7c27dba3e0f7603d22f79b53bf4"
+    },
+    {
+      "doc": "docs/bd12a0f4_Angel_Foo_202602121119_20260212_112159.pdf",
+      "ground_truth": "ground_truth/bd12a0f4_Angel_Foo_202602121119_20260212_112159.json",
+      "gt_fields": 29,
+      "source_api_code": "my-invoice-9cad98",
+      "source_doc_id": "3323d5ca614846a993bbc544e7287ccc",
+      "file_md5": "bd12a0f4219c2e42f1b091bfafc6d2e0"
+    },
+    {
+      "doc": "docs/358a17fe_25-93541___DO_25-0945_20251028_115230.pdf",
+      "ground_truth": "ground_truth/358a17fe_25-93541___DO_25-0945_20251028_115230.json",
+      "gt_fields": 29,
+      "source_api_code": "my-invoice-f821a1",
+      "source_doc_id": "7fc2728281e545a9b6e08bde5b0c9871",
+      "file_md5": "358a17fe519a2ad83f6762b88c109b1e"
+    },
+    {
+      "doc": "docs/8049d047_1PPCH01_ID25004200_20250725_20250728_160253.pdf",
+      "ground_truth": "ground_truth/8049d047_1PPCH01_ID25004200_20250725_20250728_160253.json",
+      "gt_fields": 29,
+      "source_api_code": "my-invoice-3081d0",
+      "source_doc_id": "b89cfebbf570489a8c40283bb39cc46e",
+      "file_md5": "8049d047c96feb1f3e36baa80b996f7d"
+    },
+    {
+      "doc": "docs/fc3b2c77_9100224578.PDF_20260422_103215.pdf",
+      "ground_truth": "ground_truth/fc3b2c77_9100224578.PDF_20260422_103215.json",
+      "gt_fields": 29,
+      "source_api_code": "my-invoice-6992c7",
+      "source_doc_id": "d3de2019fd2a45128c38af2d8cf51677",
+      "file_md5": "fc3b2c77564b95427d823169d06e9a4d"
+    },
+    {
+      "doc": "docs/782325a1_001_E-Invoice_-New_20251006_113518.pdf",
+      "ground_truth": "ground_truth/782325a1_001_E-Invoice_-New_20251006_113518.json",
+      "gt_fields": 27,
+      "source_api_code": "my-invoice-6a06e7",
+      "source_doc_id": "d859ffb217a54fea817bf5538602878c",
+      "file_md5": "782325a1030d9ba569ab172bf62f29fd"
+    },
+    {
+      "doc": "docs/6da8e90d_9701_25_I_20251017_153910.pdf",
+      "ground_truth": "ground_truth/6da8e90d_9701_25_I_20251017_153910.json",
+      "gt_fields": 27,
+      "source_api_code": "my-invoice-2bcb62-c1",
+      "source_doc_id": "ed50794f07b348b59a0b3bdd70423ef3",
+      "file_md5": "6da8e90d1a2a5e2076b758661e0046fd"
+    },
+    {
+      "doc": "docs/1b4bb93e_26032923-W1_20260402_095813.pdf",
+      "ground_truth": "ground_truth/1b4bb93e_26032923-W1_20260402_095813.json",
+      "gt_fields": 26,
+      "source_api_code": "my-invoice-6514c9",
+      "source_doc_id": "0804220742fb4f2e835b87fe953027a2",
+      "file_md5": "1b4bb93e68ee872fc1ea7a52d4f8b54b"
+    },
+    {
+      "doc": "docs/be252e0c_9231848687_1__PANASONIC_20251028_115128.pdf",
+      "ground_truth": "ground_truth/be252e0c_9231848687_1__PANASONIC_20251028_115128.json",
+      "gt_fields": 26,
+      "source_api_code": "my-invoice-4ee57b",
+      "source_doc_id": "1ee2123a825741499b0a486197549f11",
+      "file_md5": "be252e0cf007ff7dbe9c645d97ede519"
+    },
+    {
+      "doc": "docs/2f0ecb8d_4523-2_PP_CHIN_HIN_AUG_25_20250818_160826.pdf",
+      "ground_truth": "ground_truth/2f0ecb8d_4523-2_PP_CHIN_HIN_AUG_25_20250818_160826.json",
+      "gt_fields": 26,
+      "source_api_code": "my-invoice-b9ff88-c1",
+      "source_doc_id": "e0703933748a4ef28d15d6c041b18e0b",
+      "file_md5": "2f0ecb8dcab97f8a7e9fb76581acb0cf"
+    },
+    {
+      "doc": "docs/87b2458a_9728_25_I_20251029_213116.pdf",
+      "ground_truth": "ground_truth/87b2458a_9728_25_I_20251029_213116.json",
+      "gt_fields": 26,
+      "source_api_code": "my-invoice-b9ff88",
+      "source_doc_id": "b49945d1fbef421d8f80cc0066ef7ff1",
+      "file_md5": "87b2458abc8cb23f8ed66a069599bd79"
+    },
+    {
+      "doc": "docs/a422f149_Angel_Foo_202602261350_20260226_135606.pdf",
+      "ground_truth": "ground_truth/a422f149_Angel_Foo_202602261350_20260226_135606.json",
+      "gt_fields": 26,
+      "source_api_code": "my-invoice-ccb394",
+      "source_doc_id": "dde67c24f5b4499da03b32246d04839a",
+      "file_md5": "a422f1493f607c724939592853f24499"
+    },
+    {
+      "doc": "docs/b7d911ed_3000P070_20251001_155946.pdf",
+      "ground_truth": "ground_truth/b7d911ed_3000P070_20251001_155946.json",
+      "gt_fields": 25,
+      "source_api_code": "my-invoice-096c5a",
+      "source_doc_id": "394d94a154fd4589be48a669c489c5ad",
+      "file_md5": "b7d911ed65961a96e2a88b258ce0a23b"
+    },
+    {
+      "doc": "docs/956b4653_Angel_Foo_202603271711_20260327_171447.pdf",
+      "ground_truth": "ground_truth/956b4653_Angel_Foo_202603271711_20260327_171447.json",
+      "gt_fields": 23,
+      "source_api_code": "my-invoice-11ec4a",
+      "source_doc_id": "15bf57b755744f33a6654b727374fd93",
+      "file_md5": "956b4653577bf287cca25be877e97a6e"
+    },
+    {
+      "doc": "docs/15f9a676_Angel_Foo_202603121725_20260312_172817.pdf",
+      "ground_truth": "ground_truth/15f9a676_Angel_Foo_202603121725_20260312_172817.json",
+      "gt_fields": 23,
+      "source_api_code": "my-invoice-cbbdf9",
+      "source_doc_id": "1c86a361b93646ab9984f33413b67352",
+      "file_md5": "15f9a6761f7d388c520f28342fa12e74"
+    },
+    {
+      "doc": "docs/b88cfa92_4535_PP_CHIN_HIN_AUG_25_20250818_160827.pdf",
+      "ground_truth": "ground_truth/b88cfa92_4535_PP_CHIN_HIN_AUG_25_20250818_160827.json",
+      "gt_fields": 23,
+      "source_api_code": "my-invoice-f821a1",
+      "source_doc_id": "9521b051f67d483cb604b0a77b1738b0",
+      "file_md5": "b88cfa923abda5886aeeea3ac5d3b110"
+    },
+    {
+      "doc": "docs/3a6614ba_8100542231_20260105_091449.pdf",
+      "ground_truth": "ground_truth/3a6614ba_8100542231_20260105_091449.json",
+      "gt_fields": 20,
+      "source_api_code": "my-invoice-a29773",
+      "source_doc_id": "afee7ae736bc4c128ad23d3eb0cd9a83",
+      "file_md5": "3a6614baed69b4ea26549e50e8cd1a81"
+    },
+    {
+      "doc": "docs/e338a9f1_4689_PP_CHIN_HIN_OCT_25_20251030_170323.pdf",
+      "ground_truth": "ground_truth/e338a9f1_4689_PP_CHIN_HIN_OCT_25_20251030_170323.json",
+      "gt_fields": 19,
+      "source_api_code": "my-invoice-6514c9",
+      "source_doc_id": "4ba002a684324b66a9cc081fbc68c2b2",
+      "file_md5": "e338a9f199267297a55357d008d849b2"
+    },
+    {
+      "doc": "docs/6ac73a23_25-93556___DO_25-0955_20251028_115228.pdf",
+      "ground_truth": "ground_truth/6ac73a23_25-93556___DO_25-0955_20251028_115228.json",
+      "gt_fields": 18,
+      "source_api_code": "my-invoice-3081d0",
+      "source_doc_id": "a29bf1ce20064d95b95ff1125696ba46",
+      "file_md5": "6ac73a23b611432960cc5943b0e8811e"
+    },
+    {
+      "doc": "docs/c781da6e_Angel_Foo_202602270948_20260227_095200.pdf",
+      "ground_truth": "ground_truth/c781da6e_Angel_Foo_202602270948_20260227_095200.json",
+      "gt_fields": 18,
+      "source_api_code": "my-invoice-a29773",
+      "source_doc_id": "c4bc9d6f5fd94804b73d4efa07bc3077",
+      "file_md5": "c781da6e495789ef11d812ed9ad3540f"
+    },
+    {
+      "doc": "docs/1ad55c53_250715_CN-2025_520_PP_CHIN_HIN_RM2598.31_20250715_215844.pdf",
+      "ground_truth": "ground_truth/1ad55c53_250715_CN-2025_520_PP_CHIN_HIN_RM2598.31_20250715_215844.json",
+      "gt_fields": 14,
+      "source_api_code": "my-invoice-6a06e7",
+      "source_doc_id": "31103aef6c604c36a1b2e8bf5d3ecfaa",
+      "file_md5": "1ad55c53742c4f0a7986649cbc31dc92"
+    },
+    {
+      "doc": "docs/49c5326f_26032922-W1_20260402_095812.pdf",
+      "ground_truth": "ground_truth/49c5326f_26032922-W1_20260402_095812.json",
+      "gt_fields": 14,
+      "source_api_code": "my-invoice-096c5a",
+      "source_doc_id": "96a8e27f1f064b438971e912880180da",
+      "file_md5": "49c5326f2bf63bfe521e0d42f48d05ea"
+    },
+    {
+      "doc": "docs/f794b449_26031886-W1_20260402_095809.pdf",
+      "ground_truth": "ground_truth/f794b449_26031886-W1_20260402_095809.json",
+      "gt_fields": 9,
+      "source_api_code": "my-invoice-6514c9",
+      "source_doc_id": "cbef1007bdbb4a52b51cc57910623e36",
+      "file_md5": "f794b4491c0a7d6272037fc83b3eb19c"
+    }
+  ]
+}

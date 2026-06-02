@@ -1,0 +1,39 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Commercial Invoice",
+    "page": [
+      1
+    ],
+    "currency": "MYR",
+    "salerName": "BUILDER CONCEPT SDN. BHD.",
+    "salerTIN": "202101033325(1433625-W)",
+    "saleerAddress": "No. 55 Jalan Selat Selatan 22, Pandamaran, 42000 Port Klang, Selangor Darul Ehsan.",
+    "invoiceNumber": "9701/25/I",
+    "invoiceDate": "2025-10-17",
+    "buyerName": "PP CHIN HIN SDN BHD",
+    "buyerAddress": "A-1-9, PUSAT PERDAGANGAN KUCHAI, NO 2 JLN 1/127, OFF JLN KUCHAI LAMA, 58200 KUALA LUMPUR.",
+    "shipToCompany": "FUJIYA SDN BHD",
+    "shipToAddress": "SERIISTANA SDN BHD (ANTARA GAPI FC4925, LOT 3060, MKM ULU YAM, SE SYAHIRAN 011 1637 0114",
+    "PO": "W1 527735",
+    "deliveryOrderNumber": "9701/25/D",
+    "paymentTerms": "Net 30 days",
+    "detailOfGoodsOrServices": [
+      {
+        "description": "Plastic Wheel Spacer Model: WS 2508 Std Pkg: 1,000pcs/Bag Total - 1 Bag",
+        "quantity": 1000,
+        "unitOfMeasurement": "pcs",
+        "unitPrice": 0.1,
+        "netAmount": 100
+      },
+      {
+        "description": "Transport Charges",
+        "quantity": 1,
+        "unitOfMeasurement": "Trip",
+        "unitPrice": 80,
+        "netAmount": 80
+      }
+    ],
+    "totalAmount": 180
+  }
+]

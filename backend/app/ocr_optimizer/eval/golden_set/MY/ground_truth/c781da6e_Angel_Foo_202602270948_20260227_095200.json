@@ -1,0 +1,28 @@
+[
+  {
+    "invoiceType": "invoice",
+    "invoiceNumber": "154025",
+    "invoiceDate": "2026-02-09",
+    "totalNetAmount": 18749.97,
+    "totalAmount": 18749.97,
+    "currency": "MYR",
+    "buyerName": "PP CHIN HIN SDN BHD (KL)",
+    "billToCountryCode": "MY",
+    "salerName": "ASIA WIRE STEEL MESH MANUFACTURERS SDN. BHD.",
+    "page": "1",
+    "detailOfGoodsOrServices": [
+      {
+        "description": "RA7 6.00M X 2.20M",
+        "quantity": 150,
+        "unitPrice": 269.28,
+        "netAmount": 13595.95
+      },
+      {
+        "description": "RA5 6.00M X 2.20M",
+        "quantity": 100,
+        "unitPrice": 153.12,
+        "netAmount": 5154.02
+      }
+    ]
+  }
+]

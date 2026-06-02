@@ -1,0 +1,83 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Commercial Invoice",
+    "page": [
+      1
+    ],
+    "currency": "MYR",
+    "salerName": "YIT HUNG HARDWARE SDN BHD",
+    "salerAddress": "7065, JALAN 12, TAMAN SELAYANG BARU, 68100 BATU CAVES, SELANGOR.",
+    "billFrom": {
+      "phone": "012-8862936,016-333 2936,016-322 2936"
+    },
+    "salerTIN": "200201021935 (589598-H)",
+    "buyerName": "PP CHIN HIN SDN BHD",
+    "buyerAddress": "MENARA CHIN HIN LEVEL 22-23.8TH & STELLAR, NO.1, JALAN NAGA EMAS, SRI PETALING 50700 KUALA LUMPUR",
+    "invoiceNumber": "IV-852866",
+    "invoiceDate": "2026-02-28",
+    "paymentTerms": "Net 30days",
+    "PO": "PO-W1 541114",
+    "projectNumber": "LT PT19586",
+    "detailOfGoodsOrServices": [
+      {
+        "date": "2026-02-25",
+        "description": "CEMENT BRICKS (572PCS/PALLET)",
+        "quantity": 11440,
+        "unitPrice": 0.27,
+        "netAmount": 3088.8,
+        "deliveryOrderNumber": "DO-924850"
+      },
+      {
+        "date": "2026-02-25",
+        "description": "PALLET",
+        "quantity": 20,
+        "deliveryOrderNumber": "DO-924850"
+      },
+      {
+        "date": "2026-02-26",
+        "description": "CEMENT BRICKS (572PCS/PALLET)",
+        "quantity": 11110,
+        "unitPrice": 0.27,
+        "netAmount": 3088.8,
+        "deliveryOrderNumber": "DO 924883"
+      },
+      {
+        "date": "2026-02-26",
+        "description": "PALLET",
+        "quantity": 20,
+        "deliveryOrderNumber": "DO-924883"
+      },
+      {
+        "date": "2026-02-27",
+        "description": "CEMENT BRICKS (572PCS/PALLET)",
+        "quantity": 11440,
+        "unitPrice": 0.27,
+        "netAmount": 3088.8,
+        "deliveryOrderNumber": "DO-924911"
+      },
+      {
+        "date": "2026-02-27",
+        "description": "PALLET",
+        "quantity": 20,
+        "deliveryOrderNumber": "DO-924911"
+      },
+      {
+        "date": "2026-02-28",
+        "description": "CEMENT BRICKS (572PCS/PALLET)",
+        "quantity": 11440,
+        "unitPrice": 0.27,
+        "netAmount": 3088.8,
+        "deliveryOrderNumber": "DO-92-40 10"
+      },
+      {
+        "date": "2026-02-28",
+        "description": "PALLET",
+        "quantity": 20,
+        "deliveryOrderNumber": "DO-924940"
+      }
+    ],
+    "totalNetAmount": 12355.2,
+    "totalAmount": 12355.2
+  }
+]

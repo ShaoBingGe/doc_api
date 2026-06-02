@@ -1,0 +1,46 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Commercial Invoice",
+    "page": [
+      1
+    ],
+    "currency": "MYR",
+    "invoiceNumber": "INV197095",
+    "invoiceDate": "2026-02-27",
+    "salerName": "JM TIMBER & HARDWARE SDN BHD",
+    "salerTIN": "199401020376",
+    "salerAddress": "LOT 5364, JALAN 18/21, TAMAN KENAGAPURAM.\n46000, PETALING JAYA, Selangor, Malaysia",
+    "billFromPhoneNumber": "+60377819224, +60122912281, +60123148982",
+    "billFromEmail": "jmtimberacc123@gmail.com",
+    "salerTaxNO": "C6879265040",
+    "buyerName": "PP CHIN HIN SDN BHD",
+    "buyerAddress": "A-1-9, PUSAT PERDANGANGAN KUCHAI,\nNO. 2, JALAN 1/127,\nOFF JALAN KUCHAI LAMA,\n58200, KUALA LUMPUR, Wilayah Persekutuan Kua",
+    "billToPhoneNumber": "+60379817878",
+    "buyerTaxNO": "C5884056070",
+    "shipToCompany": "RAFIK FACTORY AT SETIA KASIH",
+    "shipToAddress": "RAFIK FACTORY AT SETIA KASIH\n58200, kl, Wilayah Persekutuan Ku",
+    "shipToPhoneNumber": "017-2632926",
+    "PO": "540964",
+    "paymentTerms": "60 Days",
+    "detailOfGoodsOrServices": [
+      {
+        "description": "5 LT NIPPON ZINC PHOSPHATE GREY GREEN",
+        "quantity": 1,
+        "unitPrice": 110.0,
+        "netAmount": 110.0,
+        "deliveryOrderNumber": "DO203450"
+      },
+      {
+        "description": "HANDLING CHARGES",
+        "quantity": 1,
+        "unitPrice": 30.0,
+        "netAmount": 30.0,
+        "deliveryOrderNumber": "DO203450"
+      }
+    ],
+    "totalNetAmount": 140.0,
+    "totalTaxAmount": 0.0,
+    "totalAmount": 140.0
+  }
+]

@@ -1,0 +1,39 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "standard invoice",
+    "page": [
+      1,
+      2
+    ],
+    "currency": "RM",
+    "invoiceNumber": "KB060216",
+    "invoiceDate": "2025-10-01",
+    "vendorName": "LAMA TILE (UTARA) SDN. BHD.",
+    "vendorAddress": "PMT 1283, Jalan Kebun Baru, Juru, 14100 Simpang Ampat, Pulau Pinang, Malaysia.",
+    "vendorTaxId": "C852340010",
+    "vendorRegistrationId": "195101000115 (002060-T)",
+    "customerName": "PP CHIN HIN S/B (KB)",
+    "customerAddress": "A-1-9, PUSAT PERDAGANGAN KUCHAI, NO 2, JALAN 1/127, OFF JALAN KUCHAI LAMA, 58200 KUALA LUMPUR.",
+    "paymentTerms": "Net 60 days",
+    "bankName": "OCBC",
+    "bankAccountNumber": "1321005676",
+    "details": [
+      {
+        "description": "ROMAN CHARCOAL",
+        "quantity": 1200,
+        "unit": "PCS",
+        "unitPrice": 1.7852,
+        "amount": 2142.24
+      },
+      {
+        "description": "DEDUCTION OF BREAKAGES (ROMAN CHARCOAL)",
+        "quantity": -12,
+        "unit": "PCS",
+        "unitPrice": 1.7852,
+        "amount": -21.42
+      }
+    ],
+    "totalAmount": 2120.82
+  }
+]

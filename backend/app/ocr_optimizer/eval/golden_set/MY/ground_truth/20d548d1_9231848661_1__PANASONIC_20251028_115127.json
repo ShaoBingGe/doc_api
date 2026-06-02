@@ -1,0 +1,49 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Tax Invoice",
+    "nameOfInvoice": "TAX INVOICE",
+    "invoiceNumber": "9231848661",
+    "invoiceDate": "2025-10-27",
+    "totalNetAmount": 95487.0,
+    "totalAmount": 95487.0,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "A-1-9, PUSAT PERDAGANGAN KUCHAI NO 2, JALAN 1/127 OFF JALAN KUCHAI LAMA KUALA LUMPUR 58200",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billFromName": "PANASONIC MALAYSIA SDN. BHD.",
+    "billFromComposite": "Lot 10, Jalan 13/2 46200 Petaling Jaya Selangor Darul Ehsan",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromTaxIdentificationNumber": "W10-2403-32000560",
+    "billFromBusinessRegistrationNumber": "197601000977 (26975-W)",
+    "purchaseOrderNumber": "W1 503372",
+    "dueDate": "2025-12-31",
+    "salesOrderNumber": "9213724089",
+    "deliveryOrderNumber": "9221857771",
+    "page": [
+      1
+    ],
+    "detailOfGoodsOrServices": [
+      {
+        "articleName": "R32 RAC (RU) Inv WM OD 1.0HP",
+        "description": "CU-RU9AKH",
+        "quantity": 80,
+        "unitOfMeasure": "PC",
+        "unitPrice": 768.0,
+        "netAmount": 61440.0
+      },
+      {
+        "articleName": "R32 RAC (RU) Inv WM OD 1.5HP",
+        "description": "CU-RU12AKH",
+        "quantity": 39,
+        "unitOfMeasure": "PC",
+        "unitPrice": 873.0,
+        "netAmount": 34047.0
+      }
+    ],
+    "DO": "9221857771",
+    "PO": "W1 503372"
+  }
+]

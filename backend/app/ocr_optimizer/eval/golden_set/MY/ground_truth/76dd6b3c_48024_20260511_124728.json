@@ -1,0 +1,60 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Commercial Invoice",
+    "page": [
+      1
+    ],
+    "currency": "MYR",
+    "invoiceNumber": "48024",
+    "invoiceDate": "2026-05-11",
+    "totalAmount": 29106.0,
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23\n8TH & STELLAR,\nNO 1, JALAN NAGA EMAS,\nSRI PETALING, 57000 KUALA LUMPUR",
+    "billFromName": "BRICK DOTCOM SDN BHD",
+    "detailOfGoodsOrServices": [
+      {
+        "quantity": 11200,
+        "unitPrice": 0.45,
+        "netAmount": 5040.0,
+        "description": "W1 543625 1. STUTZ FIXTURE S/B @ KEPONG 02/05/2026 COMMON CLAY BRICKS(700PCS/PALLET)",
+        "deliveryOrderNumber": "127235"
+      },
+      {
+        "quantity": 7000,
+        "unitPrice": 0.495,
+        "netAmount": 3465.0,
+        "description": "W1 544543 2. RAGAWANG CORP S/B @ KUALA LUMPUR 02/05/2026 COMMON CLAY BRICKS(700PCS/PALLET)",
+        "deliveryOrderNumber": "127237"
+      },
+      {
+        "quantity": 12600,
+        "unitPrice": 0.46,
+        "netAmount": 5796.0,
+        "description": "W1 548008 3. CREST BUILDER S/B C/O YYS ENGINEERING S/B @ KUALA LUMPUR 04/05/2026 COMMON CLAY BRICKS(700PCS/PALLET)",
+        "deliveryOrderNumber": "127249"
+      },
+      {
+        "quantity": 11200,
+        "unitPrice": 0.45,
+        "netAmount": 5040.0,
+        "description": "W1 543625 4. STUTZ FIXTURE S/B @ KEPONG 06/05/2026 COMMON CLAY BRICKS(700PCS/PALLET)",
+        "deliveryOrderNumber": "127267"
+      },
+      {
+        "quantity": 14000,
+        "unitPrice": 0.45,
+        "netAmount": 6300.0,
+        "description": "W1 545725 5. CK PLUS BUILDERS S/B @ KUALA LUMPUR 09/05/2026 COMMON CLAY BRICKS(700PCS/PALLET)",
+        "deliveryOrderNumber": "127294"
+      },
+      {
+        "quantity": 7000,
+        "unitPrice": 0.495,
+        "netAmount": 3465.0,
+        "description": "W1 546631 6. RAGAWANG CORP S/B @ KUALA LUMPUR 07/05/2026 COMMON CLAY BRICKS(700PCS/PALLET)",
+        "deliveryOrderNumber": "127295"
+      }
+    ]
+  }
+]

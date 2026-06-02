@@ -1,0 +1,41 @@
+[
+  {
+    "salerName": "HOU TIAN TRANSPORT & TRADING SDN BHD",
+    "salerAddress": "2-2A, JALAN PUTERI 2/5, BANDAR PUTERI, 47100 PUCHONG, SELANGOR.",
+    "buyerPhone": "017-3848680",
+    "buyerEmail": "houtianttt@gmail.com",
+    "salerTIN": "1316372-U",
+    "buyerName": "PP CHIN HIN SDN BHD",
+    "buyerAddress": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO 1, JALAN NAGA EMAS, SRI PETALING, 57000 KUALA LUMPUR, WILAYAH PERSEKUTUAN, MALAYSIA.",
+    "billToAttention": "Ms.Dua",
+    "docType": "invoice",
+    "invoiceType": "Commercial Invoice",
+    "invoiceNumber": "HT-012026/198",
+    "invoiceDate": "2026-01-31",
+    "P)": "W1 538012",
+    "paymentTerms": "30 Days",
+    "currency": "MYR",
+    "totalNetAmount": 1600.0,
+    "totalDiscountAmount": 0.0,
+    "totalAmount": 1600.0,
+    "detailOfGoodsOrServices": [
+      {
+        "description": "COARSE SAND [W1 538012]",
+        "quantity": 1.0,
+        "unitPrice": 800.0,
+        "netAmount": 800.0,
+        "deliveryOrderNumber": "HT55337"
+      },
+      {
+        "description": "COARSE SAND [W1 538012] PROJECT SITE: SEMENYIH",
+        "quantity": 1.0,
+        "unitPrice": 800.0,
+        "netAmount": 800.0,
+        "deliveryOrderNumber": "HT55339"
+      }
+    ],
+    "page": [
+      1
+    ]
+  }
+]

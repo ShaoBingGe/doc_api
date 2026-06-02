@@ -1,0 +1,56 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Tax Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "2604S10084",
+    "invoiceDate": "2026-04-21",
+    "totalNetAmount": 140937.54,
+    "totalAmount": 140937.54,
+    "totalTaxAmount": 0.0,
+    "currency": "MYR",
+    "buyerName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23,, 8TH & STELLAR, NO.1,, JALAN NAGA EMAS, SRI PETALING, 57000 KUALA LUMPUR, WILAYAH PERSEKUTUAN KUALA LUMPUR, MALAYSIA",
+    "billToCountry": "MALAYSIA",
+    "billToCountryCode": "MY",
+    "salerTIN": "C20067004020",
+    "salerName": "KUMKANG KIND (M) SDN BHD",
+    "billFromComposite": "B-9-01, BLOCK B, OASIS SQUARE NO.2 JALAN PJU 1A/7A, ARA DAMANSARA, 47301 PJ, SELANGOR47301 PETALING JAYA SELANGOR MALAYSIA",
+    "billFromCountry": "MALAYSIA",
+    "billFromCountryCode": "MY",
+    "billFromBusinessRegistrationNumber": "732946-V",
+    "page": [
+      1
+    ],
+    "detailOfGoodsOrServices": [
+      {
+        "articleName": "ALUMINIUM FORMWORK",
+        "description": "SPR330301. ALUMINIUM FORMWORK",
+        "quantity": 1,
+        "unitPrice": 139593.87,
+        "netAmount": 139593.87,
+        "tax": 0,
+        "grossAmount": 139593.87
+      },
+      {
+        "articleName": "STEEL FORMWORK - DOWN FRAME",
+        "description": "SPR330301. STEEL FORMWORK - DOWN FRAME\n*2ND MONTHLY INSTALLMENT\n- 21/04/2026 TO 20/05/2026\n(2/11)",
+        "quantity": 1,
+        "unitPrice": 1343.67,
+        "netAmount": 1343.67,
+        "tax": 0,
+        "grossAmount": 1343.67
+      }
+    ],
+    "detailOfTaxSummary": [
+      {
+        "taxCategory": "SST",
+        "taxRate": "0%",
+        "netTaxableAmount": 140937.54,
+        "tax": 0.0
+      }
+    ],
+    "salerAddress": "B-9-01, BLOCK B, OASIS SQUARE NO.2 JALAN PJU 1A/7A, ARA DAMANSARA, 47301 PJ, SELANGOR47301 PETALING JAYA SELANGOR MALAYSIA",
+    "buyerAddress": "MENARA CHIN HIN, LEVEL 22-23,, 8TH & STELLAR, NO.1,, JALAN NAGA EMAS, SRI PETALING, 57000 KUALA LUMPUR, WILAYAH PERSEKUTUAN KUALA LUMPUR, MALAYSIA"
+  }
+]

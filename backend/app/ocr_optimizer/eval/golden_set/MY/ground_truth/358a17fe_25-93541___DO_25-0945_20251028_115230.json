@@ -1,0 +1,41 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Commercial Invoice",
+    "page": [
+      1
+    ],
+    "currency": "MYR",
+    "salerName": "MAXWOOD MARKETING (M) SDN. BHD.",
+    "billFromAddress": "LOT 13733, JALAN BANGI BATU 1 1/2, 43500 SEMENYIH, SELANGOR.",
+    "billFromBusinessRegistrationNumber": "201901043497 (1352827-P)",
+    "billFromPhoneNumber": "016-216 9388",
+    "buyerName": "PP CHIN HIN SDN BHD",
+    "buyerAddress": "Menara Chin Hin, Level 22-23, 8TH & Stellar, No 1, Jalan Naga Emas, Sri Petaling, 57000 Kuala Lumpur, Wilayah Persekutuan, Malaysia",
+    "billToPhoneNumber": "03-7981 7878",
+    "invoiceNumber": "25-93541",
+    "invoiceDate": "2025-10-14",
+    "PO": "W1 527043",
+    "deliveryOrderNumber": "DO 25-0945",
+    "paymentTerms": "60 Days",
+    "totalNetAmount": 6952.5,
+    "totalAmount": 6952.5,
+    "totalTaxAmount": 0.0,
+    "detailOfGoodsOrServices": [
+      {
+        "description": "MHW 1\" X 2\" SCANT SAWN TIMBER 1\" X 2\"X10'",
+        "quantity": 3.75,
+        "unitOfMeasure": "TON",
+        "unitPrice": 1030.0,
+        "netAmount": 3862.5
+      },
+      {
+        "description": "MHW 1\" X 2\" SCANT SAWN TIMBER 1\" X 2\"X12\"",
+        "quantity": 3.0,
+        "unitOfMeasure": "TON",
+        "unitPrice": 1030.0,
+        "netAmount": 3090.0
+      }
+    ]
+  }
+]

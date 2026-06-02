@@ -1,0 +1,15 @@
+[
+  {
+    "invoiceType": "Commercial Invoice",
+    "invoiceNumber": "26031886",
+    "invoiceDate": "2026-03-31",
+    "totalNetAmount": 390.0,
+    "totalAmount": 390.0,
+    "currency": "MYR",
+    "buyerName": "CHIN HIN SDN BHD",
+    "salerName": "FUTT KONG MARKETING SDN. BHD.",
+    "page": [
+      1
+    ]
+  }
+]

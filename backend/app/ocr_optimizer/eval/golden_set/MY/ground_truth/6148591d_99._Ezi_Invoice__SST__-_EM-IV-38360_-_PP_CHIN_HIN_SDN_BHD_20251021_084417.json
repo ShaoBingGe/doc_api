@@ -1,0 +1,51 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "EM-IV-38360",
+    "invoiceDate": "2025-10-17",
+    "totalNetAmount": 1216.0,
+    "totalAmount": 1337.6,
+    "totalTaxAmount": 121.6,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "NO. 400 & 401, JALAN PERUSAHAAN 5, TAMAN BANDAR BARU MERGONG LEBUHRAYA SULTANAH BAHIYAN 05150 ALOR SETAR KEDAH",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billFromName": "Ezi MOTARTECH SDN. BHD.",
+    "billFromComposite": "80, Jalan Mesjid Negeri, 11600 Pulau Pinang, Malaysia.",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromTaxIdentificationNumber": "A10-2209-22000001",
+    "billFromBusinessRegistrationNumber": "200901031690 (874800-D)",
+    "purchaseOrderNumber": "W1 527459",
+    "deliveryOrderNumber": "EMDO2510-0405",
+    "page": [
+      1
+    ],
+    "detailOfGoodsOrServices": [
+      {
+        "articleName": "Ezi STAR FIX - 25KG",
+        "description": "EA101-SF25-KL Ezi STAR FIX - 25KG",
+        "quantity": 64,
+        "unitOfMeasure": "BAG",
+        "unitPrice": 19.0,
+        "netAmount": 1216.0,
+        "taxRate": "10%",
+        "deliveryOrderNumber": "EMDO2510-0405",
+        "purchaseOrderNumber": "W1 527459"
+      }
+    ],
+    "detailOfTaxSummary": [
+      {
+        "taxCategory": "SST",
+        "taxRate": "10%",
+        "netTaxableAmount": 1216.0,
+        "tax": 121.6
+      }
+    ],
+    "DO": "EMDO2510-0405",
+    "PO": "W1 527459"
+  }
+]

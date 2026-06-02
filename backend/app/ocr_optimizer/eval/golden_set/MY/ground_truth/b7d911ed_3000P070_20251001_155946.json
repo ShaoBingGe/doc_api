@@ -1,0 +1,45 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Commercial Invoice",
+    "page": [
+      1
+    ],
+    "currency": "MYR",
+    "buyerName": "PP CHIN HIN SDN BHD",
+    "salerName": "Denka Construction Solutions Malaysia Sdn. Bhd.",
+    "salerTAXNO": "200201024195",
+    "invoiceNumber": "3000/P070",
+    "invoiceDate": "2025-09-30",
+    "totalAmount": 11970.0,
+    "detailOfGoodsOrServices": [
+      {
+        "itemCode": "S73926",
+        "netAmount": 1600.0,
+        "grossAmount": 1600.0
+      },
+      {
+        "itemCode": "S73973",
+        "netAmount": 3610.0,
+        "grossAmount": 3610.0
+      },
+      {
+        "itemCode": "S73990",
+        "netAmount": 650.0,
+        "grossAmount": 650.0
+      },
+      {
+        "itemCode": "S74133",
+        "netAmount": 5070.0,
+        "grossAmount": 5070.0
+      },
+      {
+        "itemCode": "S74154",
+        "netAmount": 1040.0,
+        "grossAmount": 1040.0
+      }
+    ],
+    "PO": null,
+    "DO": null
+  }
+]

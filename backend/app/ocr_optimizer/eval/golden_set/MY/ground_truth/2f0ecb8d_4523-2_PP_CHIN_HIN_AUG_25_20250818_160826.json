@@ -1,0 +1,36 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "DB45232",
+    "invoiceDate": "2025-08-04",
+    "totalNetAmount": 1380.0,
+    "totalAmount": 1380.0,
+    "currency": "MYR",
+    "buyerName": "PP CHIN HIN SDN BHD.",
+    "billToComposite": "Menara Chin Hin\nLevel 22-23, 8TH & Stellar,\nNo.1, Jalan Naga Emas, Sri Petaling,\n57000 Kuala Lumpur.",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "salerName": "DAY BRIGHT WOOD INDUSTRIES SDN. BHD.",
+    "billFromComposite": "PT 1223 & PT 1224, JLN SG. LALANG, KG. PASIR, 43500 SEMENYIH, SELANGOR DARUL EHSAN.",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "PO": "520222",
+    "DO": "4523",
+    "page": [
+      1
+    ],
+    "detailOfGoodsOrServices": [
+      {
+        "articleName": "Mixed Hardwood Sawntimber - 1\" X 2\" X 10 ft. UP (A)",
+        "description": "B/NO - SA 218/7 360/10",
+        "quantity": 360,
+        "unitOfMeasure": "PC",
+        "unitPrice": 1380.0,
+        "netAmount": 1380.0,
+        "grossAmount": 1380.0
+      }
+    ]
+  }
+]

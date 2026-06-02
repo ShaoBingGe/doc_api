@@ -57,3 +57,7 @@ label-studio-ml-backend/
 
 # Test artifacts
 testing/test1_honor.zip
+
+# Golden eval set: keep GT answer key + manifest + exporter in git, but NOT the
+# raw invoice scans (PII + binary + regenerable via build_golden_set.py).
+backend/app/ocr_optimizer/eval/golden_set/*/docs/

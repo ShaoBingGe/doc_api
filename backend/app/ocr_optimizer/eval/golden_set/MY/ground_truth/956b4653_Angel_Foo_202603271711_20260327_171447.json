@@ -1,0 +1,37 @@
+[
+  {
+    "docType": "invoice",
+    "invoiceType": "standard invoice",
+    "page": [
+      1
+    ],
+    "currency": "RM",
+    "invoiceNumber": "154813",
+    "invoiceDate": "2026-03-17",
+    "vendorName": "ASIA WIRE STEEL MESH MANUFACTURERS SDN. BHD.",
+    "vendorAddress": "Lot 975, Batu 3, Jalan Kapar, P.O. Box 75, 41700 Klang, Selangor Darul Ehsan, Malaysia.",
+    "customerName": "PP CHIN HIN SDN BHD (KL)",
+    "customerAddress": "MENARA CHIN HIN LEVEL 22-23, 8TH & STELLAR, NO. 1, JALAN NAGA EMAS, SRI PETALING, 57000 KUALA LUMPUR, MALAYSIA.",
+    "totalAmount": "20276.02",
+    "details": [
+      {
+        "description": "R.C.MESH RA7 6.00M X 2.20M",
+        "quantity": "150",
+        "unitPrice": "269.28000",
+        "amount": "13898.89"
+      },
+      {
+        "description": "RA8 6.00M X 2.20M",
+        "quantity": "20",
+        "unitPrice": "352.44000",
+        "amount": "2425.49"
+      },
+      {
+        "description": "RA5 6.00M X 2.20M",
+        "quantity": "75",
+        "unitPrice": "153.12000",
+        "amount": "3951.64"
+      }
+    ]
+  }
+]

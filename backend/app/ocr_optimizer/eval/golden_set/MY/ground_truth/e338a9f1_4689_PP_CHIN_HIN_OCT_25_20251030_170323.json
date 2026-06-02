@@ -1,0 +1,30 @@
+[
+  {
+    "invoiceType": "Commercial Invoice",
+    "invoiceNumber": "DB-4689",
+    "invoiceDate": "2025-10-27",
+    "totalNetAmount": 2830.0,
+    "totalAmount": 2830.0,
+    "currency": "MYR",
+    "buyerName": "PP CHIN HIN SDN BHD.",
+    "salerName": "DAY BRIGHT WOOD INDUSTRIES SDN. BHD.",
+    "page": "1",
+    "detailOfGoodsOrServices": [
+      {
+        "description": "Mixed Hardwood Sawntimber - 1\" X 2\" X 8 ft. UP",
+        "quantity": 1.0,
+        "unitPrice": 1020.0,
+        "netAmount": 1020.0,
+        "PO": "PO#W1 528154"
+      },
+      {
+        "description": "Mixed Hardwood Sawntimber - 2\" X 4\" X 14 ft. UP",
+        "quantity": 2.0,
+        "unitPrice": 905.0,
+        "netAmount": 1810.0,
+        "PO": "PO#W1 527620"
+      }
+    ],
+    "totalTaxAmount": null
+  }
+]
