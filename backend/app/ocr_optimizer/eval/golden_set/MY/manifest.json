@@ -1,6 +1,6 @@
 {
   "country": "MY",
-  "count": 37,
+  "count": 36,
   "items": [
     {
       "doc": "docs/75d8efa2_Angel_Foo_202603301713_20260330_171942.pdf",
@@ -289,14 +289,6 @@
       "source_api_code": "my-invoice-096c5a",
       "source_doc_id": "96a8e27f1f064b438971e912880180da",
       "file_md5": "49c5326f2bf63bfe521e0d42f48d05ea"
-    },
-    {
-      "doc": "docs/f794b449_26031886-W1_20260402_095809.pdf",
-      "ground_truth": "ground_truth/f794b449_26031886-W1_20260402_095809.json",
-      "gt_fields": 9,
-      "source_api_code": "my-invoice-6514c9",
-      "source_doc_id": "cbef1007bdbb4a52b51cc57910623e36",
-      "file_md5": "f794b4491c0a7d6272037fc83b3eb19c"
     }
   ]
 }

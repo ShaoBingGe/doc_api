@@ -11,6 +11,7 @@ from __future__ import annotations
 from app.ocr_optimizer.eval import (
     ModuleSpec,
     benchmark_ab,
+    collect_deviations,
     score_outputs,
 )
 
@@ -70,6 +71,51 @@ def test_ocr_error_marker_scores_zero_and_is_collected():
     # doc1 scored 0 for both modules, doc2 perfect → each module mean = 0.5
     assert mm["invoice_number"].accuracy == 0.5
     assert mm["bill_from_name"].accuracy == 0.5
+
+
+# ── strict golden-gate scoring (reqs 1/2/3) ──────────────────────────────────
+
+def test_strict_skips_empty_gt_no_false_pass():
+    """req 1: a field with empty GT is SKIPPED (not a false pass), even if the
+    model emitted something for it."""
+    gt = {"doc1": [{"invoiceNumber": "INV-1"}]}   # billFromName absent
+    ocr = {"doc1": [{"invoiceNumber": "INV-1", "billFromName": "ANYTHING"}]}
+    r = score_outputs(_MODULES, ocr, gt, strict=True)
+    mm = r.module_map()
+    assert mm["invoice_number"].accuracy == 1.0          # tested + exact
+    assert "bill_from_name" not in mm                    # empty GT everywhere → excluded
+
+
+def test_strict_exact_match_fails_on_any_deviation():
+    """req 2: case/format/char deviation fails (no fuzzing, no partial credit)."""
+    gt = {"doc1": [{"invoiceNumber": "INV-1"}]}
+    ocr = {"doc1": [{"invoiceNumber": "inv-1"}]}          # case differs
+    r = score_outputs(_MODULES, ocr, gt, strict=True)
+    assert r.module_map()["invoice_number"].accuracy == 0.0
+    assert r.module_map()["invoice_number"].matched_count == 0
+
+
+def test_strict_collect_deviations_for_loop():
+    """req 3: deviations come out shaped {module_key, doc_id, expected, got}."""
+    gt = {"doc1": [{"invoiceNumber": "INV-1"}]}
+    ocr = {"doc1": [{"invoiceNumber": "WRONG"}]}
+    r = score_outputs(_MODULES, ocr, gt, strict=True)
+    devs = collect_deviations(r)
+    assert any(
+        d["module_key"] == "invoice_number"
+        and d["expected"] == ["INV-1"] and d["got"] == ["WRONG"]
+        for d in devs
+    )
+
+
+def test_strict_is_stricter_than_fuzzy():
+    """A near-miss the fuzzy scorer gives partial credit, strict gives 0."""
+    gt = {"doc1": [{"invoiceNumber": "INV-1"}]}
+    ocr = {"doc1": [{"invoiceNumber": "INV-2"}]}
+    fuzzy = score_outputs(_MODULES, ocr, gt).module_map()["invoice_number"].accuracy
+    strict = score_outputs(_MODULES, ocr, gt, strict=True).module_map()["invoice_number"].accuracy
+    assert strict == 0.0
+    assert strict <= fuzzy
 
 
 def test_benchmark_ab_reports_delta_and_regressions(monkeypatch):

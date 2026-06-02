@@ -27,6 +27,24 @@ golden_set/
 - **docs/ + ground_truth/** — what actually lets us *measure accuracy*. A prompt
   alone proves nothing; we need real documents and the correct answers.
 
+## Golden gate contract (reqs 1/2/3)
+
+The golden set is a **zero-tolerance** gate, deliberately stricter than the
+production fuzzy scorer:
+
+1. **Completeness — no empty GT field.** Every value in a golden GT must be
+   real (non-null, non-blank). A null GT field that the model also returns null
+   would be a *false pass* ("假识别、错误放行"). The exporter strips all empty
+   leaves, so every field that survives is a value the model MUST extract. Seeds
+   below `--min-fields` (default 12 non-empty fields) are dropped.
+2. **Exact match — any deviation fails.** `score_outputs(..., strict=True)`
+   passes a field ONLY on exact equality (no date/number/format fuzzing, no
+   partial credit): 1.0 if identical, else 0.0. `(doc, module)` pairs whose GT
+   is empty are SKIPPED (never compared → never a false pass).
+3. **Deviations feed the loop.** `collect_deviations(report)` returns every
+   failing field as `{module_key, doc_id, expected, got}` — the bridge into the
+   same diff → reflect → optimize machinery customers use.
+
 ## What's present
 
 - ✅ `MY/golden_prompt.md` — 17-field gold-standard MY prompt (RTF-decoded).

@@ -93,10 +93,27 @@ class EvalReport:
 
 # ── Pure scoring ──────────────────────────────────────────────────────────────
 
+def _is_empty_slice(v: Any) -> bool:
+    """True when a sliced value carries NO real GT (None, "", or a container of
+    only-empties). Strict golden scoring SKIPS such (doc, module) pairs so a
+    null-GT field can never produce a false pass (req 1)."""
+    if v is None:
+        return True
+    if isinstance(v, str):
+        return v.strip() == ""
+    if isinstance(v, list):
+        return all(_is_empty_slice(x) for x in v)
+    if isinstance(v, dict):
+        return all(_is_empty_slice(x) for x in v.values())
+    return False
+
+
 def score_outputs(
     modules: list[ModuleSpec],
     ocr_outputs: dict[str, Any],
     ground_truths: dict[str, dict],
+    *,
+    strict: bool = False,
 ) -> EvalReport:
     """Score already-produced OCR outputs against ground truth, per module.
 
@@ -106,10 +123,16 @@ def score_outputs(
             {"_error": "..."} marks an OCR failure for that doc (scored 0 and
             its id collected in ocr_error_doc_ids).
         ground_truths: {str(doc_id): gt_json}.
+        strict: golden-gate mode (req 2). A field passes ONLY on EXACT equality
+            (no date/number/format fuzzing, no partial credit) — pass=1.0 else
+            0.0. (doc, module) pairs whose GT slice is empty are SKIPPED so a
+            null GT never yields a false pass (req 1). The per-sample record
+            carries `expected` / `got` so deviations can feed the
+            diff→reflect→optimize loop (req 3).
 
-    A module's per-sample accuracy is evaluator.compare(sliced_ocr, sliced_gt,
-    schema_fragment); the module accuracy is the mean across samples; the
-    overall accuracy is the mean across modules (matching _run_one_round).
+    Non-strict (default) keeps the production fuzzy scoring
+    (evaluator.compare); a module's accuracy is the mean across samples and the
+    overall accuracy the mean across modules (matching _run_one_round).
     """
     doc_ids = list(ground_truths.keys())
     ocr_error_doc_ids = [
@@ -123,19 +146,43 @@ def score_outputs(
         for d in doc_ids:
             gt_sliced = slicer.extract(ground_truths.get(d), spec.json_path)
             ocr_full = ocr_outputs.get(d)
+
+            if strict and _is_empty_slice(gt_sliced):
+                # GT doesn't cover this field on this seed → not tested here.
+                continue
+
             if isinstance(ocr_full, dict) and "_error" in ocr_full:
                 per_sample.append({
                     "doc_id": d, "accuracy": 0.0, "matched": False,
                     "diff": f"OCR error: {str(ocr_full.get('_error'))[:120]}",
+                    "expected": gt_sliced, "got": None,
                 })
                 continue
+
             ocr_sliced = slicer.extract(ocr_full, spec.json_path)
-            matched, acc, diff = evaluator.compare(
-                ocr_sliced, gt_sliced, spec.schema_fragment,
-            )
-            per_sample.append({
-                "doc_id": d, "accuracy": acc, "matched": matched, "diff": diff,
-            })
+
+            if strict:
+                # Exact equality — any field/char/format deviation fails (req 2).
+                passed = ocr_sliced == gt_sliced
+                per_sample.append({
+                    "doc_id": d,
+                    "accuracy": 1.0 if passed else 0.0,
+                    "matched": passed,
+                    "diff": "" if passed else "exact-mismatch",
+                    "expected": gt_sliced, "got": ocr_sliced,
+                })
+            else:
+                matched, acc, diff = evaluator.compare(
+                    ocr_sliced, gt_sliced, spec.schema_fragment,
+                )
+                per_sample.append({
+                    "doc_id": d, "accuracy": acc, "matched": matched, "diff": diff,
+                })
+
+        # In strict mode a module with no tested samples (GT empty everywhere)
+        # is excluded from the score rather than counted as 0.
+        if strict and not per_sample:
+            continue
 
         accs = [p["accuracy"] for p in per_sample]
         mod_acc = statistics.fmean(accs) if accs else 0.0
@@ -159,6 +206,24 @@ def score_outputs(
         module_count=len(module_scores),
         ocr_error_doc_ids=ocr_error_doc_ids,
     )
+
+
+def collect_deviations(report: EvalReport) -> list[dict]:
+    """Extract every failing field from a STRICT report as deviation records,
+    shaped for the diff→reflect→optimize loop (req 3):
+        {module_key, doc_id, expected, got}
+    Only meaningful on a report produced with strict=True."""
+    out: list[dict] = []
+    for m in report.module_scores:
+        for p in m.per_sample:
+            if not p.get("matched", False):
+                out.append({
+                    "module_key": m.module_key,
+                    "doc_id": p.get("doc_id"),
+                    "expected": p.get("expected"),
+                    "got": p.get("got"),
+                })
+    return out
 
 
 # ── OCR-driving wrappers ──────────────────────────────────────────────────────

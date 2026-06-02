@@ -41,11 +41,36 @@ _EVAL_DIR = os.path.dirname(os.path.abspath(__file__))
 _BACKEND_DIR = os.path.abspath(os.path.join(_EVAL_DIR, "..", "..", ".."))
 
 
+def _strip_empty(node):
+    """Recursively drop null / empty-string leaves and prune empty containers.
+
+    Golden-set requirement #1: a golden GT must contain NO empty field — a
+    null GT field that the model also returns null would be a false pass. By
+    stripping empties, every field that survives in the golden GT is a real,
+    verifiable value the model must extract. Returns None when nothing remains.
+    """
+    if isinstance(node, dict):
+        out = {}
+        for k, v in node.items():
+            sv = _strip_empty(v)
+            if sv is not None:
+                out[k] = sv
+        return out or None
+    if isinstance(node, list):
+        out = [sv for sv in (_strip_empty(v) for v in node) if sv is not None]
+        return out or None
+    if node is None:
+        return None
+    if isinstance(node, str) and node.strip() == "":
+        return None
+    return node
+
+
 def _leaf_count(node) -> int:
     if isinstance(node, dict):
-        return sum(_leaf_count(v) for v in node.values()) or len(node)
+        return sum(_leaf_count(v) for v in node.values())
     if isinstance(node, list):
-        return sum(_leaf_count(v) for v in node) or len(node)
+        return sum(_leaf_count(v) for v in node)
     return 0 if node is None else 1
 
 
@@ -68,7 +93,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Build a country golden eval set from confirmed samples")
     ap.add_argument("--country", default="MY")
     ap.add_argument("--limit", type=int, default=0, help="cap exported docs (0 = all unique)")
-    ap.add_argument("--min-fields", type=int, default=8, help="skip docs with fewer GT leaf values")
+    ap.add_argument("--min-fields", type=int, default=12,
+                    help="skip docs with fewer NON-EMPTY GT leaf values (req 1: completeness)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
 
@@ -106,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
             if not fh:
                 skipped_nofile += 1
                 continue
-            gt = ground_truth.build(db, uuid.UUID(str(did)))
+            gt = _strip_empty(ground_truth.build(db, uuid.UUID(str(did)))) or {}
             fields = _leaf_count(gt)
             if fields < args.min_fields:
                 skipped_thin += 1
