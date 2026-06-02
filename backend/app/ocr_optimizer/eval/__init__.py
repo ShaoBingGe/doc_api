@@ -27,10 +27,13 @@ from .harness import (
 )
 
 from .golden_loop import (  # noqa: E402
+    compute_core_fields,
     deviations_to_diffs,
+    golden_strict_batch,
     golden_strict_check,
     load_golden,
     reflect_on_golden,
+    sample_batch,
 )
 
 __all__ = [
@@ -43,8 +46,11 @@ __all__ = [
     "module_specs_from_orm",
     "score_outputs",
     # golden loop (req 3)
+    "compute_core_fields",
     "deviations_to_diffs",
+    "golden_strict_batch",
     "golden_strict_check",
     "load_golden",
     "reflect_on_golden",
+    "sample_batch",
 ]

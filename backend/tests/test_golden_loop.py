@@ -73,3 +73,38 @@ def test_reflect_on_golden_routes_to_reflection(monkeypatch):
 def test_reflect_on_golden_empty_when_no_deviations():
     from app.ocr_optimizer.eval.golden_loop import reflect_on_golden
     assert reflect_on_golden(None, country="MY", deviations=[], modules_by_key={}) == {}
+
+
+# ── comparable batches (<=5 random seeds, same core field set) ────────────────
+
+def test_compute_core_fields_includes_common_fields():
+    from app.ocr_optimizer.eval.golden_loop import compute_core_fields
+    core = set(compute_core_fields("MY", threshold=0.8))
+    # invoiceNumber/invoiceDate/currency/totalAmount appear on basically every
+    # MY invoice → must be in the core.
+    for f in ("invoiceNumber", "invoiceDate", "currency", "totalAmount"):
+        assert f in core, f"{f} should be a core field"
+
+
+def test_sample_batch_caps_at_5_and_covers_core():
+    from app.ocr_optimizer.eval.golden_loop import sample_batch, load_golden, _top_keys
+    b = sample_batch("MY", size=5, threshold=0.8, rng_seed=42)
+    assert b["batch_size"] <= 5
+    core = set(b["core_fields"])
+    g = load_golden("MY")
+    # every seed in the batch covers the full core set
+    for did in b["doc_ids"]:
+        assert core <= _top_keys(g[did]["gt"]), "batch seed must cover the core"
+
+
+def test_sample_batch_is_reproducible_with_seed():
+    from app.ocr_optimizer.eval.golden_loop import sample_batch
+    a = sample_batch("MY", size=5, rng_seed=7)["doc_ids"]
+    b = sample_batch("MY", size=5, rng_seed=7)["doc_ids"]
+    assert a == b   # same seed → same batch (different seeds rotate docs)
+
+
+def test_sample_batch_hard_cap_even_if_size_larger():
+    from app.ocr_optimizer.eval.golden_loop import sample_batch
+    b = sample_batch("MY", size=20, rng_seed=1)
+    assert b["batch_size"] <= 5

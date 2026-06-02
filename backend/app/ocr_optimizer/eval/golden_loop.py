@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import uuid
+from collections import Counter
 from typing import Any
 
 from .harness import (
@@ -60,6 +62,73 @@ def load_golden(country: str) -> dict[str, dict]:
             "fields": item.get("gt_fields"),
         }
     return out
+
+
+# ── Comparable batches: same field set, random different seeds ────────────────
+#
+# Strict accuracy is only comparable across batches if every batch tests the
+# SAME fields. Real invoices never share an exact field set, so we fix a CORE
+# field set (top-level keys present in >= threshold of seeds) and draw each
+# batch as a RANDOM sample of seeds that COVER that core, scoring only the core.
+# → "随机 5 个同样结果的不同种子集合": identical result-set, rotating documents.
+
+def _record(gt: Any) -> dict:
+    if isinstance(gt, list) and gt and isinstance(gt[0], dict):
+        return gt[0]
+    return gt if isinstance(gt, dict) else {}
+
+
+def _nonempty(v: Any) -> bool:
+    if v is None:
+        return False
+    if isinstance(v, str):
+        return v.strip() != ""
+    if isinstance(v, (list, dict)):
+        return len(v) > 0
+    return True
+
+
+def _top_keys(gt: Any) -> set[str]:
+    """Top-level field keys with a non-empty value in this seed's GT."""
+    return {k for k, v in _record(gt).items() if _nonempty(v)}
+
+
+def compute_core_fields(country: str, threshold: float = 0.8) -> list[str]:
+    """Top-level fields present (non-empty) in >= threshold of the country's
+    golden seeds. This is the stable "结果数据集" every batch is scored on."""
+    g = load_golden(country)
+    sets = [_top_keys(e["gt"]) for e in g.values()]
+    n = len(sets) or 1
+    cnt: Counter = Counter()
+    for s in sets:
+        cnt.update(s)
+    return sorted(k for k, c in cnt.items() if c >= threshold * n)
+
+
+def sample_batch(
+    country: str,
+    *,
+    size: int = 5,
+    threshold: float = 0.8,
+    rng_seed: int | None = None,
+) -> dict:
+    """Draw a comparable batch: up to `size` (<=5) RANDOM seeds that all cover
+    the core field set. Different seeds each call (pass rng_seed to reproduce).
+
+    Returns {doc_ids, core_fields, pool_size, batch_size}.
+    """
+    size = min(size, 5)   # hard cap per the batch policy
+    g = load_golden(country)
+    core = set(compute_core_fields(country, threshold))
+    pool = [did for did, e in g.items() if core <= _top_keys(e["gt"])]
+    rng = random.Random(rng_seed)
+    batch = rng.sample(pool, min(size, len(pool))) if pool else []
+    return {
+        "doc_ids": batch,
+        "core_fields": sorted(core),
+        "pool_size": len(pool),
+        "batch_size": len(batch),
+    }
 
 
 def _leaf(json_path: str | None) -> str:
@@ -140,6 +209,44 @@ def golden_strict_check(
         strict=True,
     )
     return report, collect_deviations(report)
+
+
+def golden_strict_batch(
+    db,
+    *,
+    country: str,
+    modules: list[ModuleSpec],
+    composed_prompt: str,
+    composed_schema: dict | None,
+    size: int = 5,
+    threshold: float = 0.8,
+    rng_seed: int | None = None,
+    processor_spec: str = "gemini",
+    model_name: str | None = None,
+):
+    """Run a strict check on a COMPARABLE batch (<=5 random seeds covering the
+    core), scoring ONLY the core fields so the number is comparable across
+    batches. Needs real OCR. Returns (report, deviations, batch_meta).
+    """
+    batch = sample_batch(country, size=size, threshold=threshold, rng_seed=rng_seed)
+    core = set(batch["core_fields"])
+    # restrict to modules whose field (json_path leaf) is in the core
+    core_modules = [m for m in modules if _leaf(m.json_path) in core]
+    golden = load_golden(country)
+    sample_ids = [uuid.UUID(d) for d in batch["doc_ids"]]
+    gts = {d: golden[d]["gt"] for d in batch["doc_ids"]}
+    report = evaluate_prompt(
+        db,
+        modules=core_modules,
+        sample_doc_ids=sample_ids,
+        composed_prompt=composed_prompt,
+        composed_schema=composed_schema,
+        ground_truths=gts,
+        processor_spec=processor_spec,
+        model_name=model_name,
+        strict=True,
+    )
+    return report, collect_deviations(report), batch
 
 
 def reflect_on_golden(
