@@ -26,6 +26,13 @@ from .harness import (
     score_outputs,
 )
 
+from .golden_loop import (  # noqa: E402
+    deviations_to_diffs,
+    golden_strict_check,
+    load_golden,
+    reflect_on_golden,
+)
+
 __all__ = [
     "EvalReport",
     "ModuleScore",
@@ -35,4 +42,9 @@ __all__ = [
     "evaluate_prompt",
     "module_specs_from_orm",
     "score_outputs",
+    # golden loop (req 3)
+    "deviations_to_diffs",
+    "golden_strict_check",
+    "load_golden",
+    "reflect_on_golden",
 ]

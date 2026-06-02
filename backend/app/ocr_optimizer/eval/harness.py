@@ -243,9 +243,11 @@ def evaluate_prompt(
     ground_truths: dict[str, dict],
     processor_spec: str = "mock",
     model_name: str | None = None,
+    strict: bool = False,
 ) -> EvalReport:
     """Run `composed_prompt` over `sample_doc_ids` and score per module.
 
+    `strict=True` uses the golden-gate exact-match scorer (see score_outputs).
     Read-only: uses ocr_runner.run_ocr_on_samples (which does not persist) and
     never writes to the DB. Safe against live ApiDefs.
     """
@@ -259,7 +261,7 @@ def evaluate_prompt(
         processor_spec=processor_spec,
         model_name=model_name,
     )
-    return score_outputs(modules, ocr_outputs, ground_truths)
+    return score_outputs(modules, ocr_outputs, ground_truths, strict=strict)
 
 
 def benchmark_ab(
