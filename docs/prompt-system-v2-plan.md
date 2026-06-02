@@ -175,6 +175,26 @@ LLM 步骤（reconciler）完成，composer 不调 LLM。
 
 ---
 
+## 5b. 核心架构边界：国别层 vs 全球层
+
+> 权威定义见 `CLAUDE.md`「核心架构边界：国别层 vs 全球层」。此处仅摘要，供本计划引用。
+
+产品形态 = **全球机器 + 国别皮肤**：
+
+- **按国家分（知识与基准）**：Part 1 国家事实、Part 2 字段语义、`country_agents/<COUNTRY>`、
+  `eval/golden_set/<COUNTRY>`。因为识别强国别，不存在覆盖全球的识别准则。
+- **全球共享（契约与机器）**：Part 3 输出契约、composer / FieldRule / reconciler /
+  eval harness / 全局 skill。因为它们在 schema/机制层，语言无关。
+
+对本计划的含义：
+
+- **黄金种子按国家隔离**（`golden_set/<COUNTRY>/`），各自的文档 + GT + 参考 prompt。
+- **Phase 4 机器改动是全球的，但逐国验证**：先 MY，其它国家黄金集就绪后再补验。
+- **加国家 = 只写国别增量**（Part1/2 + agent + 黄金集），机器不分叉（呼应 Phase 5 公共基底 + 薄变体）。
+- **黄金种子不在客户运行时回路**：客户在自己样本上迭代；黄金种子仅平台侧偶发护栏。
+
+---
+
 ## 6. 进度跟踪
 
 | Phase | 状态 | 说明 |
