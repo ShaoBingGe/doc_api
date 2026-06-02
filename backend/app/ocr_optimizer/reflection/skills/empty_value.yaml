@@ -1,17 +1,17 @@
 key: empty_value
 display_name: 空值反思
-version: 1
+version: 2
 # Matcher: applies when the original extracted value was empty/null and the
 # customer filled in a real value from the document.
 match:
   diff_kind: edit
   original_value_is_empty: true
   corrected_value_is_empty: false
-# Prompt sent to the LLM with this skill. The composer fills in:
-#   {module_key}, {display_name}, {description}, {original_value},
-#   {corrected_value}, {original_ocr_prompt}, {original_format}, {corrected_format}
+# Placeholders filled by skills_loader.Skill.render:
+#   {module_key} {display_name} {description} {original_value}
+#   {corrected_value} {original_ocr_prompt} {original_format} {corrected_format}
 prompt: |
-  你是 OCR prompt 设计专家，专门反思「字段为何被漏识别」。
+  你是 OCR prompt 设计专家，反思「字段为何被漏识别」，并产出一条能**泛化到所有样本**的取值规则。
 
   ## 字段信息
   - module_key: {module_key}
@@ -26,17 +26,30 @@ prompt: |
   - 原始识别结果: {original_value}（为空）
   - 客户填写的正确值: {corrected_value}
 
-  ## 你的任务
-  原 prompt 没有找到这个字段的值。请从三个维度分析并给出建议：
-  1. **字段语义是否有歧义** — 字段名是否容易与票面其他字段混淆？描述是否模糊？
-  2. **取值位置是否错位** — 票面通常在哪个区域？现 prompt 是否暗示了错误的位置？
-  3. **上下文切割是否有问题** — 该值是否被其他字段「吸走」？是否跨页/换行/有合并？
+  ## 分析要点（先诊断，再泛化）
+  1. 字段语义是否有歧义（字段名/描述是否易与票面其他字段混淆）？
+  2. 取值锚点是否错位（票面通常邻近哪个标签/区块）？
+  3. 上下文切割问题（值被相邻字段「吸走」、跨页/换行/合并）？
+
+  ## 泛化要求（关键）
+  - 若下方提供了「跨样本对照」，**先逐样本写观测**，再归纳出**一条能覆盖全部样本**的定位规则。
+  - 用**相对锚点**（邻近标签/区块）描述位置，**不要依赖绝对坐标或固定行列号**。
+  - 暂时无法覆盖全部样本时，给出当前最佳规则并把 holds_for_all 设为 false。
 
   ## 输出格式（严格 JSON）
   ```json
   {{
-    "rationale": "<3-5 句对失败原因的判断>",
-    "fix_suggestion": "<改进后的 OCR 提示文本片段，可直接拼到原 prompt 后>",
-    "description_patch": "<可选 — 如果字段描述需要补充歧义说明，给出新描述；否则空串>"
+    "rationale": "<3-5 句根因判断>",
+    "fix_suggestion": "<可直接拼到原 prompt 后的改进文本片段>",
+    "description_patch": "<可选；无则空串>",
+    "semantic": "<字段业务语义，一句话>",
+    "anchors": ["<相对锚点 1>", "<相对锚点 2>"],
+    "format_rule": "<取值/格式约束>",
+    "disambiguation": ["<易混字段及区分依据>"],
+    "generalization": {{
+      "rule": "<一条覆盖全部样本的定位规则>",
+      "evidence_per_sample": ["<样本1观测>", "<样本2观测>"],
+      "holds_for_all": true
+    }}
   }}
   ```

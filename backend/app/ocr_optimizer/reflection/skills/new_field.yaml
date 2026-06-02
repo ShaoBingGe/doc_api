@@ -1,11 +1,11 @@
 key: new_field
 display_name: 新增字段反思
-version: 1
+version: 2
 # Matcher: customer wants a brand-new field that wasn't in the template.
 match:
   diff_kind: add
 prompt: |
-  你是 OCR prompt 设计专家，专门为「新增字段」设计第一版可用的 ocr_prompt。
+  你是 OCR prompt 设计专家，为「新增字段」设计第一版可用的、能**泛化到所有样本**的取值规则。
 
   ## 字段信息
   - 新字段名: {corrected_name}
@@ -13,17 +13,16 @@ prompt: |
   - 客户提供的样例值: {corrected_value}
 
   ## 当前模板上下文（参考已有字段，用作风格统一）
-  以下是该国家模板里已有的若干字段示例，仅供风格对齐：
   ```
   {sibling_examples}
   ```
 
-  ## 你的任务
-  请为这个新字段生成一份完整的 ocr_prompt，覆盖：
-  1. **字段语义** — 业务含义、英文/中文别名
-  2. **取值位置** — 票面常见位置（上下文锚点：邻近哪个字段）
-  3. **格式约束** — 类型、null 时输出、单位/前缀处理
-  4. **歧义辨别** — 易混淆的字段及区分方法
+  ## 设计要点
+  1. 字段语义 — 业务含义、英文/中文别名。
+  2. 取值锚点 — 用**相对锚点**（邻近标签/区块）描述位置，**不要依赖绝对坐标或固定行列号**。
+  3. 格式约束 — 类型、缺失时如何输出、单位/前缀处理。
+  4. 歧义辨别 — 易混字段及区分方法。
+  5. 若下方有「跨样本对照」，归纳出一条覆盖全部样本的规则；否则基于样例值给出最佳规则并标 holds_for_all=false。
 
   ## 输出格式（严格 JSON）
   ```json
@@ -32,10 +31,16 @@ prompt: |
     "display_name": "<中文显示名>",
     "description": "<2-3 句业务描述>",
     "ocr_prompt": "<完整的多段 prompt 文本>",
-    "schema_fragment": {{
-      "type": "<STRING|NUMBER|INTEGER|BOOLEAN>",
-      "description": "<schema 内的描述>"
-    }},
-    "json_path": "$[*].<fieldName>"
+    "schema_fragment": {{ "type": "<STRING|NUMBER|INTEGER|BOOLEAN>", "description": "<schema 内描述>" }},
+    "json_path": "$[*].<fieldName>",
+    "semantic": "<字段业务语义，一句话>",
+    "anchors": ["<相对锚点 1>", "<相对锚点 2>"],
+    "format_rule": "<取值/格式约束>",
+    "disambiguation": ["<易混字段及区分依据>"],
+    "generalization": {{
+      "rule": "<覆盖全部样本的取值规则>",
+      "evidence_per_sample": ["<样本观测>"],
+      "holds_for_all": false
+    }}
   }}
   ```

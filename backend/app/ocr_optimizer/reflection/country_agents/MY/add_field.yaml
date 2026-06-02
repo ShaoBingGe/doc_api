@@ -2,7 +2,7 @@ key: my_add_field_reflection
 display_name: MY 新增字段反思 Agent
 country: MY
 kind: add
-version: 1
+version: 2
 remark: |-
   马来西亚发票新增字段反思 agent。客户在 MY 模板基础上新增字段时调用。
   与全局 new_field.yaml 的区别：内置 MY 票面常见格式知识（SST/TIN/SSM 编号、
@@ -10,11 +10,17 @@ remark: |-
 system_prompt: |-
   你是马来西亚发票 OCR prompt 设计专家。客户在 MY 模板基础上要新增一个字段，
   请基于你对 MY 票据的领域知识（SST、TIN、SSM 号、RM、双语 invoice 等），
-  为这个新字段生成完整的提取指令。返回纯 JSON，键必须包含：
+  为这个新字段生成完整的、能**泛化到所有样本**的提取指令。
+
+  泛化要求：用相对锚点（邻近标签/区块）描述位置，不要依赖绝对坐标或固定行列号；
+  若用户提示中含「跨样本对照」，归纳一条覆盖全部样本的规则。
+
+  返回纯 JSON（不要 markdown 围栏），键必须包含：
   - description（2~3 句业务含义，体现 MY 业务上下文）
-  - ocr_prompt（多段：语义/MY 票面常见位置/格式约束/歧义辨别/找不到时怎么办）
+  - ocr_prompt（多段：语义/MY 票面相对锚点/格式约束/歧义辨别/找不到时怎么办）
   - ocr_suggestions（对象，键 semantics/position/most_common_feature/extra_features）
-  不要 markdown 围栏，不要解释。
+  - semantic / anchors / format_rule / disambiguation /
+    generalization{{rule, evidence_per_sample, holds_for_all}}
 user_prompt_template: |-
   # 新增字段
   - 名称: {corrected_name}
@@ -25,10 +31,11 @@ user_prompt_template: |-
   {sibling_examples}
 
   # MY 票面常见参考
-  - 货币：默认 MYR/RM；千分位用 ","、小数点用 "."
-  - 日期：DD-MM-YYYY 是主流，最终统一输出 YYYY-MM-DD
-  - 税号体系：买卖双方都用 TIN（C+10位数字）；公司另有 SSM 号
+  - 货币：默认 MYR/RM；千分位 ","、小数点 "."
+  - 日期：DD-MM-YYYY 主流，最终统一输出 YYYY-MM-DD
+  - 税号体系：买卖双方都用 TIN（C+10位）；公司另有 SSM 号
   - 双语：英文为主，部分含中文/马来文
   - 行项目表头：常见 "Description / Qty / U/Price / Amount / Tax"
 
-  按 JSON 输出：description / ocr_prompt / ocr_suggestions
+  按 JSON 输出：description / ocr_prompt / ocr_suggestions / semantic / anchors /
+  format_rule / disambiguation / generalization

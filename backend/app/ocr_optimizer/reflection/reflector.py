@@ -35,6 +35,12 @@ class ReflectionResult:
     fix_suggestions: list[str] = field(default_factory=list)
     description_patch: str | None = None
     rationale_summary: str = ""
+    # Phase 3 — structured rule built from any skill output that emitted the
+    # FieldRule-aligned fields (anchors/format_rule/disambiguation/
+    # generalization). None when no skill produced structured output (the
+    # free-text fix_suggestions path still works). Consumed by the fork /
+    # composer skeleton render in later phases.
+    field_rule: "Any | None" = None
 
 
 _REFLECTION_SYSTEM = (
@@ -144,9 +150,87 @@ def reflect_on_diffs(
         ]
         result.rationale_summary = " | ".join(rats)
 
+        # Phase 3 — lift a structured FieldRule from any skill output that
+        # emitted the aligned fields. Purely additive: fix_suggestions remain.
+        result.field_rule = _field_rule_from_outputs(result.skill_outputs, diff)
+
         results[key] = result
 
     return results
+
+
+def _field_rule_from_outputs(skill_outputs: list[dict], diff: dict):
+    """Merge FieldRule-aligned fields from one or more skill outputs into a
+    single FieldRule. Returns None if no output carried structured fields.
+
+    Merge policy mirrors §⑤.3 (accumulate, don't overwrite) for list-shaped
+    fields (anchors/disambiguation), takes the first non-empty scalar
+    (semantic/format_rule), and prefers a generalization with holds_for_all=True.
+    """
+    from ..service.field_rule import FieldRule, Generalization
+
+    semantic = ""
+    format_rule = ""
+    anchors: list[str] = []
+    disambiguation: list[str] = []
+    gen: Generalization | None = None
+    found = False
+
+    def _as_list(v) -> list[str]:
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+        if isinstance(v, str) and v.strip():
+            return [v.strip()]
+        return []
+
+    for entry in skill_outputs:
+        out = entry.get("output")
+        if not isinstance(out, dict):
+            continue
+        if any(k in out for k in ("anchors", "format_rule", "disambiguation",
+                                  "generalization", "semantic")):
+            found = True
+        if not semantic and isinstance(out.get("semantic"), str):
+            semantic = out["semantic"].strip()
+        if not format_rule and isinstance(out.get("format_rule"), str):
+            format_rule = out["format_rule"].strip()
+        anchors.extend(_as_list(out.get("anchors")))
+        disambiguation.extend(_as_list(out.get("disambiguation")))
+        g = out.get("generalization")
+        if isinstance(g, dict) and (g.get("rule") or "").strip():
+            cand = Generalization(
+                rule=str(g.get("rule")).strip(),
+                evidence_per_sample=_as_list(g.get("evidence_per_sample")),
+                holds_for_all=bool(g.get("holds_for_all")),
+            )
+            if gen is None or (cand.holds_for_all and not gen.holds_for_all):
+                gen = cand
+
+    if not found:
+        return None
+
+    # de-dup lists preserving order
+    def _dedup(xs: list[str]) -> list[str]:
+        seen, out = set(), []
+        for x in xs:
+            if x not in seen:
+                seen.add(x); out.append(x)
+        return out
+
+    provenance = []
+    if diff.get("kind"):
+        nm = diff.get("corrected_name") or diff.get("original_name") or diff.get("module_key") or ""
+        provenance.append(f"reflection {diff.get('kind')} {nm}".strip())
+
+    fr = FieldRule(
+        semantic=semantic,
+        anchors=_dedup(anchors),
+        format_rule=format_rule,
+        disambiguation=_dedup(disambiguation),
+        generalization=gen,
+        provenance=provenance,
+    )
+    return fr if fr.is_renderable() else None
 
 
 def _build_cross_doc_block(
@@ -236,6 +320,12 @@ def _invoke_skill(
 ) -> dict | None:
     """Render the skill prompt + call LLM. Returns parsed JSON or None on failure."""
     user_prompt = skill.render(diff, ctx)
+    # Phase 3 — global skills now also see the cross-sample block (previously
+    # only country agents did), so every reflection path can infer a rule that
+    # holds across all confirmed samples instead of overfitting to one doc.
+    cross_doc_block = (ctx.get("cross_doc_samples") or "").strip()
+    if cross_doc_block:
+        user_prompt = user_prompt.rstrip() + "\n\n" + cross_doc_block
     try:
         result = llm_text_completion_failover(
             processor_spec=processor_spec,

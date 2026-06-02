@@ -177,12 +177,16 @@ LLM 步骤（reconciler）完成，composer 不调 LLM。
 
 ## 6. 进度跟踪
 
-| Phase | 状态 | commit |
+| Phase | 状态 | 说明 |
 |---|---|---|
-| 0 评测底座 | ✅ 完成（harness + CLI + 4 offline 测试） | 待 commit |
-| 1 层次重构 | 未开始 | — |
-| 2 FieldRule | 未开始 | — |
-| 3 泛化 | 未开始 | — |
-| 4 矛盾消解 | 未开始 | — |
-| 5 skill 库 | 未开始 | — |
-| 6 文档/触发 | 未开始 | — |
+| 0 评测底座 | ✅ 完成 | harness + CLI + 4 offline 测试 |
+| 1 层次重构 | ✅ 完成 | 导航块 + 逐字段 identity line + 模块区 intro（改 live 提示词结构） |
+| 2 FieldRule | ✅ 完成 | FieldRule 模型 + composer 骨架渲染（opt-in，未改 live） |
+| 3 泛化 | ✅ 完成 | 反思 prompt 注入泛化教义/相对锚点/结构化输出；跨样本对照喂全部路径；产出 FieldRule（改 live 反思输出，但 fork 尚未消费 FieldRule） |
+| 4 矛盾消解 | 待开始 | reconciler + fork 消费 FieldRule（**需真实 golden-set A/B 验证**后再切 live） |
+| 5 skill 库 | 待开始 | 公共基底 + 薄变体（渐进披露） |
+| 6 文档/触发 | 待开始 | CLAUDE.md / prompt-system.md 更新 |
+
+> ⚠️ Phase 1、3 已改变 live 行为（composed_prompt 结构 + 反思输出文本），建议在浏览器跑一次
+> customize 验证 OCR 与迭代正常，再推进 Phase 4（Phase 4 会让 composer 用 FieldRule 骨架替换
+> 累积 ocr_prompt，属高影响变更，必须先有真实样本 A/B）。

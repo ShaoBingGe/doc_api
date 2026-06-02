@@ -1,6 +1,6 @@
 key: format_mismatch
 display_name: 格式/类型反思
-version: 1
+version: 2
 # Matcher: applies when the customer changes the field's name or format (type)
 # regardless of value diff.
 match:
@@ -9,7 +9,7 @@ match:
     - name_changed: true
     - format_changed: true
 prompt: |
-  你是 OCR prompt 设计专家，专门反思「字段输出格式不符合预期」的问题。
+  你是 OCR prompt 设计专家，反思「字段命名/输出格式不符合预期」，并产出一条能**泛化到所有样本**的格式规则。
 
   ## 字段信息
   - module_key: {module_key}
@@ -21,28 +21,35 @@ prompt: |
   ```
 
   ## 客户修正
-  - 原始字段名: {original_name}
-  - 修正后字段名: {corrected_name}
-  - 原始格式/类型: {original_format}
-  - 修正后格式/类型: {corrected_format}
-  - 原始值: {original_value}
-  - 修正后值: {corrected_value}
+  - 原始字段名: {original_name} → 修正后: {corrected_name}
+  - 原始格式/类型: {original_format} → 修正后: {corrected_format}
+  - 原始值: {original_value} → 修正后值: {corrected_value}
 
-  ## 你的任务
-  客户要求修改字段的命名或输出格式。请分析：
-  1. **命名是否需要更精确** — 客户为何重命名？原名是否模糊或与行业惯例不符？
-  2. **数据类型是否需要严格** — 是否需要强制 number / date / boolean？
-  3. **输出形式是否需要规范化** — 比如日期 ISO 格式、金额纯数字、电话去横线？
+  ## 分析要点
+  1. 命名是否需更精确（原名是否模糊/不符行业惯例）？
+  2. 数据类型是否需严格（number / date / boolean）？
+  3. 输出形式是否需规范化（日期 ISO、金额纯数字、电话去横线）？
+
+  ## 泛化要求（关键）
+  - 格式规则必须对**所有样本**一致生效；若下方有「跨样本对照」，用各样本的值验证规则。
+  - 描述「怎么规范化」时用值的形态/模式（如「YYYY-MM-DD」「纯数字无千分位」），
+    不要依赖某一张票面的具体写法。
 
   ## 输出格式（严格 JSON）
   ```json
   {{
     "rationale": "<3-5 句对修改意图的理解>",
-    "fix_suggestion": "<新 OCR 提示文本片段，需明确写出输出格式约定>",
-    "schema_patch": {{
-      "type": "<新 schema type 如 STRING/NUMBER/INTEGER 等>",
-      "format": "<可选 ISO 8601 等>"
-    }},
-    "description_patch": "<更新后的字段描述，无则空串>"
+    "fix_suggestion": "<新 OCR 提示文本片段，明确写出输出格式约定>",
+    "schema_patch": {{ "type": "<STRING/NUMBER/INTEGER/...>", "format": "<可选 ISO 8601 等>" }},
+    "description_patch": "<更新后的字段描述，无则空串>",
+    "semantic": "<字段业务语义，一句话>",
+    "anchors": ["<相对锚点>"],
+    "format_rule": "<规范化规则，如 日期统一 YYYY-MM-DD / 金额纯数字去千分位>",
+    "disambiguation": ["<易混字段及区分依据>"],
+    "generalization": {{
+      "rule": "<覆盖全部样本的格式规则>",
+      "evidence_per_sample": ["<样本1值→规范化后>", "<样本2值→规范化后>"],
+      "holds_for_all": true
+    }}
   }}
   ```
