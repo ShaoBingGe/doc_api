@@ -119,7 +119,7 @@ def assemble_prompt(modules: Iterable, *, country_global: str | None) -> str:
         if ftype:
             ident_bits.append(f"类型 {ftype}")
         ident_line = ("- " + " · ".join(ident_bits) + "\n") if ident_bits else ""
-        body = (getattr(m, "ocr_prompt", "") or "").strip()
+        body = _render_module_body(m)
         body_parts.append(f"## {i}. {name}\n{ident_line}{body}\n")
 
     schema = assemble_schema(mod_list)
@@ -204,6 +204,26 @@ def assemble_schema(modules: Iterable) -> dict:
 # ── Internals ─────────────────────────────────────────────────────────────────
 
 _BRACKETS_RE = re.compile(r"\[(\*|\d+)\]")
+
+
+def _render_module_body(m) -> str:
+    """Phase 2 — render a module's body.
+
+    Opt-in structured path: if the module carries a renderable FieldRule
+    (in-memory `field_rule` attr or persisted under ocr_suggestions), render
+    its uniform skeleton (语义/取值锚点/格式/排歧/跨样本规则). Otherwise fall
+    back to the raw ocr_prompt — so production modules authored before Phase 2
+    render EXACTLY as in Phase 1 (no accuracy risk; the structured path is only
+    taken once upstream producers populate a FieldRule in Phase 3+).
+
+    Still pure string work — composer never calls an LLM (CLAUDE.md §③.4).
+    """
+    from .field_rule import field_rule_of
+
+    fr = field_rule_of(m)
+    if fr is not None and fr.is_renderable():
+        return fr.render_skeleton()
+    return (getattr(m, "ocr_prompt", "") or "").strip()
 
 
 def _normalize_path(path: str) -> str:
