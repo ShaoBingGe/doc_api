@@ -2,14 +2,20 @@
 Composer — assembles the final `composed_prompt` string and
 `composed_schema` dict from a list of OcrModule snapshots.
 
-Layout (design v7 — see CLAUDE.md §① and docs/prompt-system.md §6):
+Layout (design v7 + prompt-v2 Phase 1 — see CLAUDE.md §① and
+docs/prompt-system-v2-plan.md):
   - GLOBAL_PREAMBLE
+  - GLOBAL_NAVIGATION (Phase 1 — reading map / progressive disclosure)
   - country_global_text (Part 1 + slim Part 2 from country yaml)
   - GLOBAL_SCHEMA_REFERENCE (composed schema block)
   - GLOBAL_OUTPUT_CONTRACT_DETAILS (Part 3, platform-wide, loaded from
     backend/app/ocr_optimizer/assets/global_output_contract.yaml)
-  - "# 模块识别指令" + per-module bodies
+  - "# 模块识别指令" + module-section intro + per-module bodies
+    (each module prefixed with a consistent identity line: key / path / type)
   - GLOBAL_SELF_CHECK
+
+Phase 1 adds navigation + per-module framing WITHOUT changing the render
+order or the Part 3 content — §① stays intact.
 
 The three GLOBAL_* constants + GLOBAL_OUTPUT_CONTRACT_DETAILS form the
 **platform contract** — any path (client / optimizer / reflection) that tries
@@ -35,6 +41,23 @@ GLOBAL_PREAMBLE = """你是一名严谨的文档信息抽取专家。请阅读�
 1. 仅输出 JSON，不要任何 markdown、解释或多余文字。
 2. 字段缺失时输出 null，不要捏造。
 3. 日期统一格式为 YYYY-MM-DD；数字去掉千分位与货币符号。
+"""
+
+# Prompt System v2 / Phase 1 — reading map (progressive disclosure).
+# Gives the model the layout up front so it knows how the parts relate and in
+# what order to use them: facts first, then per-field extraction, then assembly.
+# IMPORTANT: this block must NOT contain the exact section-header strings the
+# composer emits later (e.g. "# 整体输出 Schema", "# Part 3 · 输出契约与装配规则",
+# "# 模块识别指令", "# 输出前自检") — downstream code/tests locate those headers
+# by first occurrence, so the map refers to the parts by plain name only.
+GLOBAL_NAVIGATION = """# 阅读导航
+本提示词由三部分加逐字段指令组成，请按顺序理解：
+1. Part 1（国家事实）：票据分类、语言/货币/日期格式、税号规则等「输入侧事实」与默认值。
+2. Part 2（字段语义）：每个字段「在哪里找、找什么」——见下方整体 Schema 与各字段描述。
+3. Part 3（输出契约）：找到值之后「如何组装成合法 JSON」的平台统一规则（数值规范、税额/行项目装配、缺失字段处理等）。
+4. 逐字段取值指令：每个字段的业务语义、取值锚点、格式与排歧要点。
+
+工作顺序：先用 Part 1 建立事实 → 按逐字段指令取值 → 用 Part 3 规则组装 → 按结尾自检校验后再输出。
 """
 
 # Platform-wide output contract (Part 3). Loaded once at import time from
@@ -65,20 +88,39 @@ def assemble_prompt(modules: Iterable, *, country_global: str | None) -> str:
       - the version's `country_global_text` for country-templated ApiDefs
       - `None` or "" for non-templated ApiDefs (no country section rendered)
 
-    Render order (design v7):
+    Render order (design v7 + Phase 1):
         GLOBAL_PREAMBLE
+        GLOBAL_NAVIGATION                 ← reading map (Phase 1)
         country_global                    ← Part 1 + slim Part 2 (skipped when empty)
         GLOBAL_SCHEMA_REFERENCE           ← composed schema JSON block
         GLOBAL_OUTPUT_CONTRACT_DETAILS    ← Part 3 platform contract
-        # 模块识别指令
-        ## 1..N field modules
+        # 模块识别指令 + intro
+        ## 1..N field modules (each with an identity line)
         GLOBAL_SELF_CHECK
     """
     mod_list = list(modules)
     body_parts: list[str] = []
     for i, m in enumerate(mod_list, start=1):
         name = getattr(m, "display_name", None) or getattr(m, "module_key", f"module_{i}")
-        body_parts.append(f"## {i}. {name}\n{m.ocr_prompt.strip()}\n")
+        # Phase 1 — consistent per-field identity line so the model parses every
+        # module uniformly: which field, where its value lands, what type. The
+        # ocr_prompt body (free text today; structured in Phase 2) follows.
+        key = getattr(m, "module_key", "") or ""
+        jp = getattr(m, "json_path", "") or ""
+        frag = getattr(m, "schema_fragment", None)
+        ftype = ""
+        if isinstance(frag, dict):
+            ftype = str(frag.get("type") or "").strip()
+        ident_bits: list[str] = []
+        if key:
+            ident_bits.append(f"字段键 `{key}`")
+        if jp:
+            ident_bits.append(f"输出路径 `{jp}`")
+        if ftype:
+            ident_bits.append(f"类型 {ftype}")
+        ident_line = ("- " + " · ".join(ident_bits) + "\n") if ident_bits else ""
+        body = (getattr(m, "ocr_prompt", "") or "").strip()
+        body_parts.append(f"## {i}. {name}\n{ident_line}{body}\n")
 
     schema = assemble_schema(mod_list)
     schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
@@ -91,15 +133,23 @@ def assemble_prompt(modules: Iterable, *, country_global: str | None) -> str:
     if country_global and country_global.strip():
         country_section = f"\n{country_global.strip()}\n"
 
+    modules_header = (
+        "\n# 模块识别指令\n"
+        "下列每个字段给出其业务语义与取值要点。请按字段逐一取值；"
+        "字段值「找到后如何组装/格式化」的规则统一见上方 Part 3。"
+        "最终 JSON 的 key 以每个字段标注的「字段键」为准。\n\n"
+    )
     return (
         GLOBAL_PREAMBLE
+        + "\n"
+        + GLOBAL_NAVIGATION
         + "\n"
         + country_section
         + schema_reference
         + "\n"
         + GLOBAL_OUTPUT_CONTRACT_DETAILS
         + "\n"
-        + "\n# 模块识别指令\n"
+        + modules_header
         + "\n".join(body_parts)
         + GLOBAL_SELF_CHECK
     )
