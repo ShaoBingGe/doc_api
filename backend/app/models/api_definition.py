@@ -18,9 +18,10 @@ from .base import Base, TimestampMixin, UUIDMixin
 
 class ApiDefinitionStatus(str, Enum):
     draft = "draft"
-    active = "active"
-    deprecated = "deprecated"
-    pending_first_doc = "pending_first_doc"  # §6.4 placeholder API awaiting first doc / save
+    active = "active"            # 已发布 — serving traffic
+    deprecated = "deprecated"   # 已停用 — not serving (re-activatable)
+    pending_first_doc = "pending_first_doc"  # §6.4 placeholder API awaiting first doc / save (hidden from list)
+    pending_review = "pending_review"        # 待验证 — saved/generated, visible in list, awaiting 激活发布
 
 
 class ApiDefinition(UUIDMixin, TimestampMixin, Base):

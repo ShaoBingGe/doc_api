@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { X, Loader2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useWorkspaceStore } from '../../stores/workspace-store'
-import { createApiDefinition, updateApiDefinition } from '../../lib/api-client'
+import { createApiDefinition, updateApiDefinition, updateApiStatus } from '../../lib/api-client'
 import { toast } from '../../lib/toast'
 
 interface ModalsProps {
@@ -73,7 +73,10 @@ function SaveModal({ onClose }: { onClose: () => void }) {
         const code: string = data.api_code ?? apiCode
         const endpoint = data.endpoint_url || apiDefinition.endpoint
         setApiDefinition({ ...apiDefinition, name: apiName, description, apiCode: code, endpoint })
-        toast.success(`API "${apiName}" 已更新`)
+        // 保存并生成 → 待验证（脱离 pending_first_doc 占位态，进入主列表）
+        await updateApiStatus(apiDefinition.id, 'submit_review').catch((e) =>
+          console.warn('submit_review failed', e))
+        toast.success(`API "${apiName}" 已保存，状态：待验证`)
       } else {
         // Create new API definition
         const res = await createApiDefinition({
@@ -88,7 +91,9 @@ function SaveModal({ onClose }: { onClose: () => void }) {
         const code: string = data.api_code ?? apiCode
         const endpoint = data.endpoint_url || `https://api.apianything.io/v1/extract/${code}`
         setApiDefinition({ apiCode: code, endpoint, id: data.id, name: apiName, description, isExisting: true })
-        toast.success(`API "${apiName}" 已生成，Code: ${code}`)
+        await updateApiStatus(data.id, 'submit_review').catch((e) =>
+          console.warn('submit_review failed', e))
+        toast.success(`API "${apiName}" 已生成（Code: ${code}），状态：待验证`)
       }
 
       onClose()

@@ -1,13 +1,25 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, Trash2, Code2, Plus, BookTemplate } from 'lucide-react'
+import { Loader2, Trash2, Code2, Plus, BookTemplate, Rocket, PauseCircle } from 'lucide-react'
 import { useApiStore } from '../stores/api-store'
+import { updateApiStatus } from '../lib/api-client'
 import { toast } from '../lib/toast'
 
 const statusStyles: Record<string, string> = {
   active: 'bg-green-50 text-green-700',
+  pending_review: 'bg-amber-50 text-amber-700',
   draft: 'bg-gray-100 text-gray-500',
+  pending_first_doc: 'bg-gray-100 text-gray-400',
   deprecated: 'bg-red-50 text-red-600',
+}
+
+// Chinese display labels for the lifecycle states.
+const statusLabels: Record<string, string> = {
+  active: '已发布',
+  pending_review: '待验证',
+  draft: '草稿',
+  pending_first_doc: '未发布',
+  deprecated: '已停用',
 }
 
 const sourceStyles: Record<string, string> = {
@@ -35,6 +47,28 @@ export default function ApiList() {
       toast.success('已删除')
     } catch {
       toast.error('删除失败')
+    }
+  }
+
+  async function handleActivate(e: React.MouseEvent, id: string) {
+    e.stopPropagation()
+    try {
+      await updateApiStatus(id, 'activate')
+      toast.success('已激活发布')
+      await fetchApiDefinitions()
+    } catch {
+      toast.error('激活失败')
+    }
+  }
+
+  async function handleDeactivate(e: React.MouseEvent, id: string) {
+    e.stopPropagation()
+    try {
+      await updateApiStatus(id, 'deactivate')
+      toast.success('已停用')
+      await fetchApiDefinitions()
+    } catch {
+      toast.error('停用失败')
     }
   }
 
@@ -121,20 +155,41 @@ export default function ApiList() {
                       statusStyles[api.status] ?? 'bg-gray-100 text-gray-500',
                     ].join(' ')}
                   >
-                    {api.status}
+                    {statusLabels[api.status] ?? api.status}
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   {new Date(api.created_at).toLocaleDateString()}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right">
-                  <button
-                    onClick={(e) => handleDelete(e, api.id)}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                    title="删除"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center justify-end gap-1.5">
+                    {api.status === 'active' ? (
+                      <button
+                        onClick={(e) => handleDeactivate(e, api.id)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors"
+                        title="停用：停止对外提供服务（可再次激活）"
+                      >
+                        <PauseCircle className="w-3.5 h-3.5" />
+                        停用
+                      </button>
+                    ) : (
+                      <button
+                        onClick={(e) => handleActivate(e, api.id)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 transition-colors"
+                        title="激活发布：对外提供 API 服务"
+                      >
+                        <Rocket className="w-3.5 h-3.5" />
+                        激活发布
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => handleDelete(e, api.id)}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                      title="删除"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

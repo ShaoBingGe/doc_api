@@ -147,6 +147,12 @@ export function deleteApiDefinition(id: string) {
   return apiClient.delete(`/api/v1/api-definitions/${id}`)
 }
 
+// Status lifecycle: submit_review (→待验证) / activate (→已发布) / deactivate (→已停用)
+export type ApiStatusAction = 'submit_review' | 'activate' | 'deactivate'
+export function updateApiStatus(id: string, action: ApiStatusAction) {
+  return apiClient.patch(`/api/v1/api-definitions/${id}/status`, { action })
+}
+
 export function fetchUsageStats(range?: string) {
   return apiClient.get('/api/v1/usage/stats', { params: { range: range ?? '7d' } })
 }

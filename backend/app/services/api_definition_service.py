@@ -28,10 +28,12 @@ from app.schemas.common import PaginatedResponse
 
 settings = get_settings()
 
-_VALID_ACTIONS = {"activate", "deprecate"}
+_VALID_ACTIONS = {"submit_review", "activate", "deprecate", "deactivate"}
 _STATUS_MAP = {
-    "activate": ApiDefinitionStatus.active,
-    "deprecate": ApiDefinitionStatus.deprecated,
+    "submit_review": ApiDefinitionStatus.pending_review,  # 保存并生成 → 待验证
+    "activate": ApiDefinitionStatus.active,               # 激活发布 → 已发布
+    "deprecate": ApiDefinitionStatus.deprecated,          # 停用 → 已停用（保留旧动作名）
+    "deactivate": ApiDefinitionStatus.deprecated,         # 停用 → 已停用
 }
 
 

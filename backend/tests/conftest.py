@@ -1,14 +1,42 @@
-"""Test bootstrap — warm up SQLAlchemy mapper resolution before any test
-imports run, to dodge the known circular-import edge case between
-app.models.__init__ and app.ocr_optimizer.models on cold start.
+"""Test bootstrap.
 
-This mirrors how the FastAPI app boot path resolves the chain.
+Two jobs, both before any app import binds the engine or resolves mappers:
+
+  1. ISOLATE THE TEST DATABASE. Several tests' `_setup_*` helpers call
+     db.commit(), which previously persisted fixture rows into the DEV database
+     (data/apianything.db) — flooding the real API list with `overlay_test` /
+     `phase23_my_test` junk. We point tests at a dedicated, throwaway DB file
+     and rebuild it fresh each run, so tests can never touch dev data again.
+
+  2. Warm up SQLAlchemy mapper resolution to dodge the known cold-start
+     circular import between app.models and app.ocr_optimizer.models.
 """
 
-import pytest
+import os
 
-import app.models  # noqa: F401  — registers all mappers
-import app.ocr_optimizer  # noqa: F401  — registers OCR mappers
+# (1) Force a dedicated test DB BEFORE importing anything that reads settings /
+# builds the engine. os.environ wins over .env in pydantic-settings, and
+# get_settings() is first called when app.core.database is imported below.
+_TEST_DB = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "data", "test_apianything.db")
+)
+os.environ["DATABASE_URL"] = "sqlite:///" + _TEST_DB
+# Start each run from a clean schema (also remove WAL/SHM sidecars).
+for _suffix in ("", "-wal", "-shm"):
+    try:
+        os.remove(_TEST_DB + _suffix)
+    except FileNotFoundError:
+        pass
+
+import pytest  # noqa: E402
+
+import app.models  # noqa: F401,E402  — registers all mappers
+import app.ocr_optimizer  # noqa: F401,E402  — registers OCR mappers
+
+from app.core.database import create_tables  # noqa: E402
+
+# Build the schema in the fresh test DB.
+create_tables()
 
 
 @pytest.fixture
