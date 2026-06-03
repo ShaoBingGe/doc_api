@@ -10,7 +10,7 @@
  * User picks: advance next round (with optional manual_edit version),
  * or finalize (activate a chosen version).
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Sparkles,
   Loader2,
@@ -143,6 +143,190 @@ function originLabel(origin: string): { label: string; color: string } {
   return { label: 'init', color: 'bg-gray-500/20 text-gray-400 border-gray-500/40' }
 }
 
+// ── Field optimization diff (优化前 → 优化后) ─────────────────────────────────
+//
+// One row per field: accuracy 优化前→优化后 + Δ + status. Click to expand the
+// per-sample recognition results (正确值 / 优化前 / 优化后). "优化前" = the
+// producing round's per-sample (prior version's OCR); "优化后" = the next round's
+// per-sample (this version's OCR). When there's no next round (last version),
+// the after column shows "—（待激活后体现）" and we still show the new prompt.
+
+function _val(v: unknown): string {
+  if (v === null || v === undefined) return '∅'
+  if (Array.isArray(v)) {
+    if (v.length === 1) return _val(v[0])
+    return JSON.stringify(v)
+  }
+  if (typeof v === 'object') return JSON.stringify(v)
+  return String(v)
+}
+
+function FieldDiffComparison({
+  round,
+  nextRound,
+}: {
+  round: RoundDetail | null
+  nextRound: RoundDetail | null
+}) {
+  const [open, setOpen] = useState(false)
+  const [expandedKey, setExpandedKey] = useState<string | null>(null)
+
+  const rows = useMemo(() => {
+    if (!round) return []
+    const afterByKey = new Map(
+      (nextRound?.iterations ?? []).map((it) => [it.module_key, it]),
+    )
+    return round.iterations.map((before) => {
+      const after = afterByKey.get(before.module_key) ?? null
+      const beforeAcc = before.aggregate_accuracy
+      const afterAcc = after?.aggregate_accuracy ?? null
+      const delta = afterAcc != null ? afterAcc - beforeAcc : null
+      const regressed = (before.optimization_suggestion ?? '').includes('[REGRESSION]')
+      const changed = !!before.new_ocr_prompt || !!before.new_description
+      let status: { label: string; cls: string }
+      if (regressed) status = { label: '回退/下降', cls: 'bg-amber-500/20 text-amber-300' }
+      else if (delta != null && delta > 1e-4) status = { label: '改进', cls: 'bg-emerald-500/20 text-emerald-300' }
+      else if (delta != null && delta < -1e-4) status = { label: '下降', cls: 'bg-red-500/20 text-red-300' }
+      else if (changed && afterAcc == null) status = { label: '已优化·待确认', cls: 'bg-blue-500/20 text-blue-300' }
+      else if (beforeAcc >= 0.999) status = { label: '通过', cls: 'bg-emerald-500/15 text-emerald-300' }
+      else status = { label: '无变化', cls: 'bg-white/10 text-gray-400' }
+      return { before, after, beforeAcc, afterAcc, delta, status, regressed, changed }
+    }).sort((a, b) => {
+      // regressed first, then lowest accuracy first
+      if (a.regressed !== b.regressed) return a.regressed ? -1 : 1
+      return a.beforeAcc - b.beforeAcc
+    })
+  }, [round, nextRound])
+
+  if (!round || rows.length === 0) return null
+  const changedCount = rows.filter((r) => r.changed || r.regressed).length
+
+  return (
+    <div className="border-b border-white/5 bg-[#1b1b20]">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-2 hover:bg-white/5 transition-colors"
+      >
+        <div className="flex items-center gap-2 text-sm text-gray-200">
+          {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          <span className="font-medium">字段优化对比</span>
+          <span className="text-xs text-gray-500">
+            第 {round.round_num} 轮 · {rows.length} 字段，{changedCount} 个有改动
+          </span>
+        </div>
+        {!nextRound && (
+          <span className="text-[10px] text-gray-500">优化后结果待下一轮/激活确认</span>
+        )}
+      </button>
+
+      {open && (
+        <div className="max-h-[42vh] overflow-y-auto px-2 pb-2">
+          <table className="w-full text-xs border-collapse">
+            <thead className="sticky top-0 bg-[#1b1b20]">
+              <tr className="text-gray-500 text-left">
+                <th className="py-1.5 px-2 font-medium">字段</th>
+                <th className="py-1.5 px-2 font-medium">准确率（前 → 后）</th>
+                <th className="py-1.5 px-2 font-medium">Δ</th>
+                <th className="py-1.5 px-2 font-medium">状态</th>
+                <th className="py-1.5 px-2 w-6"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const key = r.before.module_key
+                const isOpen = expandedKey === key
+                // pair per-sample before/after by sample_doc_id
+                const afterBySid = new Map(
+                  (r.after?.per_sample_results ?? []).map((p) => [p.sample_doc_id, p]),
+                )
+                return (
+                  <Fragment key={key}>
+                    <tr
+                      onClick={() => setExpandedKey(isOpen ? null : key)}
+                      className={cn(
+                        'cursor-pointer border-t border-white/5 hover:bg-white/5',
+                        r.regressed && 'bg-amber-500/5',
+                      )}
+                    >
+                      <td className="py-1.5 px-2 font-mono text-gray-300">{key}</td>
+                      <td className="py-1.5 px-2 text-gray-300">
+                        {accPct(r.beforeAcc)} <span className="text-gray-600">→</span>{' '}
+                        {r.afterAcc != null ? accPct(r.afterAcc) : <span className="text-gray-600">—</span>}
+                      </td>
+                      <td className={cn(
+                        'py-1.5 px-2 font-medium',
+                        r.delta == null ? 'text-gray-600'
+                          : r.delta > 1e-4 ? 'text-emerald-400'
+                          : r.delta < -1e-4 ? 'text-red-400' : 'text-gray-500',
+                      )}>
+                        {r.delta == null ? '—'
+                          : `${r.delta > 0 ? '+' : ''}${Math.round(r.delta * 100)}%`}
+                      </td>
+                      <td className="py-1.5 px-2">
+                        <span className={cn('px-1.5 py-0.5 rounded-full text-[10px] font-medium', r.status.cls)}>
+                          {r.status.label}
+                        </span>
+                      </td>
+                      <td className="py-1.5 px-2 text-gray-500">
+                        {isOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                      </td>
+                    </tr>
+                    {isOpen && (
+                      <tr className="bg-[#141418]">
+                        <td colSpan={5} className="px-3 py-2">
+                          {r.regressed && (
+                            <div className="mb-2 text-[11px] text-amber-300/90">
+                              ⚠ {r.before.optimization_suggestion}
+                            </div>
+                          )}
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-[11px] border-collapse">
+                              <thead>
+                                <tr className="text-gray-500 text-left">
+                                  <th className="py-1 px-2 font-medium">样本</th>
+                                  <th className="py-1 px-2 font-medium">正确值 (GT)</th>
+                                  <th className="py-1 px-2 font-medium">优化前</th>
+                                  <th className="py-1 px-2 font-medium">优化后</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {r.before.per_sample_results.map((bp, i) => {
+                                  const ap = afterBySid.get(bp.sample_doc_id)
+                                  return (
+                                    <tr key={i} className="border-t border-white/5 align-top">
+                                      <td className="py-1 px-2 text-gray-500 font-mono">{bp.sample_doc_id.slice(0, 6)}</td>
+                                      <td className="py-1 px-2 text-emerald-300 font-mono break-all max-w-[200px]">{_val(bp.ground_truth)}</td>
+                                      <td className={cn('py-1 px-2 font-mono break-all max-w-[200px]', bp.matched ? 'text-gray-400' : 'text-red-300')}>{_val(bp.ocr_sliced)}</td>
+                                      <td className={cn('py-1 px-2 font-mono break-all max-w-[200px]',
+                                        !ap ? 'text-gray-600' : ap.matched ? 'text-emerald-300' : 'text-red-300')}>
+                                        {ap ? _val(ap.ocr_sliced) : '—（待确认）'}
+                                      </td>
+                                    </tr>
+                                  )
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                          {r.before.new_ocr_prompt && (
+                            <details className="mt-2">
+                              <summary className="text-[11px] text-purple-300 cursor-pointer">查看本轮生成的新 prompt</summary>
+                              <pre className="mt-1 text-[10px] text-gray-400 whitespace-pre-wrap bg-black/30 rounded p-2 max-h-40 overflow-y-auto">{r.before.new_ocr_prompt}</pre>
+                            </details>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 
 export default function OptimizationProcessPanel({
@@ -154,6 +338,9 @@ export default function OptimizationProcessPanel({
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null)
   const [versionDetail, setVersionDetail] = useState<VersionDetail | null>(null)
   const [round, setRound] = useState<RoundDetail | null>(null)
+  // The round AFTER the producing round — its per-sample results are the
+  // "优化后" (this version's) recognition, vs `round`'s "优化前" (prior version's).
+  const [nextRound, setNextRound] = useState<RoundDetail | null>(null)
   const [activeRun, setActiveRun] = useState<RunSummary | null>(null)
   const [selectedModuleKey, setSelectedModuleKey] = useState<string | null>(null)
   const [loadingList, setLoadingList] = useState(false)
@@ -238,8 +425,21 @@ export default function OptimizationProcessPanel({
             console.warn('round detail failed', e)
             if (alive) setRound(null)
           }
+          // "优化后" = the next round's eval of THIS version (may not exist for
+          // the last round). Best-effort; absence just hides the after column.
+          try {
+            const nrd = await fetchOcrRound(
+              apiDefinitionId,
+              detail.produced_by_run_id,
+              detail.produced_in_round + 1,
+            )
+            if (alive) setNextRound(nrd.data as RoundDetail)
+          } catch {
+            if (alive) setNextRound(null)
+          }
         } else {
           setRound(null)
+          setNextRound(null)
         }
       } catch (e) {
         console.error('version detail failed', e)
@@ -404,6 +604,9 @@ export default function OptimizationProcessPanel({
           />
         )}
       </div>
+
+      {/* 字段优化对比：每个字段 优化前→优化后 + Δ + 状态，可展开看逐样本识别结果 */}
+      <FieldDiffComparison round={round} nextRound={nextRound} />
 
       <div className="flex-1 flex overflow-hidden">
         <ModuleList
