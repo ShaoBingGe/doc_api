@@ -448,9 +448,22 @@ def _normalize_bbox(bbox: dict | None) -> dict | None:
     }
 
 
+_LEAF_SHAPE_KEYS = {"value", "confidence", "bbox", "bounding_box"}
+
+
 def _is_leaf_field(v) -> bool:
-    """Hierarchical leaf shape: {value, confidence, bbox}."""
-    return isinstance(v, dict) and "value" in v and not isinstance(v.get("value"), dict)
+    """Hierarchical leaf shape: {value, confidence?, bbox?}.
+
+    Must contain `value` AND have ONLY leaf-shape keys. The extra-key check is a
+    hard guard: without it, a real extraction RECORD that merely contains a
+    field literally named `value` (e.g. a customer-added field) was misread as a
+    single leaf, collapsing the ENTIRE record to one null entry and wiping the
+    whole field set. A genuine record carries other keys (invoiceNumber, …), so
+    it now correctly recurses instead of collapsing.
+    """
+    if not (isinstance(v, dict) and "value" in v and not isinstance(v.get("value"), dict)):
+        return False
+    return set(v.keys()) <= _LEAF_SHAPE_KEYS
 
 
 def _flatten_hierarchical(node, path: str, out: list[dict]) -> None:

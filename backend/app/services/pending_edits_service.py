@@ -334,21 +334,34 @@ def compute_required_field_set(db: Session, api_def_id: uuid.UUID) -> list[str]:
     return [f for f in renamed if f not in deleted]
 
 
+# Reserved keys of the annotation/normalized format ([{id,keyName,value,…}]).
+# They are NOT extraction fields and must never enter the required-field set —
+# a leaked "value" key in particular collapses the whole OCR record in
+# document_service._is_leaf_field. (Regression guard for the Phase-26 bug.)
+_ANNOTATION_WRAPPER_KEYS = {"id", "keyName", "value", "confidence", "bbox", "bounding_box"}
+
+
 def _observed_top_level_keys_from_confirmed(
     db: Session,
     api_def_id: uuid.UUID,
     renames: dict[str, str],
 ) -> list[str]:
-    """Top-level keys observed in the latest structured_data of every
-    CONFIRMED sample (one that has at least one GT annotation) bound to this
-    ApiDef, with renames applied. Confirmed-only bounds pollution: an
-    un-reviewed sample's hallucinated key can't enter the parity set.
+    """Top-level FIELD names observed in every CONFIRMED sample's ground truth
+    (with renames applied). Confirmed-field parity: a field the customer
+    confirmed must never vanish from the required set.
 
-    Array/flattened keys ("foo[0]", "a.b") are skipped — the parity set is
-    top-level only, matching the module-derived leaf names.
+    Source = ground_truth.build() (a nested record `{invoiceNumber: …, …}` whose
+    top-level keys ARE the real field names) — NOT ProcessingResult.
+    structured_data, which is stored in annotation/normalized format
+    `[{id,keyName,value,confidence,bbox}, …]`. Reading structured_data harvested
+    those WRAPPER keys (id/keyName/value/…) as if they were fields, polluting the
+    required set; the injected `value` field then collapsed new docs' OCR. We
+    read GT instead, and also filter the wrapper keys defensively.
+
+    Array/flattened keys ("foo[0]", "a.b") are skipped — top-level only.
     """
-    from app.models.document import Document, ProcessingResult
-    from app.ocr_optimizer.service.ground_truth import has_ground_truth
+    from app.models.document import Document
+    from app.ocr_optimizer.service import ground_truth as _gt
 
     out: list[str] = []
     seen: set[str] = set()
@@ -358,28 +371,18 @@ def _observed_top_level_keys_from_confirmed(
         .all()
     )
     for d in docs:
-        if not has_ground_truth(db, d.id):
+        gt = _gt.build(db, d.id)   # {} when the sample has no GT
+        if not isinstance(gt, dict) or not gt:
             continue
-        pr = (
-            db.query(ProcessingResult)
-            .filter(ProcessingResult.document_id == d.id)
-            .order_by(ProcessingResult.version.desc())
-            .first()
-        )
-        if not pr or not pr.structured_data:
-            continue
-        sd = pr.structured_data
-        records = sd if isinstance(sd, list) else [sd]
-        for rec in records:
-            if not isinstance(rec, dict):
+        for k in gt.keys():
+            if not k or "[" in k or "." in k:
                 continue
-            for k in rec.keys():
-                if not k or "[" in k or "." in k:
-                    continue
-                nk = renames.get(k, k)
-                if nk not in seen:
-                    seen.add(nk)
-                    out.append(nk)
+            if k in _ANNOTATION_WRAPPER_KEYS:
+                continue
+            nk = renames.get(k, k)
+            if nk and nk not in seen:
+                seen.add(nk)
+                out.append(nk)
     return out
 
 

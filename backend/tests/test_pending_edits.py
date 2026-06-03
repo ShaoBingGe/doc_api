@@ -344,24 +344,19 @@ def test_required_set_unions_confirmed_observed_fields(db_session):
     from app.services import pending_edits_service
 
     api_def, d1, _d2 = _setup_api_def(db_session)
-    _confirm(db_session, d1.id)
-    _add_pr(db_session, d1.id, [{
-        "invoiceNumber": "X",
-        "nameOfInvoice": "INVOICE",                 # extra, non-module
-        "detailOfGoodsOrServices[0].desc": "skip",  # flattened → ignored
-        "a.b": "skip",                              # dotted → ignored
-    }])
+    # Observed fields come from GROUND TRUTH (confirmed annotations), not from
+    # the annotation-format structured_data. Add two GT fields.
+    _confirm(db_session, d1.id, field_name="invoiceNumber", value="X")
+    _confirm(db_session, d1.id, field_name="nameOfInvoice", value="INVOICE")
 
     fields = pending_edits_service.compute_required_field_set(db_session, api_def.id)
     assert "nameOfInvoice" in fields
     assert "invoiceNumber" in fields
-    assert "detailOfGoodsOrServices[0].desc" not in fields
-    assert "a.b" not in fields
 
 
 def test_required_set_ignores_unconfirmed_observed_fields(db_session):
-    """An UN-confirmed sample's observed keys must NOT pollute the parity
-    set (only GT-reviewed samples contribute)."""
+    """A sample with a ProcessingResult but NO GT annotation must NOT
+    contribute (only GT-confirmed fields enter the parity set)."""
     from app.services import pending_edits_service
 
     api_def, _d1, d2 = _setup_api_def(db_session)
@@ -370,6 +365,24 @@ def test_required_set_ignores_unconfirmed_observed_fields(db_session):
 
     fields = pending_edits_service.compute_required_field_set(db_session, api_def.id)
     assert "junkField" not in fields
+
+
+def test_required_set_excludes_annotation_wrapper_keys(db_session):
+    """REGRESSION (Phase-26 bug): the observed source must be GT field names,
+    never the annotation/normalized wrapper keys (id/keyName/value/confidence/
+    bbox). A leaked `value` field corrupted downstream OCR
+    (document_service._is_leaf_field collapse)."""
+    from app.services import pending_edits_service
+
+    api_def, d1, _d2 = _setup_api_def(db_session)
+    # Even a GT annotation literally named "value" must be filtered out.
+    _confirm(db_session, d1.id, field_name="invoiceNumber", value="X")
+    _confirm(db_session, d1.id, field_name="value", value="junk")
+
+    fields = pending_edits_service.compute_required_field_set(db_session, api_def.id)
+    assert "invoiceNumber" in fields
+    for wrapper in ("id", "keyName", "value", "confidence", "bbox"):
+        assert wrapper not in fields, f"{wrapper} must never enter the required set"
 
 
 def test_create_manual_annotation_upserts_structured_data(db_session):
