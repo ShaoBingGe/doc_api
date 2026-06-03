@@ -1059,20 +1059,35 @@ def _run_three_rounds(db: Session, job: CustomizeJob, new_api: ApiDefinition) ->
             logger.exception("advance_round failed for job %s: %s", job.id, exc)
             break
 
-    # Monotonic guard (CLAUDE.md §④): activate the best EVALUATED version, not
-    # the latest round's un-evaluated output. Guarantees the activated version's
-    # accuracy >= the starting version's — a round's "optimization" can never
-    # regress the active prompt. Falls back to latest/prior only if no round
-    # recorded an accuracy (shouldn't happen).
+    # Monotonic guard (CLAUDE.md §④): activate the best EVALUATED version, so a
+    # round's "optimization" can never regress the active prompt below the
+    # starting version.
     best_eval_id, best_eval_acc = _best_evaluated_version(db, run.id)
+
+    # Phase-4a「终轮确认评估」: the last round's OUTPUT is un-evaluated, so it's
+    # not a candidate above. Confirm it with ONE OCR pass; adopt it only if it's
+    # >= the best already-evaluated version (still monotonic, but now a genuine
+    # final-round gain isn't thrown away). Graceful: on any failure we keep the
+    # best evaluated version.
+    latest_id = _latest_round_version(db, run.id)
+    if latest_id and latest_id != best_eval_id:
+        try:
+            latest_acc = _confirm_version_accuracy(db, run, latest_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("final-confirmation eval failed: %s", exc)
+            latest_acc = None
+        if latest_acc is not None and latest_acc >= best_eval_acc:
+            logger.info(
+                "final-confirmation: latest version acc=%.4f >= best_eval=%.4f → activate latest",
+                latest_acc, best_eval_acc,
+            )
+            best_eval_id, best_eval_acc = latest_id, latest_acc
+
     if best_eval_id:
-        logger.info(
-            "monotonic finalize: activating best-evaluated version (acc=%.4f) "
-            "instead of latest un-evaluated output", best_eval_acc,
-        )
+        logger.info("monotonic finalize: activating version acc=%.4f", best_eval_acc)
         best_version_id = best_eval_id
     else:
-        best_version_id = _latest_round_version(db, run.id) or best_version_id
+        best_version_id = latest_id or best_version_id
 
     # Finalize → activate the best version
     overall_acc: float | None = None
@@ -1201,6 +1216,64 @@ def _latest_round_version(db: Session, run_id: uuid.UUID) -> uuid.UUID | None:
         .first()
     )
     return r.next_version_id if r and r.next_version_id else None
+
+
+def _confirm_version_accuracy(db: Session, run, version_id: uuid.UUID) -> float | None:
+    """Phase-4a「终轮确认评估」: OCR the run's confirmed samples with `version_id`'s
+    composed_prompt and return its overall accuracy (fuzzy, same scoring path as
+    the rounds). Lets the monotonic guard ALSO consider the last round's
+    un-evaluated output, so a genuine final-round gain isn't discarded.
+
+    Costs ONE OCR pass. Read-only (no version/round writes). Returns None on any
+    failure (caller then keeps the best already-evaluated version → still
+    monotonic). Builds on align_for_path (real accuracy).
+    """
+    from app.models.api_definition import ApiDefinition
+    from . import ground_truth
+    from .ocr_runner import run_ocr_on_samples
+    from ..eval.harness import module_specs_from_orm, score_outputs
+
+    version = db.get(OcrPromptVersion, version_id)
+    if not version or not version.composed_prompt:
+        return None
+    api_def = db.get(ApiDefinition, run.api_definition_id)
+    if not api_def:
+        return None
+    modules = (
+        db.query(OcrModule)
+        .filter(OcrModule.prompt_version_id == version_id)
+        .order_by(OcrModule.order_index)
+        .all()
+    )
+    if not modules:
+        return None
+
+    # Confirmed samples + GT (same gate as the run).
+    raw = run.sample_document_ids or []
+    sample_ids: list[uuid.UUID] = []
+    gts: dict[str, dict] = {}
+    for sid in raw:
+        try:
+            suid = uuid.UUID(str(sid))
+        except (ValueError, TypeError):
+            continue
+        gt = ground_truth.build(db, suid)
+        if gt:
+            sample_ids.append(suid)
+            gts[str(suid)] = gt
+    if not sample_ids:
+        return None
+
+    outputs = run_ocr_on_samples(
+        db,
+        sample_document_ids=sample_ids,
+        composed_prompt=version.composed_prompt,
+        composed_schema=version.composed_schema,
+        processor_spec=api_def.processor_type or "mock",
+        model_name=api_def.model_name,
+    )
+    report = score_outputs(module_specs_from_orm(modules), outputs, gts)
+    return report.overall_accuracy
 
 
 def _best_evaluated_version(db: Session, run_id: uuid.UUID) -> tuple[uuid.UUID | None, float]:

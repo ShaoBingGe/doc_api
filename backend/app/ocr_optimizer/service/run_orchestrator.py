@@ -582,6 +582,50 @@ def _accumulate_metrics(prev: dict | None, rnd: OcrOptimizationRound) -> dict:
 
 # ── Single round ─────────────────────────────────────────────────────────────
 
+def detect_module_regressions(
+    prev_acc: dict[str, float],
+    curr_acc: dict[str, float],
+    eps: float = 1e-6,
+) -> list[str]:
+    """Pure: module_keys whose accuracy DROPPED vs the previous round.
+
+    Per-field monotonic check (req 3). Only modules present in BOTH maps are
+    considered; a drop greater than eps counts as a regression. Zero OCR — the
+    caller feeds it the round-entry evaluations it already has.
+    """
+    out: list[str] = []
+    for mk, cur in curr_acc.items():
+        prev = prev_acc.get(mk)
+        if prev is not None and cur < prev - eps:
+            out.append(mk)
+    return out
+
+
+def _prev_round_module_acc(
+    db: Session, run_id: uuid.UUID, round_num: int,
+) -> dict[str, float]:
+    """{module_key: aggregate_accuracy} for the round immediately before
+    `round_num` in this run (empty for round 1)."""
+    if round_num <= 1:
+        return {}
+    prev = (
+        db.query(OcrOptimizationRound)
+        .filter(
+            OcrOptimizationRound.run_id == run_id,
+            OcrOptimizationRound.round_num == round_num - 1,
+        )
+        .first()
+    )
+    if not prev:
+        return {}
+    its = (
+        db.query(OcrModuleIteration)
+        .filter(OcrModuleIteration.round_id == prev.id)
+        .all()
+    )
+    return {it.module_key: (it.aggregate_accuracy or 0.0) for it in its}
+
+
 def _run_one_round(
     db: Session,
     *,
@@ -685,6 +729,27 @@ def _run_one_round(
         )
         iterations.append(it)
         db.add(it)
+
+    # ── Per-field regression flag (CLAUDE.md §④, req 3) ──────────────────
+    # Compare each module's accuracy at THIS round's entry against the prior
+    # round's. A drop means the prior round's revision of that field made it
+    # WORSE. We flag it (auditable "提示" + UI-surfaceable) so the loop's
+    # existing machinery can react: the history-aware optimizer re-reflects it
+    # this round (retry), and verify_module_fix can reject a bad new attempt
+    # (fallback to the old prompt). Zero extra OCR — uses the entry eval.
+    prev_acc = _prev_round_module_acc(db, run.id, round_num)
+    if prev_acc:
+        curr_acc = {it.module_key: (it.aggregate_accuracy or 0.0) for it in iterations}
+        for mk in detect_module_regressions(prev_acc, curr_acc):
+            for it in iterations:
+                if it.module_key == mk:
+                    note = (f"[REGRESSION] {mk} 准确率较上一轮下降 "
+                            f"{prev_acc[mk]:.3f}→{curr_acc[mk]:.3f}；本轮将重试反思，"
+                            f"若仍不优于上一轮则回退该字段旧 prompt。")
+                    it.optimization_suggestion = (
+                        (it.optimization_suggestion or "") + " " + note
+                    ).strip()
+                    break
 
     # Per-sample overall accuracy (avg of module accuracies for that sample)
     for sid in sample_ids:
