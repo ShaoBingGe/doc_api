@@ -1594,6 +1594,8 @@ def _fork_api_definition(
                 continue
             add_specs.append((d, rk))
 
+    from . import reconciler as _reconciler
+
     new_modules: list[OcrModule] = []
     for m in src_modules:
         patch = edits_by_key.get(m.module_key, {})
@@ -1603,6 +1605,27 @@ def _fork_api_definition(
         if r is not None:
             patch = dict(patch)  # don't mutate the shared dict
             patch["__reflection"] = r
+            # Phase 4 — cross-round contradiction reconciliation (req 5):
+            # when this field's prompt ALREADY carries accumulated feedback,
+            # a fresh suggestion can contradict an earlier one. Instead of
+            # blindly appending (which stacks contradictions), collapse them
+            # into ONE coherent prompt that prioritizes the latest intent.
+            # Only fires on already-accumulated prompts (bounds LLM cost);
+            # fail-open → _clone_module falls back to blind-append.
+            new_sugs = list(getattr(r, "fix_suggestions", []) or [])
+            if new_sugs and _reconciler.has_accumulated_feedback(m.ocr_prompt):
+                coherent = _reconciler.reconcile_module_prompt(
+                    module_key=m.module_key,
+                    display_name=m.display_name,
+                    current_prompt=m.ocr_prompt or "",
+                    new_suggestions=new_sugs,
+                    field_rule=getattr(r, "field_rule", None),
+                    latest_intent=getattr(r, "diff", None) or {},
+                    processor_spec=src_api.processor_type or "gemini",
+                    model_name=src_api.model_name,
+                )
+                if coherent:
+                    patch["__reconciled_prompt"] = coherent
         new_modules.append(_clone_module(m, new_version_id=new_version.id, patch=patch))
 
     order_start = max((m.order_index for m in new_modules), default=-1) + 1
@@ -1654,10 +1677,17 @@ def _fork_api_definition(
 
 def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> OcrModule:
     new_description = patch.get("description") or src.description
-    new_prompt = src.ocr_prompt
-    suffix = patch.get("__prompt_suffix")
-    if suffix:
-        new_prompt = (src.ocr_prompt or "").rstrip() + "\n\n# 客户反馈补充\n" + suffix.strip()
+    # Phase 4 — if the upstream reconciler produced a coherent (de-contradicted)
+    # prompt, use it as-is (latest intent already won); otherwise fall back to
+    # the §⑤.3 blind-append of this round's suggestions.
+    reconciled = patch.get("__reconciled_prompt")
+    if reconciled:
+        new_prompt = reconciled
+    else:
+        new_prompt = src.ocr_prompt
+        suffix = patch.get("__prompt_suffix")
+        if suffix:
+            new_prompt = (src.ocr_prompt or "").rstrip() + "\n\n# 客户反馈补充\n" + suffix.strip()
 
     # Phase 8 — copy source ocr_suggestions and append reflection entry
     # (when there was a customer edit on this module). Unchanged modules

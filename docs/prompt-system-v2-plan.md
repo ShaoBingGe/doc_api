@@ -203,10 +203,14 @@ LLM 步骤（reconciler）完成，composer 不调 LLM。
 | 1 层次重构 | ✅ 完成 | 导航块 + 逐字段 identity line + 模块区 intro（改 live 提示词结构） |
 | 2 FieldRule | ✅ 完成 | FieldRule 模型 + composer 骨架渲染（opt-in，未改 live） |
 | 3 泛化 | ✅ 完成 | 反思 prompt 注入泛化教义/相对锚点/结构化输出；跨样本对照喂全部路径；产出 FieldRule（改 live 反思输出，但 fork 尚未消费 FieldRule） |
-| 4 矛盾消解 | 待开始 | reconciler + fork 消费 FieldRule（**需真实 golden-set A/B 验证**后再切 live） |
+| 4 矛盾消解 | ✅ 完成 | `reconciler.py`：fork 累积 prompt 时检测跨轮矛盾→LLM 协调成单一自洽 prompt（最新意图优先），fail-open。**安全取舍**：reconciler 产出协调后的 ocr_prompt（保留丰富识别要点），composer 仍渲染 ocr_prompt；**未**切到 lossy 的 FieldRule 骨架（FieldRule 作为 reconciler 输入）。 |
 | 5 skill 库 | 待开始 | 公共基底 + 薄变体（渐进披露） |
 | 6 文档/触发 | 待开始 | CLAUDE.md / prompt-system.md 更新 |
 
-> ⚠️ Phase 1、3 已改变 live 行为（composed_prompt 结构 + 反思输出文本），建议在浏览器跑一次
-> customize 验证 OCR 与迭代正常，再推进 Phase 4（Phase 4 会让 composer 用 FieldRule 骨架替换
-> 累积 ocr_prompt，属高影响变更，必须先有真实样本 A/B）。
+> 黄金 A/B 闸门：`python -m app.ocr_optimizer.eval.run_golden_batch --country MY --candidate <api_code> --size 5`
+> （需 live Gemini）。改 composer/skill/reconciler 后跑它确认不回退——离线平台 CI，不入客户路径。
+>
+> Phase 4 设计说明：原计划「composer 用 FieldRule 骨架替换累积 prompt」会丢失丰富识别要点、
+> 有回归风险（已发生过一次塌缩）。改为：**reconciler 在 fork 上游把累积 prompt 协调成单一自洽
+> 文本**（去矛盾、最新意图优先），composer 不变（仍渲染 ocr_prompt）。FieldRule 骨架渲染（Phase 2）
+> 保留为 opt-in 原语，不作默认。reconciler 仅在 prompt 已有累积反馈时触发（省 token），fail-open。

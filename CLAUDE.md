@@ -248,6 +248,8 @@ fork / round 通过 `new_version.country_global_text = src_version.country_globa
 1. **反思 skill 是 YAML 资产**，路径 `reflection/skills/*.yaml`，由产品技术维护（非客户面向）。
 2. 一个 diff 可以匹配**多个** skill，每个 skill 各产出一段 fix_suggestion。
 3. 在 `_fork_api_definition` 里，同一个 `module_key` 收到多条 diff 时**累积**所有 fix_suggestion / corrected_value 到 prompt 后缀，**不要后写覆盖**。
+   - **跨轮矛盾消解（Phase 4，`service/reconciler.py`）**：当该字段 prompt **已含累积反馈**（`has_accumulated_feedback`）且本轮又有新 suggestion 时，调 `reconcile_module_prompt` 把累积 prompt + 新建议协调成**单一自洽** prompt，**冲突时以最新客户意图为准**；fail-open（LLM 失败回退到本条「累积追加」）。这与「累积不覆盖」不矛盾：累积是默认，**矛盾**时才协调。
+   - reconciler 产出的是协调后的 **ocr_prompt**（保留识别要点），composer 仍渲染 ocr_prompt；**不**切到 FieldRule 骨架（骨架是 reconciler 的输入参考，不是渲染替代）。
 4. 新字段（`kind='add'`）的 LLM 扩展必须在 **fork 前** 完成，给 round 1 一个完整可用的起点；不要指望优化器去填空白模板。
 5. LLM 调用走 `llm_text_completion_failover`，配置链 `LLM_FALLBACK_CHAIN=gemini|gemini-2.5-flash;gemini|gemini-2.5-pro;mock|`。失败时静默降级到 `mock`，不阻塞 job。
 
