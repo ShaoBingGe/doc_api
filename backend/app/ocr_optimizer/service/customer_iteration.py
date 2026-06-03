@@ -1059,7 +1059,20 @@ def _run_three_rounds(db: Session, job: CustomizeJob, new_api: ApiDefinition) ->
             logger.exception("advance_round failed for job %s: %s", job.id, exc)
             break
 
-    best_version_id = _latest_round_version(db, run.id) or best_version_id
+    # Monotonic guard (CLAUDE.md §④): activate the best EVALUATED version, not
+    # the latest round's un-evaluated output. Guarantees the activated version's
+    # accuracy >= the starting version's — a round's "optimization" can never
+    # regress the active prompt. Falls back to latest/prior only if no round
+    # recorded an accuracy (shouldn't happen).
+    best_eval_id, best_eval_acc = _best_evaluated_version(db, run.id)
+    if best_eval_id:
+        logger.info(
+            "monotonic finalize: activating best-evaluated version (acc=%.4f) "
+            "instead of latest un-evaluated output", best_eval_acc,
+        )
+        best_version_id = best_eval_id
+    else:
+        best_version_id = _latest_round_version(db, run.id) or best_version_id
 
     # Finalize → activate the best version
     overall_acc: float | None = None
@@ -1188,6 +1201,38 @@ def _latest_round_version(db: Session, run_id: uuid.UUID) -> uuid.UUID | None:
         .first()
     )
     return r.next_version_id if r and r.next_version_id else None
+
+
+def _best_evaluated_version(db: Session, run_id: uuid.UUID) -> tuple[uuid.UUID | None, float]:
+    """Monotonic guard (CLAUDE.md §④): pick the version with the HIGHEST
+    *evaluated* accuracy across the run, so finalize never activates a version
+    we haven't confirmed.
+
+    Each round records `overall_accuracy` for the version it EVALUATED at entry
+    (`round.prompt_version_id` = that round's INPUT version): round 1 → starting
+    version, round N → v(N-1). So the map covers {starting … v(N-1)} — every
+    version EXCEPT the last round's un-evaluated output. Returning the argmax
+    guarantees the activated version's accuracy >= the starting version's
+    (round-over-round non-decrease), at ZERO extra OCR cost.
+
+    Tradeoff (intentional, safe): the very last round's output is un-evaluated,
+    so it is NOT a candidate — we never activate an unconfirmed version. (To
+    also capture a final-round gain, a one-pass confirmation eval could be
+    added later.)
+    """
+    from ..models import OcrOptimizationRound
+    rounds = (
+        db.query(OcrOptimizationRound)
+        .filter(OcrOptimizationRound.run_id == run_id)
+        .all()
+    )
+    best_id: uuid.UUID | None = None
+    best_acc = -1.0
+    for r in rounds:
+        acc = r.overall_accuracy if r.overall_accuracy is not None else -1.0
+        if r.prompt_version_id and acc > best_acc:
+            best_acc, best_id = acc, r.prompt_version_id
+    return best_id, best_acc
 
 
 # ── Forking ──────────────────────────────────────────────────────────────────
