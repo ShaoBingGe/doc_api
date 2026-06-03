@@ -168,7 +168,7 @@ function FieldDiffComparison({
   round: RoundDetail | null
   nextRound: RoundDetail | null
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(true)   // default-open so it's discoverable
   const [expandedKey, setExpandedKey] = useState<string | null>(null)
 
   const rows = useMemo(() => {
@@ -176,7 +176,7 @@ function FieldDiffComparison({
     const afterByKey = new Map(
       (nextRound?.iterations ?? []).map((it) => [it.module_key, it]),
     )
-    return round.iterations.map((before) => {
+    return (round.iterations ?? []).map((before) => {
       const after = afterByKey.get(before.module_key) ?? null
       const beforeAcc = before.aggregate_accuracy
       const afterAcc = after?.aggregate_accuracy ?? null
@@ -198,7 +198,15 @@ function FieldDiffComparison({
     })
   }, [round, nextRound])
 
-  if (!round || rows.length === 0) return null
+  // No round behind this version (init / manual_edit) → show a hint so the user
+  // knows where the comparison lives, instead of rendering nothing.
+  if (!round || rows.length === 0) {
+    return (
+      <div className="border-b border-white/5 bg-[#1b1b20] px-4 py-2 text-xs text-gray-500">
+        字段优化对比：请在上方版本中选择一个「round」迭代版本查看（当前版本由初始化/手工编辑产生，无迭代对比）。
+      </div>
+    )
+  }
   const changedCount = rows.filter((r) => r.changed || r.regressed).length
 
   return (
