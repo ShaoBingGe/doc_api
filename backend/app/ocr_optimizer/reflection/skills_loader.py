@@ -111,6 +111,7 @@ class Skill:
         Missing placeholders are replaced with empty string (we don't fail
         when a skill doesn't reference some field).
         """
+        from .base_assets import base_format_vars
         merged: dict[str, Any] = {
             "module_key": diff.get("module_key") or "",
             "display_name": diff.get("corrected_name") or diff.get("original_name") or "",
@@ -123,6 +124,7 @@ class Skill:
             "corrected_name": diff.get("corrected_name") or "",
             "original_format": diff.get("original_format") or "",
             "corrected_format": diff.get("corrected_format") or "",
+            **base_format_vars(),   # Phase 5 — {base_doctrine} / {base_edit_output}
         }
         try:
             return self.prompt_template.format(**_FormatDict(merged))

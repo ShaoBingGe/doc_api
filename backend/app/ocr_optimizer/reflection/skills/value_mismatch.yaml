@@ -1,6 +1,6 @@
 key: value_mismatch
 display_name: 值不一致反思
-version: 2
+version: 3
 # Matcher: original had a value, customer changed it.
 match:
   diff_kind: edit
@@ -8,7 +8,7 @@ match:
   corrected_value_is_empty: false
   value_changed: true
 prompt: |
-  你是 OCR prompt 设计专家，反思「字段值识别错误」的根因，并产出一条能**泛化到所有样本**的取值规则。
+  你是 OCR prompt 设计专家，反思「字段值识别错误」的根因，并产出一条能泛化到所有样本的取值规则。
 
   ## 字段信息
   - module_key: {module_key}
@@ -29,26 +29,6 @@ prompt: |
   3. 文档中出现多次类似字符串时，是否取错了那个？
   4. 数据类型/精度问题（截断小数、丢前导零）？
 
-  ## 泛化要求（关键）
-  - 若下方提供了「跨样本对照」，**先逐样本写观测**，再归纳出**一条能同时覆盖全部样本**的规则。
-  - 用**相对锚点**（邻近标签文本/票面区块，如「'Invoice No.' 右侧」）描述位置，
-    **不要依赖绝对坐标或固定行列号**——坐标式规则换一张票面就失效。
-  - 若暂时无法覆盖全部样本，给出当前最佳规则并把 holds_for_all 设为 false。
+  {base_doctrine}
 
-  ## 输出格式（严格 JSON）
-  ```json
-  {{
-    "rationale": "<3-5 句根因判断>",
-    "fix_suggestion": "<可直接拼到 prompt 的改进文本片段>",
-    "description_patch": "<可选；无则空串>",
-    "semantic": "<字段业务语义，一句话>",
-    "anchors": ["<相对锚点 1>", "<相对锚点 2>"],
-    "format_rule": "<取值/格式约束，如去千分位、保留原文>",
-    "disambiguation": ["<易混字段及区分依据>"],
-    "generalization": {{
-      "rule": "<一条覆盖全部样本的取值规则>",
-      "evidence_per_sample": ["<样本1观测>", "<样本2观测>"],
-      "holds_for_all": true
-    }}
-  }}
-  ```
+  {base_edit_output}

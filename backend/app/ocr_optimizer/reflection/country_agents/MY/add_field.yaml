@@ -2,7 +2,7 @@ key: my_add_field_reflection
 display_name: MY 新增字段反思 Agent
 country: MY
 kind: add
-version: 2
+version: 3
 remark: |-
   马来西亚发票新增字段反思 agent。客户在 MY 模板基础上新增字段时调用。
   与全局 new_field.yaml 的区别：内置 MY 票面常见格式知识（SST/TIN/SSM 编号、
@@ -36,6 +36,8 @@ user_prompt_template: |-
   - 税号体系：买卖双方都用 TIN（C+10位）；公司另有 SSM 号
   - 双语：英文为主，部分含中文/马来文
   - 行项目表头：常见 "Description / Qty / U/Price / Amount / Tax"
+
+  {base_doctrine}
 
   按 JSON 输出：description / ocr_prompt / ocr_suggestions / semantic / anchors /
   format_rule / disambiguation / generalization

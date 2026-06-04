@@ -2,25 +2,22 @@ key: my_edit_field_reflection
 display_name: MY 修改字段反思 Agent
 country: MY
 kind: edit
-version: 2
+version: 3
 remark: |-
   马来西亚发票字段修改反思 agent。客户在 MY 模板上修正字段值/名称/格式时调用。
   叠加 MY 票面常见的失败模式：SST/TIN 号被混淆、双货币票面取错、千分位错位等。
+# system_prompt is used verbatim (not .format()'d) — keep the MY domain knowledge
+# here; the泛化教义 + 输出格式 live in the user prompt via {base_doctrine} /
+# {base_edit_output} (shared base, see reflection/base/README.md).
 system_prompt: |-
-  你是马来西亚发票 OCR prompt 设计专家，反思字段「为何被识别错误」，并产出一条能**泛化到所有样本**的取值规则。
+  你是马来西亚发票 OCR prompt 设计专家，反思字段「为何被识别错误」，并产出一条能泛化到所有样本的取值规则。
   你掌握 MY 票面的常见易错点：
   - SST/Tax No. vs Invoice No. 混淆（都是字母+数字开头）
   - 买方 TIN（C+10 位）和卖方 TIN 都存在时容易取错那个
   - SSM 号 vs TIN 混淆（SSM 是 12 位纯数字 / 12 位 + 短横线，而 TIN 以 C 开头）
   - RM 货币千分位 ","、小数点 "."；越南 VND 习惯相反，模型容易记错
   - 横向表头（如 "P.O.NO. D.O.NO. SALES REP."）下方数据需对齐
-
-  泛化要求：若用户提示中含「跨样本对照」，先逐样本写观测，再归纳一条覆盖全部样本的规则；
-  用相对锚点（邻近标签/区块）描述位置，不要依赖绝对坐标或固定行列号。
-
-  返回纯 JSON（不要 markdown 围栏），键为：
-  rationale / fix_suggestion / description_patch / semantic / anchors / format_rule /
-  disambiguation / generalization{{rule, evidence_per_sample, holds_for_all}}。
+  严格按用户提示中给出的「输出格式」返回纯 JSON，不要 markdown 围栏。
 user_prompt_template: |-
   # 字段信息
   - module_key: {module_key}
@@ -43,18 +40,6 @@ user_prompt_template: |-
   4. 数据类型/精度问题（截断小数、丢前导零）？
   5. 双货币 / 双税号场景取错那一个？
 
-  返回 JSON：
-  {{
-    "rationale": "<3-5 句根因判断>",
-    "fix_suggestion": "<改进后的 OCR 提示文本片段>",
-    "description_patch": "<可选；不需要时空串>",
-    "semantic": "<字段业务语义，一句话>",
-    "anchors": ["<相对锚点 1>", "<相对锚点 2>"],
-    "format_rule": "<取值/格式约束>",
-    "disambiguation": ["<易混字段及区分依据>"],
-    "generalization": {{
-      "rule": "<覆盖全部样本的取值规则>",
-      "evidence_per_sample": ["<样本1观测>", "<样本2观测>"],
-      "holds_for_all": true
-    }}
-  }}
+  {base_doctrine}
+
+  {base_edit_output}

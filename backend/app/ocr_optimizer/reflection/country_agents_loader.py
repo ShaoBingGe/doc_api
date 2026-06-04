@@ -63,6 +63,7 @@ class CountryAgent:
 
     def render(self, diff: dict, ctx: dict | None = None) -> str:
         """Fill in the user_prompt_template with diff + context fields."""
+        from .base_assets import base_format_vars
         merged: dict[str, Any] = {
             "module_key": diff.get("module_key") or "",
             "display_name": diff.get("corrected_name") or diff.get("original_name") or "",
@@ -76,6 +77,7 @@ class CountryAgent:
             "original_format": diff.get("original_format") or "",
             "corrected_format": diff.get("corrected_format") or "",
             "schema_type": (ctx or {}).get("schema_type") or diff.get("corrected_format") or "",
+            **base_format_vars(),   # Phase 5 — {base_doctrine} / {base_edit_output}
         }
         try:
             return self.user_prompt_template.format(**_FormatDict(merged))

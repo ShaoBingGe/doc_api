@@ -1,6 +1,6 @@
 key: empty_value
 display_name: 空值反思
-version: 2
+version: 3
 # Matcher: applies when the original extracted value was empty/null and the
 # customer filled in a real value from the document.
 match:
@@ -8,10 +8,10 @@ match:
   original_value_is_empty: true
   corrected_value_is_empty: false
 # Placeholders filled by skills_loader.Skill.render:
-#   {module_key} {display_name} {description} {original_value}
-#   {corrected_value} {original_ocr_prompt} {original_format} {corrected_format}
+#   {module_key} {display_name} {description} {original_value} {corrected_value}
+#   {original_ocr_prompt} {base_doctrine} {base_edit_output}
 prompt: |
-  你是 OCR prompt 设计专家，反思「字段为何被漏识别」，并产出一条能**泛化到所有样本**的取值规则。
+  你是 OCR prompt 设计专家，反思「字段为何被漏识别」，并产出一条能泛化到所有样本的定位规则。
 
   ## 字段信息
   - module_key: {module_key}
@@ -31,25 +31,6 @@ prompt: |
   2. 取值锚点是否错位（票面通常邻近哪个标签/区块）？
   3. 上下文切割问题（值被相邻字段「吸走」、跨页/换行/合并）？
 
-  ## 泛化要求（关键）
-  - 若下方提供了「跨样本对照」，**先逐样本写观测**，再归纳出**一条能覆盖全部样本**的定位规则。
-  - 用**相对锚点**（邻近标签/区块）描述位置，**不要依赖绝对坐标或固定行列号**。
-  - 暂时无法覆盖全部样本时，给出当前最佳规则并把 holds_for_all 设为 false。
+  {base_doctrine}
 
-  ## 输出格式（严格 JSON）
-  ```json
-  {{
-    "rationale": "<3-5 句根因判断>",
-    "fix_suggestion": "<可直接拼到原 prompt 后的改进文本片段>",
-    "description_patch": "<可选；无则空串>",
-    "semantic": "<字段业务语义，一句话>",
-    "anchors": ["<相对锚点 1>", "<相对锚点 2>"],
-    "format_rule": "<取值/格式约束>",
-    "disambiguation": ["<易混字段及区分依据>"],
-    "generalization": {{
-      "rule": "<一条覆盖全部样本的定位规则>",
-      "evidence_per_sample": ["<样本1观测>", "<样本2观测>"],
-      "holds_for_all": true
-    }}
-  }}
-  ```
+  {base_edit_output}

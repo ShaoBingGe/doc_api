@@ -1,11 +1,13 @@
 key: new_field
 display_name: 新增字段反思
-version: 2
+version: 3
 # Matcher: customer wants a brand-new field that wasn't in the template.
+# Output shape differs from edit skills (it GENERATES a whole module), so it
+# keeps its own output block and only shares {base_doctrine}.
 match:
   diff_kind: add
 prompt: |
-  你是 OCR prompt 设计专家，为「新增字段」设计第一版可用的、能**泛化到所有样本**的取值规则。
+  你是 OCR prompt 设计专家，为「新增字段」设计第一版可用的、能泛化到所有样本的取值规则。
 
   ## 字段信息
   - 新字段名: {corrected_name}
@@ -19,12 +21,13 @@ prompt: |
 
   ## 设计要点
   1. 字段语义 — 业务含义、英文/中文别名。
-  2. 取值锚点 — 用**相对锚点**（邻近标签/区块）描述位置，**不要依赖绝对坐标或固定行列号**。
+  2. 取值锚点 — 见下「泛化要求」（相对锚点，禁绝对坐标）。
   3. 格式约束 — 类型、缺失时如何输出、单位/前缀处理。
   4. 歧义辨别 — 易混字段及区分方法。
-  5. 若下方有「跨样本对照」，归纳出一条覆盖全部样本的规则；否则基于样例值给出最佳规则并标 holds_for_all=false。
 
-  ## 输出格式（严格 JSON）
+  {base_doctrine}
+
+  ## 输出格式（严格 JSON，不要 markdown 围栏）
   ```json
   {{
     "module_key": "<snake_case 字段键>",
@@ -37,10 +40,6 @@ prompt: |
     "anchors": ["<相对锚点 1>", "<相对锚点 2>"],
     "format_rule": "<取值/格式约束>",
     "disambiguation": ["<易混字段及区分依据>"],
-    "generalization": {{
-      "rule": "<覆盖全部样本的取值规则>",
-      "evidence_per_sample": ["<样本观测>"],
-      "holds_for_all": false
-    }}
+    "generalization": {{ "rule": "<覆盖全部样本的取值规则>", "evidence_per_sample": ["<样本观测>"], "holds_for_all": false }}
   }}
   ```
