@@ -30,8 +30,11 @@ __all__ = [
     "get_storage",
     "get_task_runner",
     "get_auth_provider",
+    "get_current_user",
+    "require_roles",
     "DbSession",
     "CurrentSettings",
+    "CurrentUser",
 ]
 
 DbSession = Annotated[Session, Depends(get_db)]
@@ -122,3 +125,77 @@ async def get_api_key_auth(
         db.rollback()
 
     return matched
+
+
+# ── User auth (JWT bearer)─────────────────────────────────────────────────────
+
+async def get_current_user(
+    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Authenticate a management-UI request via `Authorization: Bearer <jwt>`.
+
+    Returns the User ORM object. Raises AuthenticationError on any failure
+    (missing/invalid/expired token, unknown or deactivated user).
+    """
+    from app.core.security import decode_access_token
+    from app.models.user import User
+
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise AuthenticationError("Authorization Bearer token is required")
+
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        payload = decode_access_token(token)
+    except ValueError as exc:
+        raise AuthenticationError(str(exc))
+
+    import uuid as _uuid
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise AuthenticationError("Token missing subject")
+    try:
+        user_uuid = _uuid.UUID(str(user_id))
+    except (ValueError, AttributeError, TypeError):
+        raise AuthenticationError("Token subject is malformed")
+
+    user = db.query(User).filter(User.id == user_uuid).first()
+    if user is None:
+        raise AuthenticationError("User no longer exists")
+    if not user.is_active:
+        raise AuthenticationError("User account is deactivated")
+
+    return user
+
+
+def require_roles(*roles: str):
+    """
+    Dependency factory: gate an endpoint to the given UserRole values.
+
+    Usage:
+        @router.get(..., dependencies=[Depends(require_roles(UserRole.super_admin))])
+    or to consume the user:
+        def handler(user = Depends(require_roles(UserRole.super_admin))): ...
+
+    Accepts UserRole members or their string values.
+    """
+    from app.core.exceptions import AuthorizationError
+
+    allowed = {r.value if hasattr(r, "value") else str(r) for r in roles}
+
+    async def _guard(user=Depends(get_current_user)):
+        if user.role not in allowed:
+            raise AuthorizationError(
+                f"Requires one of roles: {sorted(allowed)} (you are '{user.role}')"
+            )
+        return user
+
+    return _guard
+
+
+# Convenience annotated type for handlers that just need the authed user.
+from typing import Any as _Any  # noqa: E402
+
+CurrentUser = Annotated[_Any, Depends(get_current_user)]

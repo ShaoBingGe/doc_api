@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "CHANGE-ME-IN-PRODUCTION-32-bytes!!"
     API_KEY_PREFIX: str = "sk-"
 
+    # ── Auth / JWT（角色与权限管理）────────────────────────────────────────
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 60 * 12          # 登录令牌有效期（12h）
+    # 安装时创建的超级管理员（原型默认值，生产环境务必改）
+    SUPER_ADMIN_USERNAME: str = "admin"
+    SUPER_ADMIN_PASSWORD: str = "666666"
+    # 普通用户「邮箱+验证码」登录的固定验证码（原型阶段；接邮件下发后改）
+    NORMAL_USER_LOGIN_CODE: str = "666666"
+
     # ── CORS ──────────────────────────────────────────────────────────────
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 

@@ -58,3 +58,73 @@ def hash_api_key(raw_key: str) -> str:
 def verify_api_key(raw_key: str, stored_hash: str) -> bool:
     """Constant-time comparison to prevent timing attacks."""
     return secrets.compare_digest(hash_api_key(raw_key), stored_hash)
+
+
+# ── Password hashing（bcrypt 直连）────────────────────────────────────────────
+#
+# 不走 passlib：当前环境 passlib 1.7.4 与 bcrypt 5.x 不兼容（__about__ 被移除 +
+# 72-byte 报错）。直接用 bcrypt 库。bcrypt 上限 72 字节，超出截断。
+
+import bcrypt  # noqa: E402
+
+_BCRYPT_MAX_BYTES = 72
+
+
+def _pw_bytes(password: str) -> bytes:
+    return password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
+
+
+def hash_password(password: str) -> str:
+    """Return a bcrypt hash (utf-8 str) for *password*."""
+    return bcrypt.hashpw(_pw_bytes(password), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(password: str, stored_hash: str | None) -> bool:
+    """Constant-time bcrypt verify. Returns False if *stored_hash* is empty."""
+    if not stored_hash:
+        return False
+    try:
+        return bcrypt.checkpw(_pw_bytes(password), stored_hash.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
+
+
+# ── JWT (login tokens)────────────────────────────────────────────────────────
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+from jose import JWTError, jwt  # noqa: E402
+
+
+def create_access_token(
+    *,
+    subject: str,
+    role: str,
+    tenant_id: str | None = None,
+    expires_minutes: int | None = None,
+) -> str:
+    """
+    Sign an HS256 JWT. `subject` is the user id (str). `role`/`tenant_id` are
+    embedded as claims so route guards can authorize without a DB hit (the
+    DB load in get_current_user still re-checks is_active).
+    """
+    s = get_settings()
+    minutes = expires_minutes if expires_minutes is not None else s.JWT_EXPIRE_MINUTES
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": subject,
+        "role": role,
+        "tenant_id": tenant_id,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=minutes)).timestamp()),
+    }
+    return jwt.encode(payload, s.SECRET_KEY, algorithm=s.JWT_ALGORITHM)
+
+
+def decode_access_token(token: str) -> dict:
+    """Decode + verify a JWT. Raises ValueError on any failure."""
+    s = get_settings()
+    try:
+        return jwt.decode(token, s.SECRET_KEY, algorithms=[s.JWT_ALGORITHM])
+    except JWTError as exc:
+        raise ValueError(f"Invalid token: {exc}") from exc

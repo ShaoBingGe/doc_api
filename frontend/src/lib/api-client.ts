@@ -15,6 +15,11 @@ apiClient.interceptors.request.use((config) => {
   if (apiKey) {
     config.headers['X-API-Key'] = apiKey
   }
+  // JWT bearer token for the management UI (role/permission auth)
+  const token = localStorage.getItem('auth_token')
+  if (token) {
+    config.headers['Authorization'] = `Bearer ${token}`
+  }
   return config
 })
 
@@ -275,4 +280,96 @@ export function uploadDocumentWithAnnotations(file: File, annotationsFile: File)
   return apiClient.post('/api/v1/documents/upload-with-annotations', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
+}
+
+// ── Auth / 角色与权限管理 ─────────────────────────────────────────────────────
+
+export type UserRole = 'super_admin' | 'system_admin' | 'tenant_admin' | 'normal_user'
+
+export interface AuthUser {
+  id: string
+  email: string
+  display_name: string | null
+  role: UserRole
+  tenant_id: string | null
+  is_active: boolean
+  created_at: string
+}
+
+export interface TenantBrief {
+  id: string
+  name: string
+}
+
+export interface LoginResponse {
+  access_token: string
+  token_type: string
+  user: AuthUser
+  tenant: TenantBrief | null
+}
+
+export interface TenantRow {
+  id: string
+  name: string
+  is_active: boolean
+  created_at: string
+  admin_count: number
+  user_count: number
+}
+
+// — login (two portals) —
+export function loginPassword(email: string, password: string) {
+  return apiClient.post<LoginResponse>('/api/v1/auth/login', { email, password })
+}
+export function loginCode(email: string, code: string) {
+  return apiClient.post<LoginResponse>('/api/v1/auth/login/code', { email, code })
+}
+export function fetchMe() {
+  return apiClient.get<LoginResponse>('/api/v1/auth/me')
+}
+export function changePassword(old_password: string, new_password: string) {
+  return apiClient.post('/api/v1/auth/change-password', { old_password, new_password })
+}
+
+// — super admin: system admins —
+export function fetchSystemAdmins() {
+  return apiClient.get<AuthUser[]>('/api/v1/admin/system-admins')
+}
+export function createSystemAdmin(data: { email: string; password: string; display_name?: string }) {
+  return apiClient.post<AuthUser>('/api/v1/admin/system-admins', data)
+}
+
+// — super/system admin: tenant admins + tenants —
+export function fetchTenants() {
+  return apiClient.get<TenantRow[]>('/api/v1/admin/tenants')
+}
+export function fetchTenantAdmins() {
+  return apiClient.get<AuthUser[]>('/api/v1/admin/tenant-admins')
+}
+export function createTenantAdmin(data: {
+  email: string
+  password: string
+  tenant_name: string
+  display_name?: string
+}) {
+  return apiClient.post<AuthUser>('/api/v1/admin/tenant-admins', data)
+}
+
+// — generic update / deactivate (scope enforced server-side) —
+export function updateUser(
+  userId: string,
+  data: { password?: string; display_name?: string; is_active?: boolean },
+) {
+  return apiClient.patch<AuthUser>(`/api/v1/admin/users/${userId}`, data)
+}
+export function deactivateUser(userId: string) {
+  return apiClient.delete(`/api/v1/admin/users/${userId}`)
+}
+
+// — tenant admin: normal users —
+export function fetchTenantUsers() {
+  return apiClient.get<AuthUser[]>('/api/v1/tenant/users')
+}
+export function createNormalUser(data: { email: string; password?: string; display_name?: string }) {
+  return apiClient.post<AuthUser>('/api/v1/tenant/users', data)
 }

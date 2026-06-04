@@ -12,9 +12,11 @@ v1 API router — aggregates all sub-routers.
 
 from fastapi import APIRouter
 
+from .admin_users import router as admin_users_router
 from .annotations import router as annotations_router
 from .api_defs import router as api_defs_router
 from .api_keys import router as api_keys_router
+from .auth import router as auth_router
 from .conversations import router as conversations_router
 from .country_templates import router as country_templates_router
 from .documents import router as documents_router
@@ -22,9 +24,15 @@ from .extract import router as extract_router
 from .reflection_agents import router as reflection_agents_router
 from app.ocr_optimizer.router import router as ocr_optimizer_router
 from .templates import router as templates_router
+from .tenant_users import router as tenant_users_router
 from .usage import router as usage_router
 
 v1_router = APIRouter(prefix="/api/v1")
+
+# auth & user/role management
+v1_router.include_router(auth_router)
+v1_router.include_router(admin_users_router)
+v1_router.include_router(tenant_users_router)
 
 v1_router.include_router(documents_router)
 v1_router.include_router(annotations_router)

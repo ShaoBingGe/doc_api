@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
   ChevronDown,
   ChevronRight,
@@ -19,7 +18,7 @@ import {
   Table as TableIcon,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
-import { useWorkspaceStore, type Annotation, type FieldEditDraft, type ProcessingResult } from '../../stores/workspace-store'
+import { useWorkspaceStore, type Annotation, type CustomizeJobStatus, type FieldEditDraft, type ProcessingResult } from '../../stores/workspace-store'
 import { toast } from '../../lib/toast'
 import apiClient from '../../lib/api-client'
 
@@ -86,72 +85,6 @@ function groupAnnotations(
   }
 
   return { scalars, arrays: Array.from(arraysByPath.values()) }
-}
-
-// ─── Editable cell ───────────────────────────────────────────────────────────
-
-function EditableCell({
-  value,
-  onSave,
-  className,
-  placeholder = '',
-}: {
-  value: string
-  onSave: (v: string) => void
-  className?: string
-  placeholder?: string
-}) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(value)
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    if (editing) {
-      setDraft(value)
-      setTimeout(() => inputRef.current?.focus(), 0)
-    }
-  }, [editing]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const commit = () => {
-    setEditing(false)
-    const trimmed = draft.trim()
-    if (trimmed !== value) onSave(trimmed)
-  }
-
-  const cancel = () => {
-    setEditing(false)
-    setDraft(value)
-  }
-
-  if (editing) {
-    return (
-      <input
-        ref={inputRef}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') commit()
-          if (e.key === 'Escape') cancel()
-        }}
-        onBlur={commit}
-        className={cn(
-          'bg-[#18181c] border border-blue-500/60 rounded px-1.5 py-0.5 text-sm text-white outline-none',
-          className,
-        )}
-        placeholder={placeholder}
-      />
-    )
-  }
-
-  return (
-    <span
-      onDoubleClick={() => setEditing(true)}
-      className={cn('cursor-text select-none', className)}
-      title="双击编辑"
-    >
-      {value || <span className="text-gray-600">{placeholder || '—'}</span>}
-    </span>
-  )
 }
 
 // ─── Type selector ───────────────────────────────────────────────────────────
@@ -225,8 +158,6 @@ function FieldRow({
   onSelect,
   onStartEdit,
   onDeleteField,
-  onSaveLabel,
-  onSaveValue,
   onSaveType,
   onConfirmConfidence,
   onStartDrawing,
@@ -940,7 +871,10 @@ function MissingFieldsList({
   const [deletingNames, setDeletingNames] = useState<Set<string>>(new Set())
 
   const updateDraft = (name: string, patch: Partial<MissingDraft>) => {
-    setDrafts((s) => ({ ...s, [name]: { value: '', isNone: false, ...s[name], ...patch } }))
+    setDrafts((s) => {
+      const merged = { ...s[name], ...patch }
+      return { ...s, [name]: { value: merged.value ?? '', isNone: merged.isNone ?? false } }
+    })
   }
 
   const saveOne = useCallback(async (name: string) => {
@@ -1219,11 +1153,9 @@ interface PerFileUpload {
 function WaitingForSamplesBanner({
   customizeJob,
   onClose,
-  navigate,
 }: {
   customizeJob: CustomizeJobStatus
   onClose: () => void
-  navigate: ReturnType<typeof useNavigate>
 }) {
   const apiDefinitionId = useWorkspaceStore((s) => s.apiDefinitionId)
   const documents = useWorkspaceStore((s) => s.documents)
@@ -1538,7 +1470,6 @@ function WaitingForSamplesBanner({
 }
 
 function CustomizeBar() {
-  const navigate = useNavigate()
   const {
     fieldEditDrafts, addFieldDrafts, submitCustomize, customizeSubmitting,
     customizeJob, clearCustomizeJob,
@@ -1556,7 +1487,7 @@ function CustomizeBar() {
   // ── Waiting for samples — verbatim instruction + inline upload ──────
   if (customizeJob && customizeJob.status === 'waiting_for_samples') {
     return (
-      <WaitingForSamplesBanner customizeJob={customizeJob} onClose={clearCustomizeJob} navigate={navigate} />
+      <WaitingForSamplesBanner customizeJob={customizeJob} onClose={clearCustomizeJob} />
     )
   }
 

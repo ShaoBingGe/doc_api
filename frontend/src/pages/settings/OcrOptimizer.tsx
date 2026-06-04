@@ -4,7 +4,6 @@ import { toast } from '../../lib/toast'
 import {
   activateOcrVersion,
   fetchApiDefinitions,
-  fetchOcrIterations,
   fetchOcrRound,
   fetchOcrRun,
   fetchOcrRuns,

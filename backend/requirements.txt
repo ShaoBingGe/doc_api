@@ -22,6 +22,9 @@ eval_type_backport>=0.3.0  # Python 3.9 compatibility for X | Y union syntax
 # Security
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
+# bcrypt used directly by app.core.security (passlib 1.7.4 is incompatible with
+# bcrypt 5.x, so we call the bcrypt API directly for password hashing).
+bcrypt>=4.0.0
 
 # File handling
 aiofiles>=24.0.0

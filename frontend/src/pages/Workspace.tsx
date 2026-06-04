@@ -99,7 +99,6 @@ export default function Workspace() {
   // ⚠️ All useWorkspaceStore calls must sit ABOVE any conditional `return`
   // to keep hook ordering stable across renders.
   const editingFieldId = useWorkspaceStore((s) => s.editingFieldId)
-  const customizeJob = useWorkspaceStore((s) => s.customizeJob)
 
   // Loading state — only while we're actually loading
   const showLoading =

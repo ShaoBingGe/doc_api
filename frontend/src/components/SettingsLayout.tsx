@@ -1,16 +1,19 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { Home } from 'lucide-react'
-
-const tabs = [
-  { to: '/settings/users', label: '用户管理' },
-  { to: '/settings/api-keys', label: 'API Key' },
-  { to: '/settings/traffic', label: '流量监控' },
-  { to: '/settings/billing', label: '账单续费' },
-  { to: '/settings/ocr-optimizer', label: 'OCR 优化器' },
-]
+import { useAuthStore } from '../stores/auth-store'
 
 export default function SettingsLayout() {
   const navigate = useNavigate()
+  const user = useAuthStore((s) => s.user)
+  const isPlatformAdmin = user?.role === 'super_admin' || user?.role === 'system_admin'
+
+  const tabs = [
+    { to: '/settings/users', label: '用户管理' },
+    { to: '/settings/api-keys', label: 'API Key' },
+    { to: '/settings/traffic', label: '流量监控' },
+    { to: '/settings/billing', label: '账单续费' },
+    ...(isPlatformAdmin ? [{ to: '/settings/ocr-optimizer', label: 'OCR 优化器' }] : []),
+  ]
 
   return (
     <div className="min-h-screen bg-white flex flex-col">

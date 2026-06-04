@@ -31,6 +31,18 @@ async def lifespan(app: FastAPI):
     # Startup: ensure DB tables exist (development convenience)
     from app.core.database import create_tables
     create_tables()
+    # Ensure the super admin exists (default admin / 666666). Idempotent.
+    try:
+        from app.core.database import SessionLocal
+        from app.services.user_service import bootstrap_super_admin
+        _db = SessionLocal()
+        try:
+            bootstrap_super_admin(_db)
+        finally:
+            _db.close()
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("bootstrap_super_admin failed on boot")
     # Reap any customize jobs that were stuck in transient states when the
     # process died (no progress for >STALE_OPTIMIZING_MIN minutes). Failures
     # here are non-fatal; we log and continue.
