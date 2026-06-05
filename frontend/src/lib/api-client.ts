@@ -373,3 +373,64 @@ export function fetchTenantUsers() {
 export function createNormalUser(data: { email: string; password?: string; display_name?: string }) {
   return apiClient.post<AuthUser>('/api/v1/tenant/users', data)
 }
+
+// ── Platform · 国家模板 / 黄金种子（仅平台管理员）─────────────────────────────
+
+export interface CountryKind {
+  country: string
+  available: boolean
+  kinds: string[]
+}
+
+export interface GoldenSeed {
+  seed_id: string
+  filename: string
+  gt: Record<string, unknown>
+  gt_fields: number | null
+}
+
+export interface GoldenFieldResult {
+  field: string
+  module_key: string
+  gt: unknown
+  latest: unknown
+  conflict: boolean
+}
+
+export interface GoldenSeedEval {
+  ocr_error: boolean
+  fields: GoldenFieldResult[]
+}
+
+export interface GoldenEvaluation {
+  country: string
+  generated_at?: string
+  processor?: string
+  cached?: boolean
+  error?: string
+  detail?: string
+  summary?: { seeds: number; conflicts: number; ocr_errors: number; overall_accuracy: number }
+  per_seed: Record<string, GoldenSeedEval>
+}
+
+export function fetchPlatformCountryTemplates() {
+  return apiClient.get<CountryKind[]>('/api/v1/platform/country-templates')
+}
+export function fetchGoldenSeeds(country: string) {
+  return apiClient.get<{ country: string; seeds: GoldenSeed[] }>(
+    `/api/v1/platform/golden/${country}/seeds`,
+  )
+}
+export function goldenFileUrl(country: string, seedId: string): string {
+  return `${baseURL}/api/v1/platform/golden/${country}/seeds/${seedId}/file`
+}
+export function evaluateGolden(country: string, opts: { processor?: string; limit?: number } = {}) {
+  return apiClient.post<GoldenEvaluation>(
+    `/api/v1/platform/golden/${country}/evaluate`,
+    null,
+    { params: { processor: opts.processor ?? 'gemini', limit: opts.limit ?? 0 }, timeout: 600_000 },
+  )
+}
+export function fetchGoldenEvaluation(country: string) {
+  return apiClient.get<GoldenEvaluation>(`/api/v1/platform/golden/${country}/evaluation`)
+}

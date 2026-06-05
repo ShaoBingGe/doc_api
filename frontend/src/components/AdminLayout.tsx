@@ -12,6 +12,7 @@ export default function AdminLayout() {
   const tabs = [
     ...(isSuper ? [{ to: '/admin/system-admins', label: '系统管理员' }] : []),
     { to: '/admin/tenant-admins', label: '用户管理员 / 租户' },
+    { to: '/admin/country-templates', label: '国家模板' },
   ]
 
   function handleLogout() {

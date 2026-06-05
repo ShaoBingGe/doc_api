@@ -9,7 +9,7 @@ import uuid
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_db
+from app.core.deps import get_current_user, get_db
 from app.schemas.api_key import (
     ApiKeyResponse,
     CreateApiKeyRequest,
@@ -18,7 +18,11 @@ from app.schemas.api_key import (
 )
 from app.services import api_key_service as svc
 
-router = APIRouter(prefix="/api-keys", tags=["API Keys"])
+router = APIRouter(
+    prefix="/api-keys",
+    tags=["API Keys"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.post(
@@ -30,8 +34,9 @@ router = APIRouter(prefix="/api-keys", tags=["API Keys"])
 def create_api_key(
     body: CreateApiKeyRequest,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> CreateApiKeyResponse:
-    return svc.create_api_key(db, body)
+    return svc.create_api_key(db, body, user=user)
 
 
 @router.get(
@@ -41,8 +46,9 @@ def create_api_key(
 )
 def list_api_keys(
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> list[ApiKeyResponse]:
-    return svc.list_api_keys(db)
+    return svc.list_api_keys(db, user=user)
 
 
 @router.put(
@@ -54,8 +60,9 @@ def update_api_key(
     key_id: uuid.UUID,
     body: UpdateApiKeyRequest,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> ApiKeyResponse:
-    return svc.update_api_key(db, key_id, body)
+    return svc.update_api_key(db, key_id, body, user=user)
 
 
 @router.delete(
@@ -66,8 +73,9 @@ def update_api_key(
 def revoke_api_key(
     key_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> None:
-    svc.revoke_api_key(db, key_id)
+    svc.revoke_api_key(db, key_id, user=user)
 
 
 @router.post(
@@ -79,5 +87,6 @@ def revoke_api_key(
 def rotate_api_key(
     key_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> CreateApiKeyResponse:
-    return svc.rotate_api_key(db, key_id)
+    return svc.rotate_api_key(db, key_id, user=user)

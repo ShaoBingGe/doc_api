@@ -9,6 +9,7 @@ import Login from './pages/Login'
 import AdminLogin from './pages/AdminLogin'
 import SystemAdmins from './pages/admin/SystemAdmins'
 import TenantAdmins from './pages/admin/TenantAdmins'
+import CountryTemplates from './pages/admin/CountryTemplates'
 import ApiKeyManagement from './pages/settings/ApiKeyManagement'
 import UserManagement from './pages/settings/UserManagement'
 import TrafficMonitoring from './pages/settings/TrafficMonitoring'
@@ -99,6 +100,7 @@ export default function App() {
           <Route index element={<Navigate to="tenant-admins" replace />} />
           <Route path="system-admins" element={<SystemAdmins />} />
           <Route path="tenant-admins" element={<TenantAdmins />} />
+          <Route path="country-templates" element={<CountryTemplates />} />
         </Route>
 
         {/* fallback */}

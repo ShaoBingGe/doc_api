@@ -19,7 +19,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_db
+from app.core.deps import assert_can_access, get_current_user, get_db
 
 from .models import OcrPromptVersion
 from .schemas import (
@@ -51,7 +51,30 @@ from .service.run_orchestrator import (
     start_optimization,
 )
 
-router = APIRouter(prefix="/api-definitions", tags=["OCR Optimizer"])
+def verify_api_def_access(
+    api_def_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+) -> None:
+    """Router-level guard: every OCR-optimizer route is nested under
+    /{api_def_id}/...; require a valid JWT AND tenant access to that ApiDef.
+    Platform admins bypass the tenant check (see core.deps.assert_can_access).
+    """
+    from app.models.api_definition import ApiDefinition
+
+    api_def = db.get(ApiDefinition, api_def_id)
+    if api_def is None:
+        from app.core.exceptions import NotFoundError
+        raise NotFoundError(f"ApiDefinition {api_def_id} not found")
+    assert_can_access(api_def, user)
+
+
+# All routes require auth + tenant access to the parent ApiDefinition.
+router = APIRouter(
+    prefix="/api-definitions",
+    tags=["OCR Optimizer"],
+    dependencies=[Depends(verify_api_def_access)],
+)
 
 
 # ── Init ──────────────────────────────────────────────────────────────────────

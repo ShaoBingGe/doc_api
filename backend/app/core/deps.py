@@ -32,6 +32,9 @@ __all__ = [
     "get_auth_provider",
     "get_current_user",
     "require_roles",
+    "scope_filter",
+    "assert_can_access",
+    "owner_tenant_id",
     "DbSession",
     "CurrentSettings",
     "CurrentUser",
@@ -168,6 +171,47 @@ async def get_current_user(
         raise AuthenticationError("User account is deactivated")
 
     return user
+
+
+# ── Tenant data-isolation helpers ─────────────────────────────────────────────
+#
+# Platform admins (super_admin / system_admin, tenant_id is None) bypass all
+# tenant filtering → they see every tenant's data. Tenant users (tenant_admin /
+# normal_user) are constrained to rows whose tenant_id == their own.
+
+def owner_tenant_id(user) -> "uuid.UUID | None":
+    """Tenant id to stamp on rows this user creates (None for platform admins)."""
+    return getattr(user, "tenant_id", None)
+
+
+def _is_real_user(user) -> bool:
+    """True only for an actual User ORM object. None / a Depends sentinel
+    (handlers called directly in unit tests) → False → no scoping.
+    In production the router-level guard always injects a real User."""
+    return user is not None and hasattr(user, "tenant_id") and hasattr(user, "role")
+
+
+def scope_filter(query, model, user):
+    """Constrain *query* to *user*'s tenant unless the user is a platform admin."""
+    if not _is_real_user(user) or getattr(user, "is_platform_admin", False):
+        return query
+    return query.filter(model.tenant_id == user.tenant_id)
+
+
+def assert_can_access(obj, user) -> None:
+    """
+    Authorize *user* to touch *obj* (any ORM row carrying tenant_id).
+
+    Platform admins pass. Otherwise the row's tenant_id must equal the user's.
+    Raises NotFoundError (404, not 403) so callers can't probe row existence
+    across tenants.
+    """
+    from app.core.exceptions import NotFoundError
+
+    if not _is_real_user(user) or getattr(user, "is_platform_admin", False):
+        return
+    if getattr(obj, "tenant_id", None) != user.tenant_id:
+        raise NotFoundError("Resource not found")
 
 
 def require_roles(*roles: str):

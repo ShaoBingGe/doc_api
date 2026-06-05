@@ -23,6 +23,7 @@ from .documents import router as documents_router
 from .extract import router as extract_router
 from .reflection_agents import router as reflection_agents_router
 from app.ocr_optimizer.router import router as ocr_optimizer_router
+from .platform_templates import router as platform_templates_router
 from .templates import router as templates_router
 from .tenant_users import router as tenant_users_router
 from .usage import router as usage_router
@@ -33,6 +34,7 @@ v1_router = APIRouter(prefix="/api/v1")
 v1_router.include_router(auth_router)
 v1_router.include_router(admin_users_router)
 v1_router.include_router(tenant_users_router)
+v1_router.include_router(platform_templates_router)
 
 v1_router.include_router(documents_router)
 v1_router.include_router(annotations_router)

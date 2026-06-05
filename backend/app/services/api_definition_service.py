@@ -58,7 +58,10 @@ def create_api_definition(
     db: Session,
     body: CreateApiDefinitionRequest,
     user_id: uuid.UUID | None = None,
+    user=None,
 ) -> ApiDefinitionResponse:
+    from app.core.deps import owner_tenant_id
+
     # Enforce unique api_code
     existing = db.query(ApiDefinition).filter(ApiDefinition.api_code == body.api_code).first()
     if existing:
@@ -76,6 +79,7 @@ def create_api_definition(
 
     api_def = ApiDefinition(
         user_id=user_id,
+        tenant_id=owner_tenant_id(user) if user is not None else None,
         name=body.name,
         api_code=body.api_code,
         description=body.description,
@@ -144,10 +148,14 @@ def list_api_definitions(
     status_filter: str | None = None,
     search: str | None = None,
     include_pending: bool = False,
+    user=None,
 ) -> PaginatedResponse[ApiDefinitionResponse]:
+    from app.core.deps import scope_filter
+
     _gc_stale_placeholders(db)
 
     q = db.query(ApiDefinition)
+    q = scope_filter(q, ApiDefinition, user)
     if status_filter:
         q = q.filter(ApiDefinition.status == status_filter)
     elif not include_pending:
@@ -172,15 +180,18 @@ def list_api_definitions(
 
 # ── Get ───────────────────────────────────────────────────────────────────────
 
-def get_api_definition(db: Session, api_def_id: uuid.UUID) -> ApiDefinitionResponse:
-    api_def = _get_or_404(db, api_def_id)
+def get_api_definition(db: Session, api_def_id: uuid.UUID, user=None) -> ApiDefinitionResponse:
+    api_def = _get_or_404(db, api_def_id, user)
     return _to_response(api_def)
 
 
-def _get_or_404(db: Session, api_def_id: uuid.UUID) -> ApiDefinition:
+def _get_or_404(db: Session, api_def_id: uuid.UUID, user=None) -> ApiDefinition:
     api_def = db.get(ApiDefinition, api_def_id)
     if not api_def:
         raise NotFoundError(f"ApiDefinition {api_def_id} not found")
+    if user is not None:
+        from app.core.deps import assert_can_access
+        assert_can_access(api_def, user)
     return api_def
 
 
@@ -197,8 +208,9 @@ def update_api_definition(
     db: Session,
     api_def_id: uuid.UUID,
     body: UpdateApiDefinitionRequest,
+    user=None,
 ) -> ApiDefinitionResponse:
-    api_def = _get_or_404(db, api_def_id)
+    api_def = _get_or_404(db, api_def_id, user)
 
     if body.name is not None:
         api_def.name = body.name
@@ -223,10 +235,11 @@ def update_api_status(
     db: Session,
     api_def_id: uuid.UUID,
     body: UpdateApiStatusRequest,
+    user=None,
 ) -> ApiDefinitionResponse:
     if body.action not in _VALID_ACTIONS:
         raise ValidationError(f"action must be one of {_VALID_ACTIONS}")
-    api_def = _get_or_404(db, api_def_id)
+    api_def = _get_or_404(db, api_def_id, user)
     api_def.status = _STATUS_MAP[body.action]
     db.commit()
     db.refresh(api_def)
@@ -235,8 +248,8 @@ def update_api_status(
 
 # ── Delete ────────────────────────────────────────────────────────────────────
 
-def delete_api_definition(db: Session, api_def_id: uuid.UUID) -> None:
-    api_def = _get_or_404(db, api_def_id)
+def delete_api_definition(db: Session, api_def_id: uuid.UUID, user=None) -> None:
+    api_def = _get_or_404(db, api_def_id, user)
     db.delete(api_def)
     db.commit()
 
@@ -248,14 +261,14 @@ def delete_api_definition(db: Session, api_def_id: uuid.UUID) -> None:
 # as `config["sample_document_ids"]: list[str]`. These three helpers keep
 # the list in sync and surface a typed view to the API layer.
 
-def list_sample_documents(db: Session, api_def_id: uuid.UUID) -> list:
+def list_sample_documents(db: Session, api_def_id: uuid.UUID, user=None) -> list:
     """Resolve config.sample_document_ids → list of Document ORM rows.
     Silently drops IDs whose Document was deleted."""
     from sqlalchemy.orm.attributes import flag_modified
 
     from app.models.document import Document
 
-    api_def = _get_or_404(db, api_def_id)
+    api_def = _get_or_404(db, api_def_id, user)
     cfg = dict(api_def.config or {})
     ids: list[str] = list(cfg.get("sample_document_ids") or [])
     if not ids:
@@ -287,6 +300,7 @@ def add_sample_document(
     filename: str,
     file_data: bytes,
     content_type: str | None,
+    user=None,
 ):
     """Upload a file, bind it to the API, run OCR using the API's active prompt,
     and append the new Document.id to config.sample_document_ids.
@@ -313,13 +327,14 @@ def add_sample_document(
         upload_document,
     )
 
-    _get_or_404(db, api_def_id)  # 404 guard
+    _get_or_404(db, api_def_id, user)  # 404 / access guard
     doc = upload_document(
         db,
         filename=filename,
         file_data=file_data,
         content_type=content_type,
         api_definition_id=api_def_id,
+        user=user,
     )
     bind_to_api_and_extract(db, doc, api_def_id)
     db.refresh(doc)
@@ -345,11 +360,12 @@ def remove_sample_document(
     *,
     api_def_id: uuid.UUID,
     document_id: uuid.UUID,
+    user=None,
 ) -> None:
     """Drop a Document from the sample set (does NOT delete the Document itself)."""
     from sqlalchemy.orm.attributes import flag_modified
 
-    api_def = _get_or_404(db, api_def_id)
+    api_def = _get_or_404(db, api_def_id, user)
     cfg = dict(api_def.config or {})
     ids: list[str] = list(cfg.get("sample_document_ids") or [])
     sid = str(document_id)
@@ -366,18 +382,18 @@ def remove_sample_document(
 
 # ── Stats & Docs ──────────────────────────────────────────────────────────────
 
-def get_stats(db: Session, api_def_id: uuid.UUID) -> ApiStatsResponse:
+def get_stats(db: Session, api_def_id: uuid.UUID, user=None) -> ApiStatsResponse:
     """
     Usage statistics from UsageRecord table.
     Prototype returns zeros until UsageRecord is populated.
     """
-    _get_or_404(db, api_def_id)
+    _get_or_404(db, api_def_id, user)
     # TODO: aggregate from UsageRecord when that model is added
     return ApiStatsResponse()
 
 
-def get_api_docs(db: Session, api_def_id: uuid.UUID) -> ApiDocsResponse:
-    api_def = _get_or_404(db, api_def_id)
+def get_api_docs(db: Session, api_def_id: uuid.UUID, user=None) -> ApiDocsResponse:
+    api_def = _get_or_404(db, api_def_id, user)
     return ApiDocsResponse(
         api_code=api_def.api_code,
         name=api_def.name,

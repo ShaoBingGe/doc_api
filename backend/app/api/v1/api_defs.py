@@ -9,7 +9,7 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_db
+from app.core.deps import get_current_user, get_db
 from app.ocr_optimizer.service import customer_iteration
 from app.schemas.api_definition import (
     ApiDefinitionResponse,
@@ -24,7 +24,14 @@ from app.schemas.document import DocumentResponse, DocumentUploadResponse
 from app.services import api_definition_service as svc
 from app.services import pending_edits_service
 
-router = APIRouter(prefix="/api-definitions", tags=["API Definitions"])
+# All endpoints require a valid JWT (router-level guard → 401 without token).
+# Handlers that scope/own data additionally take `user=Depends(get_current_user)`
+# (FastAPI caches the dependency within a request, so no double DB hit).
+router = APIRouter(
+    prefix="/api-definitions",
+    tags=["API Definitions"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.post(
@@ -36,8 +43,9 @@ router = APIRouter(prefix="/api-definitions", tags=["API Definitions"])
 def create_api_definition(
     body: CreateApiDefinitionRequest,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> ApiDefinitionResponse:
-    return svc.create_api_definition(db, body)
+    return svc.create_api_definition(db, body, user_id=user.id, user=user)
 
 
 @router.get(
@@ -55,6 +63,7 @@ def list_api_definitions(
         description="是否包含 pending_first_doc 占位 API（默认 false；§6.4）",
     ),
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> PaginatedResponse[ApiDefinitionResponse]:
     return svc.list_api_definitions(
         db,
@@ -63,6 +72,7 @@ def list_api_definitions(
         status_filter=status_filter,
         search=search,
         include_pending=include_pending,
+        user=user,
     )
 
 
@@ -74,8 +84,9 @@ def list_api_definitions(
 def get_api_definition(
     api_def_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> ApiDefinitionResponse:
-    return svc.get_api_definition(db, api_def_id)
+    return svc.get_api_definition(db, api_def_id, user=user)
 
 
 @router.put(
@@ -87,8 +98,9 @@ def update_api_definition(
     api_def_id: uuid.UUID,
     body: UpdateApiDefinitionRequest,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> ApiDefinitionResponse:
-    return svc.update_api_definition(db, api_def_id, body)
+    return svc.update_api_definition(db, api_def_id, body, user=user)
 
 
 @router.patch(
@@ -100,8 +112,9 @@ def update_api_status(
     api_def_id: uuid.UUID,
     body: UpdateApiStatusRequest,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> ApiDefinitionResponse:
-    return svc.update_api_status(db, api_def_id, body)
+    return svc.update_api_status(db, api_def_id, body, user=user)
 
 
 @router.get(
@@ -111,6 +124,7 @@ def update_api_status(
 def get_pending_edits(
     api_def_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> dict:
     """Return the live cross-sample edit overlay for this ApiDef.
 
@@ -121,6 +135,7 @@ def get_pending_edits(
 
     See backend/app/services/pending_edits_service.py for the shape.
     """
+    svc._get_or_404(db, api_def_id, user)  # access guard
     return pending_edits_service.get_overlay(db, api_def_id)
 
 
@@ -131,7 +146,9 @@ def get_pending_edits(
 def clear_pending_edits(
     api_def_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> dict:
+    svc._get_or_404(db, api_def_id, user)  # access guard
     pending_edits_service.clear_overlay(db, api_def_id)
     return {"ok": True}
 
@@ -144,6 +161,7 @@ def commit_draft_to_overlay(
     api_def_id: uuid.UUID,
     body: dict = Body(...),
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> dict:
     """Persist a workspace draft into ApiDefinition.pending_edits.
 
@@ -166,6 +184,8 @@ def commit_draft_to_overlay(
     badges, cascade rename, OCR overlay enhancement all fire from this
     single committed source.
     """
+    svc._get_or_404(db, api_def_id, user)  # access guard
+
     old_name = (body.get("old_name") or "").strip()
     new_name = (body.get("new_name") or "").strip()
     field_type = body.get("field_type") or "string"
@@ -220,6 +240,7 @@ def commit_draft_to_overlay(
 def get_required_fields(
     api_def_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> dict:
     """Return the canonical field set the customer wants on every sample.
 
@@ -231,7 +252,7 @@ def get_required_fields(
     Frontend uses this to render "本样本未识别 — 待补齐" placeholder rows
     so the customer can manually annotate fields the LLM missed.
     """
-    svc.get_api_definition(db, api_def_id)  # 404 guard
+    svc.get_api_definition(db, api_def_id, user=user)  # 404 / access guard
     overlay = pending_edits_service.get_overlay(db, api_def_id)
     fields = pending_edits_service.compute_required_field_set(db, api_def_id)
     return {
@@ -250,9 +271,10 @@ def get_required_fields(
 def get_versions(
     api_def_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> list[dict]:
     # TODO: implement when PromptVersion model is added
-    svc.get_api_definition(db, api_def_id)  # 404 guard
+    svc.get_api_definition(db, api_def_id, user=user)  # 404 / access guard
     return []
 
 
@@ -264,8 +286,9 @@ def get_versions(
 def get_api_docs(
     api_def_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> ApiDocsResponse:
-    return svc.get_api_docs(db, api_def_id)
+    return svc.get_api_docs(db, api_def_id, user=user)
 
 
 @router.get(
@@ -276,8 +299,9 @@ def get_api_docs(
 def get_stats(
     api_def_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> ApiStatsResponse:
-    return svc.get_stats(db, api_def_id)
+    return svc.get_stats(db, api_def_id, user=user)
 
 
 @router.delete(
@@ -288,8 +312,9 @@ def get_stats(
 def delete_api_definition(
     api_def_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> None:
-    svc.delete_api_definition(db, api_def_id)
+    svc.delete_api_definition(db, api_def_id, user=user)
 
 
 # ── Sample documents (batch optimization sample set) ─────────────────────────
@@ -302,8 +327,9 @@ def delete_api_definition(
 def list_sample_documents(
     api_def_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> list[DocumentResponse]:
-    docs = svc.list_sample_documents(db, api_def_id)
+    docs = svc.list_sample_documents(db, api_def_id, user=user)
     return [DocumentResponse.model_validate(d) for d in docs]
 
 
@@ -317,6 +343,7 @@ async def add_sample_document(
     api_def_id: uuid.UUID,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> DocumentUploadResponse:
     file_data = await file.read()
     doc = svc.add_sample_document(
@@ -325,6 +352,7 @@ async def add_sample_document(
         filename=file.filename or "upload",
         file_data=file_data,
         content_type=file.content_type,
+        user=user,
     )
     return DocumentUploadResponse.model_validate(doc)
 
@@ -338,9 +366,10 @@ def remove_sample_document(
     api_def_id: uuid.UUID,
     document_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> None:
     svc.remove_sample_document(
-        db, api_def_id=api_def_id, document_id=document_id
+        db, api_def_id=api_def_id, document_id=document_id, user=user
     )
 
 
@@ -359,11 +388,12 @@ def remove_sample_document(
 def list_samples_review_status(
     api_def_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> dict:
     from app.ocr_optimizer.service import customer_iteration as ci
     from app.ocr_optimizer.service.ground_truth import has_ground_truth
 
-    api = svc._get_or_404(db, api_def_id)
+    api = svc._get_or_404(db, api_def_id, user)
     ids: list[str] = (api.config or {}).get("sample_document_ids") or []
     per_doc = [
         {
@@ -391,10 +421,11 @@ def confirm_sample_gt(
     background: BackgroundTasks,
     body: dict = Body(default={"confirmed": True}),
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> dict:
     from app.ocr_optimizer.service import customer_iteration as ci
 
-    svc._get_or_404(db, api_def_id)
+    svc._get_or_404(db, api_def_id, user)
     confirmed = bool(body.get("confirmed", True))
     out = ci.set_sample_gt_confirmed(db, document_id, confirmed=confirmed)
     # Auto-resume if this confirmation just crossed the threshold
@@ -410,10 +441,11 @@ def retry_sample_ocr(
     api_def_id: uuid.UUID,
     document_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> dict:
     from app.ocr_optimizer.service import customer_iteration as ci
 
-    svc._get_or_404(db, api_def_id)
+    svc._get_or_404(db, api_def_id, user)
     return ci.retry_ocr_on_sample(
         db, api_definition_id=api_def_id, document_id=document_id,
     )
@@ -431,6 +463,7 @@ def customize_api_definition(
     background: BackgroundTasks,
     body: dict = Body(...),
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> dict:
     """Request body: {"diffs": [<FieldDiff>, ...]}
 
@@ -446,6 +479,8 @@ def customize_api_definition(
         "corrected_format": str | null
       }
     """
+    svc._get_or_404(db, api_def_id, user)  # access guard
+
     diffs = body.get("diffs") or []
     if not isinstance(diffs, list) or not diffs:
         raise HTTPException(status_code=400, detail="diffs must be a non-empty list")
@@ -503,10 +538,12 @@ def resume_customize_job_endpoint(
 def get_active_customize_job(
     api_def_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> dict | None:
     """Used by the frontend on workspace load: if there's an in-flight job
     (queued / waiting_for_samples / reflecting / forking / optimizing /
     failed), return it so the customize banner can be rehydrated."""
+    svc._get_or_404(db, api_def_id, user)  # access guard
     job = customer_iteration.find_latest_active_job_for_api(db, api_def_id)
     if not job:
         return None

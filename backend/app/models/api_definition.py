@@ -37,6 +37,10 @@ class ApiDefinition(UUIDMixin, TimestampMixin, Base):
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         nullable=True, comment="创建者 FK → users"
     )
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        nullable=True, index=True,
+        comment="归属租户 FK → tenants.id；None=平台桶（仅管理员可见）",
+    )
 
     # ── identity ───────────────────────────────────────────────────────────
     name: Mapped[str] = mapped_column(String(256), nullable=False, comment="API 显示名称")

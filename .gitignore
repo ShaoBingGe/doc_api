@@ -61,3 +61,5 @@ testing/test1_honor.zip
 # Golden eval set: keep GT answer key + manifest + exporter in git, but NOT the
 # raw invoice scans (PII + binary + regenerable via build_golden_set.py).
 backend/app/ocr_optimizer/eval/golden_set/*/docs/
+_latest_eval.json
+app/ocr_optimizer/eval/golden_set/*/_latest_eval.json

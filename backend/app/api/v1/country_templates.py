@@ -14,10 +14,10 @@ from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_db
+from app.core.deps import get_current_user, get_db
 from app.ocr_optimizer.service import preset_init, template_loader
 
-router = APIRouter(tags=["Country Templates"])
+router = APIRouter(tags=["Country Templates"], dependencies=[Depends(get_current_user)])
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -60,6 +60,9 @@ def list_country_templates() -> list[CountryTemplateInfo]:
 def create_from_country_template(
     body: FromCountryTemplateRequest,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> FromCountryTemplateResponse:
-    result = preset_init.init_from_country_template(db, body.country)
+    result = preset_init.init_from_country_template(
+        db, body.country, user_id=user.id, tenant_id=user.tenant_id,
+    )
     return FromCountryTemplateResponse(**result)

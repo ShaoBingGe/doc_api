@@ -91,6 +91,7 @@ def upload_document_with_annotations(
     content_type: str | None,
     annotations: list[dict],
     user_id: uuid.UUID | None = None,
+    user=None,
 ) -> Document:
     """
     Single-transaction upload of a document + its pre-labeled ground-truth annotations.
@@ -106,11 +107,14 @@ def upload_document_with_annotations(
     if not annotations:
         raise ValidationError("annotations list must not be empty")
 
+    from app.core.deps import owner_tenant_id
+
     file_type = _validate_file(filename, len(file_data), content_type)
     storage_path = _save_upload(file_data, filename)
 
     doc = Document(
         user_id=user_id,
+        tenant_id=owner_tenant_id(user) if user is not None else None,
         filename=filename,
         file_type=file_type,
         file_size=len(file_data),
@@ -180,6 +184,7 @@ def upload_document(
     template_id: uuid.UUID | None = None,
     api_definition_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
+    user=None,
 ) -> Document:
     """
     Persist the uploaded file and create a Document record.
@@ -189,11 +194,14 @@ def upload_document(
     `bind_to_api_and_extract` which runs OCR using the active OcrPromptVersion's
     composed_prompt. Otherwise the document stays in `queued`.
     """
+    from app.core.deps import owner_tenant_id
+
     file_type = _validate_file(filename, len(file_data), content_type)
     storage_path = _save_upload(file_data, filename)
 
     doc = Document(
         user_id=user_id,
+        tenant_id=owner_tenant_id(user) if user is not None else None,
         filename=filename,
         file_type=file_type,
         file_size=len(file_data),
@@ -678,10 +686,13 @@ def _infer_schema(data: dict) -> dict:
 
 # ── Query helpers ─────────────────────────────────────────────────────────────
 
-def get_document(db: Session, document_id: uuid.UUID) -> Document:
+def get_document(db: Session, document_id: uuid.UUID, user=None) -> Document:
     doc = db.get(Document, document_id)
     if not doc:
         raise NotFoundError(f"Document {document_id} not found")
+    if user is not None:
+        from app.core.deps import assert_can_access
+        assert_can_access(doc, user)
     return doc
 
 
@@ -694,8 +705,12 @@ def list_documents(
     file_type: str | None = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
+    user=None,
 ) -> PaginatedResponse[DocumentResponse]:
+    from app.core.deps import scope_filter
+
     q = db.query(Document)
+    q = scope_filter(q, Document, user)
     if status_filter:
         q = q.filter(Document.status == status_filter)
     if file_type:
@@ -716,8 +731,8 @@ def list_documents(
     )
 
 
-def get_document_detail(db: Session, document_id: uuid.UUID) -> DocumentDetail:
-    doc = get_document(db, document_id)
+def get_document_detail(db: Session, document_id: uuid.UUID, user=None) -> DocumentDetail:
+    doc = get_document(db, document_id, user)
     results = (
         db.query(ProcessingResult)
         .filter(ProcessingResult.document_id == document_id)

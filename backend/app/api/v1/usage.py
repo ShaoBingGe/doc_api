@@ -13,10 +13,14 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_db
+from app.core.deps import get_current_user, get_db
 from app.models.usage_record import UsageRecord
 
-router = APIRouter(prefix="/usage", tags=["Usage & Traffic"])
+router = APIRouter(
+    prefix="/usage",
+    tags=["Usage & Traffic"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 class DailyCount(BaseModel):

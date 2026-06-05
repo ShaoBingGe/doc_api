@@ -23,6 +23,10 @@ class ApiKey(UUIDMixin, Base):
     organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         nullable=True, comment="FK → organizations（原型阶段可为 None）"
     )
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        nullable=True, index=True,
+        comment="归属租户 FK → tenants.id；None=平台桶（仅管理员可见）",
+    )
 
     # ── identity ───────────────────────────────────────────────────────────
     name: Mapped[str] = mapped_column(

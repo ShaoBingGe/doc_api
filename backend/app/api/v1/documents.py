@@ -9,7 +9,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_db
+from app.core.deps import get_current_user, get_db
 from app.schemas.common import PaginatedResponse
 from app.schemas.document import (
     DocumentDetail,
@@ -23,7 +23,11 @@ from app.schemas.document import (
 )
 from app.services import document_service as svc
 
-router = APIRouter(prefix="/documents", tags=["Documents"])
+router = APIRouter(
+    prefix="/documents",
+    tags=["Documents"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.post(
@@ -38,6 +42,7 @@ async def upload_document(
     processor_type: str | None = Form(default=None),
     api_definition_id: uuid.UUID | None = Form(default=None),
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> DocumentUploadResponse:
     """
     Upload a document. When `api_definition_id` is provided (§6.4 country-template
@@ -53,6 +58,7 @@ async def upload_document(
         processor_type=processor_type,
         template_id=template_id,
         api_definition_id=api_definition_id,
+        user=user,
     )
     if api_definition_id:
         # Bind & auto-trigger OCR using the API's active prompt version.
@@ -73,6 +79,7 @@ async def upload_document_with_annotations(
         ..., description="JSON 文件，结构: {filename?, annotations: [{field_path, value}, ...]}"
     ),
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> DocumentUploadResponse:
     """
     Single-transaction upload of a labeled sample. All annotations are
@@ -128,6 +135,7 @@ async def upload_document_with_annotations(
         file_data=file_data,
         content_type=file.content_type,
         annotations=ann_list,
+        user=user,
     )
     return DocumentUploadResponse.model_validate(doc)
 
@@ -145,6 +153,7 @@ def list_documents(
     sort_by: str = Query(default="created_at"),
     sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> PaginatedResponse[DocumentResponse]:
     return svc.list_documents(
         db,
@@ -154,6 +163,7 @@ def list_documents(
         file_type=file_type,
         sort_by=sort_by,
         sort_order=sort_order,
+        user=user,
     )
 
 
@@ -165,8 +175,9 @@ def list_documents(
 def get_document(
     document_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> DocumentDetail:
-    return svc.get_document_detail(db, document_id)
+    return svc.get_document_detail(db, document_id, user=user)
 
 
 @router.get(
@@ -176,7 +187,9 @@ def get_document(
 def get_preview_url(
     document_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> dict:
+    svc.get_document(db, document_id, user)  # access guard
     url = svc.get_preview_url(db, document_id)
     return {"preview_url": url}
 
@@ -189,7 +202,9 @@ def get_preview_url(
 def get_processing_results(
     document_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> list[ProcessingResultResponse]:
+    svc.get_document(db, document_id, user)  # access guard
     return svc.get_processing_results(db, document_id)
 
 
@@ -203,7 +218,9 @@ def reprocess_document(
     document_id: uuid.UUID,
     body: ReprocessRequest,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> ProcessingResultResponse:
+    svc.get_document(db, document_id, user)  # access guard
     return svc.reprocess_document(db, document_id, body)
 
 
@@ -215,7 +232,9 @@ def reprocess_document(
 def delete_document(
     document_id: uuid.UUID,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> None:
+    svc.get_document(db, document_id, user)  # access guard
     svc.delete_document(db, document_id)
 
 
@@ -228,10 +247,11 @@ def region_ocr(
     document_id: uuid.UUID,
     body: RegionOcrRequest,
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> RegionOcrResponse:
     # TODO: implement in engine layer (T4 phase)
     # Returns stub response so the endpoint is callable
-    svc.get_document(db, document_id)  # 404 guard
+    svc.get_document(db, document_id, user)  # 404 / access guard
     return RegionOcrResponse(ocr_text="", auto_research_rounds=0)
 
 
@@ -244,5 +264,7 @@ def get_highlights(
     document_id: uuid.UUID,
     result_id: uuid.UUID | None = Query(default=None),
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> HighlightsResponse:
+    svc.get_document(db, document_id, user)  # access guard
     return svc.get_highlights(db, document_id, result_id)

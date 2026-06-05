@@ -39,6 +39,7 @@ def init_from_country_template(
     db: Session,
     country: str,
     user_id: uuid.UUID | None = None,
+    tenant_id: uuid.UUID | None = None,
 ) -> dict:
     """Create placeholder ApiDef + v1 + 30 modules atomically.
 
@@ -60,6 +61,7 @@ def init_from_country_template(
 
     api_def = ApiDefinition(
         user_id=user_id,
+        tenant_id=tenant_id,
         name=name,
         api_code=api_code,
         description=f"Placeholder API created from {country} preset template",

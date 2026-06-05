@@ -9,12 +9,18 @@ that country's customer iterations.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.core.deps import require_roles
+from app.models.user import UserRole
 from app.ocr_optimizer.reflection import country_agents_loader as cal
 
-router = APIRouter(tags=["Reflection Agents"])
+# Country reflection agents are platform knowledge — only platform admins.
+router = APIRouter(
+    tags=["Reflection Agents"],
+    dependencies=[Depends(require_roles(UserRole.super_admin, UserRole.system_admin))],
+)
 
 
 class AgentResponse(BaseModel):

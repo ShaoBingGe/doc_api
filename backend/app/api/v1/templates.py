@@ -11,12 +11,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_db
+from app.core.deps import get_current_user, get_db
 from app.core.exceptions import NotFoundError
 from app.schemas.api_definition import ApiDefinitionResponse
 from app.services import template_service as svc
 
-router = APIRouter(prefix="/templates", tags=["Templates"])
+router = APIRouter(prefix="/templates", tags=["Templates"], dependencies=[Depends(get_current_user)])
 
 
 @router.get("")
@@ -40,5 +40,6 @@ def subscribe_template(
     template_id: str,
     name: str | None = Query(default=None, description="Custom name override"),
     db: Session = Depends(get_db),
+    user=Depends(get_current_user),
 ) -> ApiDefinitionResponse:
-    return svc.subscribe_template(db, template_id, custom_name=name)
+    return svc.subscribe_template(db, template_id, custom_name=name, user=user)

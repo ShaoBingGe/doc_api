@@ -298,6 +298,7 @@ def subscribe_template(
     db: Session,
     template_id: str,
     custom_name: str | None = None,
+    user=None,
 ) -> Any:
     """Create an ApiDefinition from a template. Returns ApiDefinitionResponse."""
     from app.core.exceptions import NotFoundError
@@ -318,4 +319,6 @@ def subscribe_template(
         model_name=template["model_name"],
         config={"source_template_id": template_id},
     )
-    return api_definition_service.create_api_definition(db, body)
+    return api_definition_service.create_api_definition(
+        db, body, user_id=getattr(user, "id", None), user=user,
+    )
