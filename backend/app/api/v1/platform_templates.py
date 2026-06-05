@@ -48,11 +48,11 @@ def get_golden_seed_file(country: str, seed_id: str) -> FileResponse:
 @router.post("/golden/{country}/evaluate", summary="用当前国家模板对黄金集跑 OCR（按需）")
 def evaluate_golden(
     country: str,
-    processor: str = Query(default="gemini", description="OCR processor spec"),
+    processor: str | None = Query(default=None, description="OCR processor spec；留空用 DEFAULT_PROCESSOR"),
     limit: int = Query(default=0, ge=0, description="0 = 全部种子"),
     db: Session = Depends(get_db),
 ) -> dict:
-    return golden_review.evaluate(db, country, processor_spec=processor, limit=limit)
+    return golden_review.evaluate(db, country, processor_spec=processor or None, limit=limit)
 
 
 @router.get("/golden/{country}/evaluation", summary="读取缓存的最新评测结果")

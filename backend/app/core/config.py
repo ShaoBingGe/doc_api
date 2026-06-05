@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     # LLM_FALLBACK_CHAIN isn't configured. Sensible Q2-2026 default.
     GEMINI_MODEL: str = "gemini-2.5-flash"
     OPENAI_API_KEY: str = ""
+    # 阿里云百炼 / DashScope（qwen-vl-ocr 视觉 OCR + qwen-plus 文本），OpenAI 兼容端点。
+    # 大陆云实例用它替代不可达的 Gemini。
+    QWEN_API_KEY: str = ""
+    QWEN_MODEL: str = "qwen-vl-plus"         # 生产 OCR（视觉）；vl-plus 抽取质量/速度均衡
+    QWEN_TEXT_MODEL: str = "qwen-plus"       # 反思/优化（文本）
+    DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     # Failover chain for reflection / optimizer LLM calls. Semicolon-separated
     # `provider|model` entries; first one that succeeds wins. The chain ONLY
     # applies to text-completion calls (reflection, module_optimizer,

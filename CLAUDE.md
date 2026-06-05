@@ -103,8 +103,10 @@ backend/app/
     service/template_loader.py 读国家模板 yaml → 字段模块
     service/reconciler.py      跨轮矛盾消解
     reflection/                反思 skill（yaml）+ 国别 agent + 公共基底
-    eval/                      评测 harness + 黄金集 + CLI
+    eval/                      评测 harness + 黄金集 + CLI + golden_review（黄金审阅）
+  api/v1/platform_templates.py 平台管理员：国家模板 / 黄金种子审阅（仅 super/system admin）
 frontend/src/        pages / components / stores / lib/api-client.ts
+  pages/admin/       SystemAdmins / TenantAdmins / CountryTemplates（国家模板审阅页）
 <COUNTRY>_invoice_prompt.yaml   国家模板（仓库根，只读）
 ```
 
@@ -120,6 +122,7 @@ frontend/src/        pages / components / stores / lib/api-client.ts
 | `OcrModule.skill_ids` | 只读硬拷贝，optimizer 不能写 |
 | `Annotation.is_corrected` | True = Ground Truth；**仅客户显式「已审视」/编辑触发，不允许自动批量置 True** |
 | `User` / `Tenant` | 角色 + 可空 tenant_id；停用用 `is_active`，**不物理删**（审计资产） |
+| `ApiDefinition` / `Document` / `ApiKey` | 各带 `tenant_id`（归属租户；None=平台桶仅管理员可见）；启动幂等补列 |
 
 历史模块/版本/用户一律**软删除**（`status='archived'` / `is_active=False`），**永不 SQL DELETE**。
 
@@ -165,11 +168,13 @@ pending_first_doc ─ 保存生成 ─► pending_review(待验证) ─ 激活�
                                          └──────────  deprecated(已停用) ◄┘
 ```
 
-### 3.7 认证
+### 3.7 认证与租户隔离
 
-- **管理 UI / 角色管理**：`Authorization: Bearer <JWT>`（HS256，`core/security.py` 签发）。
-- **公有提取端点** `/api/v1/extract/`：`X-API-Key`（只存 SHA-256 哈希，明文仅创建时返回一次）。
+- **管理 UI / 角色管理**：`Authorization: Bearer <JWT>`（HS256，`core/security.py` 签发）。所有数据接口强制 JWT（无 token → 401）。
+- **公有提取端点** `/api/v1/extract/`：`X-API-Key`（只存 SHA-256 哈希，明文仅创建时返回一次）；不受 JWT 隔离影响。
 - 密码用 bcrypt 哈希。普通用户走「邮箱+验证码」，邮箱须由用户管理员预先开通。
+- **租户数据隔离**（`core/deps`）：`scope_filter` 给 list 加 `tenant_id` 过滤、`assert_can_access` 校验单条归属（越权返回 **404** 不泄露存在性）、`owner_tenant_id` 创建时盖章；**平台管理员（tenant_id 为空）一律绕过**→ 跨租户全可见。
+- **强制点在路由层**：每个数据 router 挂 `Depends(get_current_user)`，OCR 优化 router 用 router 级 `verify_api_def_access` 一次守住全部嵌套路由；service 的 scope 参数**可选默认不过滤**（不污染纯 service 层测试）。
 
 ---
 
@@ -232,6 +237,7 @@ cd backend && pytest -q                         # 独立 test DB，不污染 dev
 | 看某轮失败原因 | `OcrModuleIteration.optimization_suggestion`（含判官 reject 注释） |
 | 反思没生效 | 查 `skill_count > 0`；为 0 多半是 LLM 不通或 match 谓词没命中 |
 | 平台改机器后回归 | 在冻结黄金集上跑 `python -m app.ocr_optimizer.eval.run_golden_batch --country MY` |
+| UI 审阅黄金种子冲突 | 管理控制台「国家模板」Tab → 选国家 →「重新评测」（`POST /api/v1/platform/golden/{country}/evaluate`，按需+缓存） |
 
 ---
 

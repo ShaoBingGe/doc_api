@@ -61,7 +61,7 @@ export default function CountryTemplates() {
     setEvaluating(true)
     toast.info('正在用当前国家模板对黄金集跑 OCR，请稍候…')
     try {
-      const { data } = await evaluateGolden(country, { processor: 'gemini' })
+      const { data } = await evaluateGolden(country)
       if (data.error) {
         toast.error(`评测失败：${data.error}${data.detail ? ' · ' + data.detail : ''}`)
       } else {

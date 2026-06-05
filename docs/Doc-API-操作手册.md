@@ -31,6 +31,7 @@
 | 前端 | React + TypeScript + Vite，端口 **5173** |
 | 两个入口 | **用户入口** `/login`、**管理员入口** `/admin/login` |
 | 两套认证 | 管理 UI 用 JWT；提取 API 用 `X-API-Key` |
+| 数据隔离 | **按租户隔离**：用户只能看本租户的 API / 文档 / Key / prompt / 迭代；平台管理员跨租户全可见 |
 
 **心智模型一句话**：你不写识别规则，你只「改字段 + 传样本」，平台自动把规则迭代到稳定可用。
 
@@ -110,6 +111,23 @@ npm run dev
 
 > 生产环境请在首次登录后立即修改默认密码，并改 `.env` 中的默认凭证与 `SECRET_KEY`。
 
+### 3.4 数据隔离与可见范围（多租户）
+
+所有数据接口都**强制登录**（管理 UI 走 `Authorization: Bearer <JWT>`），并按**租户**隔离：
+
+| 身份 | 能看到的数据 |
+|---|---|
+| 用户管理员 / 普通用户 | **仅本租户**的 API、文档、API Key、prompt 版本、迭代过程 |
+| 超级管理员 / 系统管理员 | **跨租户全部**用户数据、文档、prompt 与迭代过程 |
+
+规则与细节：
+- 每条数据创建时按创建者的租户盖上 `tenant_id`；平台管理员创建的数据归入「平台桶」（仅管理员可见）。
+- 跨租户访问他人资源一律返回 **404**（不泄露存在性），而非 403。
+- **公有提取端点** `/api/v1/extract/` 仍走 `X-API-Key`，不受 JWT 隔离影响（密钥本身已绑定到具体 API）。
+- 同一租户内的用户管理员与普通用户**共享**该租户的数据。
+
+> 升级既有库：后端启动时会幂等地为数据表补 `tenant_id` 列（原型 SQLite 用轻量 `ALTER`；生产 PostgreSQL 建议走正式迁移）。
+
 ---
 
 ## 4. 平台管理员操作
@@ -132,7 +150,22 @@ npm run dev
 
 ### 4.3 进入模板优化平台
 
-顶部「模板优化平台」按钮 → 处理国家模板、黄金种子、优化迭代（详见 §8）。
+顶部「模板优化平台」按钮 → 国家模板字段总览 / OCR 优化器视图（详见 §8）。
+
+### 4.4 国家模板 / 黄金种子审阅页（Tab「国家模板」）
+
+管理控制台新增「**国家模板**」Tab（仅平台管理员可见），用于审阅各国模板的黄金种子与人工复核数据：
+
+1. 顶部选择**国家**（如 MY）与模板**种类**（目前为 invoice）。
+2. 主体把该国**黄金种子样本纵向排列**，每行 **样本 PDF 在左、数据集在右**：
+   - 右侧默认平铺**人工复核确认过的标注数据（GT）**。
+3. 点右上「**重新评测**」→ 用**当前国家模板 prompt** 对黄金集跑一遍 OCR（按需触发、结果缓存）：
+   - 识别结果**与标注一致**的字段：**不加任何视觉效果**；
+   - **有冲突**的字段：琥珀色高亮，并**并排展示「标注 GT」与「最新模板识别值」**（参考字段优化对比的设计）。
+4. 评测为**按需 + 缓存**：进入页面读最近一次缓存结果；未评测过则显示「尚未评测」，只看 GT。
+   Gemini 不可用时评测会优雅失败（不报 500），GT 视图始终可用。
+
+> 用途：直观看出「当前国家模板」在黄金集上哪些字段还识别不准，指导平台侧改模板 / 机器。
 
 ---
 
@@ -245,6 +278,11 @@ python -m app.ocr_optimizer.eval.run_golden_batch --country MY --size 5
 
 > 红线：黄金门槛只在平台改机器时离线运行，**永不**接进客户迭代；客户 prompt 过不过由客户自己的样本（模糊评分）决定。
 
+### 8.4 在线审阅（管理控制台「国家模板」Tab）
+
+除了上面的 CLI，平台管理员也可在 UI 上直接审阅黄金种子与冲突——见 §4.4。
+该页的「重新评测」与 CLI 同源（复用同一评测 harness），区别只是：UI 评测**全量逐字段**展示「GT vs 最新模板识别值」，CLI 做的是**可比批跑**的严格分对比。
+
 ---
 
 ## 9. 常见问题与排障
@@ -254,6 +292,10 @@ python -m app.ocr_optimizer.eval.run_golden_batch --country MY --size 5
 | 登录后又被弹回登录页 | token 过期；重新登录。检查后端是否在 8000 运行 |
 | 普通用户用验证码登不进 | 该邮箱未被用户管理员开通；或验证码不是 `666666` |
 | 管理控制台 / OCR 优化器入口看不到 | 当前角色非平台管理员（仅 super/system admin 可见） |
+| 登录后 API / 文档列表是空的 | 正常：新租户初始无数据；本租户只看本租户数据。要看历史测试数据用对应账号（如 `admin@acme.com`） |
+| 数据接口返回 401 | 管理 UI 请求缺少有效 JWT；重新登录获取 token |
+| 访问他人资源返回 404 | 跨租户访问被隔离（故意返回 404 不暴露存在性），并非数据丢失 |
+| 「国家模板」页一直「尚未评测」 | 还没点过「重新评测」，或 Gemini 不可用导致评测失败；GT 仍可正常查看 |
 | 系统管理员建系统管理员报 403 | 设计如此：仅超级管理员可建系统管理员 |
 | 保存后字段集丢失 / 识别结果异常 | 确认样本已正确「已审视」；查看「优化过程」面板的逐轮结果 |
 | 提取 API 返回 401 | `X-API-Key` 缺失或已吊销；重新创建 Key |
@@ -281,12 +323,14 @@ python -m app.ocr_optimizer.eval.run_golden_batch --country MY --size 5
 
 ```
 backend/app/
-  api/v1/            HTTP 路由：auth / documents / api_defs / extract / ocr-optimizer …
-  core/              config / database / security / deps / exceptions
-  models/            ORM 模型
+  api/v1/            HTTP 路由：auth / documents / api_defs / extract / ocr-optimizer
+                     / admin_users / tenant_users / platform_templates …
+  core/              config / database / security / deps（含租户访问控制助手）/ exceptions
+  models/            ORM 模型（User / Tenant + 数据表的 tenant_id）
   services/          业务服务层
-  ocr_optimizer/     prompt 优化引擎 + 反思 + 评测 + 黄金集
+  ocr_optimizer/     prompt 优化引擎 + 反思 + 评测 + 黄金集 + golden_review（黄金审阅）
 frontend/src/        pages / components / stores / lib/api-client.ts
+  pages/admin/       SystemAdmins / TenantAdmins / CountryTemplates（国家模板审阅页）
 <COUNTRY>_invoice_prompt.yaml   国家模板（只读）
 docs/                文档（含本手册）
 ```
@@ -307,6 +351,12 @@ docs/                文档（含本手册）
 | PATCH | `/api/v1/api-definitions/{id}/status` | 待验证 / 激活 / 停用 |
 | POST | `/api/v1/extract/{api_code}` | **公有提取端点**（`X-API-Key`） |
 | GET/POST | `/api/v1/api-keys` | API Key 管理 |
+| GET | `/api/v1/platform/country-templates` | 国家模板 + 种类（平台管理员） |
+| GET | `/api/v1/platform/golden/{country}/seeds` | 黄金种子 + 人工 GT（平台管理员） |
+| POST | `/api/v1/platform/golden/{country}/evaluate` | 按需用当前模板跑 OCR + 缓存（平台管理员） |
+| GET | `/api/v1/platform/golden/{country}/evaluation` | 读取缓存评测结果（平台管理员） |
+
+> 说明：除 `/auth/*` 与公有 `/extract/*` 外，**所有数据接口均需 JWT**；返回数据已按当前用户的租户隔离（平台管理员跨租户全可见）。
 
 ### 10.4 安全提示
 

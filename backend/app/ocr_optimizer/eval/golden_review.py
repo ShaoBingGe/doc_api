@@ -154,7 +154,10 @@ def _leaf(json_path: str | None) -> str:
 
 # ── 3.2 evaluate (on-demand) + cache ──────────────────────────────────────────
 
-def evaluate(db, country: str, *, processor_spec: str = "gemini", limit: int = 0) -> dict:
+def evaluate(db, country: str, *, processor_spec: str | None = None, limit: int = 0) -> dict:
+    if not processor_spec:
+        from app.core.config import get_settings
+        processor_spec = get_settings().DEFAULT_PROCESSOR or "mock"
     """OCR golden seeds with the current country prompt, build per-seed per-field
     conflict data (GT vs latest), cache it, and return it. Never raises on OCR
     failure — degrades to a structured `failed`/`ocr_error` result."""
@@ -178,7 +181,10 @@ def evaluate(db, country: str, *, processor_spec: str = "gemini", limit: int = 0
     if limit > 0:
         items = items[:limit]
     sample_ids = [uuid.UUID(did) for did, _ in items]
-    gts = {did: g["gt"] for did, g in items}
+    # IMPORTANT: run_ocr_on_samples keys its outputs by str(uuid) (DASHED), so the
+    # ground-truth dict must use the SAME dashed key or score_outputs can't pair
+    # them (→ every field scores None). Golden manifest ids are no-dash hex.
+    gts = {str(uuid.UUID(did)): g["gt"] for did, g in items}
 
     try:
         report = evaluate_prompt(
@@ -200,14 +206,22 @@ def evaluate(db, country: str, *, processor_spec: str = "gemini", limit: int = 0
             "per_seed": {},
         }
 
-    # Group per_sample → per seed → list of {field, gt, latest, conflict}
+    # Group per_sample → per seed. per_seed is keyed by the no-dash hex seed id
+    # (matches load_seeds + the frontend); score_outputs' doc_id is the dashed
+    # uuid str, so normalize back to no-dash hex.
+    def _hex(s) -> str:
+        try:
+            return uuid.UUID(str(s)).hex
+        except (ValueError, TypeError):
+            return str(s)
+
     per_seed: dict[str, dict] = {
         s["seed_id"]: {"ocr_error": False, "fields": []} for s in seeds
     }
     for m in report.module_scores:
         field_name = name_by_key.get(m.module_key, m.module_key)
         for p in m.per_sample:
-            sid = str(p.get("doc_id"))
+            sid = _hex(p.get("doc_id"))
             bucket = per_seed.setdefault(sid, {"ocr_error": False, "fields": []})
             bucket["fields"].append({
                 "field": field_name,
@@ -217,8 +231,9 @@ def evaluate(db, country: str, *, processor_spec: str = "gemini", limit: int = 0
                 "conflict": not p.get("matched", False),
             })
     for did in report.ocr_error_doc_ids:
-        if did in per_seed:
-            per_seed[did]["ocr_error"] = True
+        sid = _hex(did)
+        if sid in per_seed:
+            per_seed[sid]["ocr_error"] = True
 
     total_conflicts = sum(
         1 for b in per_seed.values() for f in b["fields"] if f["conflict"]

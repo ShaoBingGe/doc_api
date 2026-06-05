@@ -42,6 +42,13 @@ except ImportError:
     _PIAOZONE_AVAILABLE = False
     logger.warning("PiaoZoneProcessor not available (missing requests)")
 
+try:
+    from app.processors.qwen_processor import QwenProcessor
+    _QWEN_AVAILABLE = True
+except ImportError:
+    _QWEN_AVAILABLE = False
+    logger.warning("QwenProcessor not available (missing httpx/pymupdf)")
+
 
 class ProcessorFactory:
     """Factory that creates and caches DocumentProcessor instances."""
@@ -60,6 +67,8 @@ class ProcessorFactory:
             reg["openai"] = OpenAIDocumentProcessor  # type: ignore[assignment]
         if _PIAOZONE_AVAILABLE:
             reg["piaozone"] = PiaoZoneProcessor  # type: ignore[assignment]
+        if _QWEN_AVAILABLE:
+            reg["qwen"] = QwenProcessor  # type: ignore[assignment]
         return reg
 
     @classmethod

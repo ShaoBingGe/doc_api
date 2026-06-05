@@ -59,6 +59,14 @@ def init_from_country_template(
     name = f"{country}_invoice_{short_hex}"
     api_code = f"{country.lower()}-invoice-{short_hex}"
 
+    # Production OCR processor follows the deployment config (DEFAULT_PROCESSOR):
+    # gemini (overseas) / qwen (大陆云) / mock (dev). model_name is informational —
+    # each processor resolves its own model and ignores foreign names.
+    from app.core.config import get_settings
+    _s = get_settings()
+    _proc = _s.DEFAULT_PROCESSOR or "gemini"
+    _model = {"qwen": _s.QWEN_MODEL, "gemini": _s.GEMINI_MODEL}.get(_proc, _proc)
+
     api_def = ApiDefinition(
         user_id=user_id,
         tenant_id=tenant_id,
@@ -68,8 +76,8 @@ def init_from_country_template(
         status=ApiDefinitionStatus.pending_first_doc.value,
         version=1,
         response_schema=decomposed["json_schema"],
-        processor_type="gemini",
-        model_name="gemini-2.5-flash",
+        processor_type=_proc,
+        model_name=_model,
         config={
             "source_country": country,
             "preset_yaml": f"{country}_invoice_prompt.yaml",

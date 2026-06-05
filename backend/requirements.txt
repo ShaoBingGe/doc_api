@@ -32,9 +32,13 @@ aiofiles>=24.0.0
 # HTTP client (file URL fetching)
 httpx>=0.27.0
 
-# AI processors (uncomment as needed)
-# google-generativeai>=0.8.0
+# AI processors
+# google-genai: overseas OCR (Gemini). Install where Gemini is reachable.
+# google-genai>=0.8.0
 # openai>=1.50.0
+# Qwen / 阿里云百炼 (qwen-vl-ocr) processor — uses httpx (already above) +
+# PyMuPDF to render PDF pages to images. Enable on 大陆云 instances.
+pymupdf>=1.24.0
 
 # Dev / test
 pytest>=8.0.0

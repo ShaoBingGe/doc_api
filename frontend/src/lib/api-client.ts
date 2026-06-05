@@ -425,10 +425,12 @@ export function goldenFileUrl(country: string, seedId: string): string {
   return `${baseURL}/api/v1/platform/golden/${country}/seeds/${seedId}/file`
 }
 export function evaluateGolden(country: string, opts: { processor?: string; limit?: number } = {}) {
+  const params: Record<string, unknown> = { limit: opts.limit ?? 0 }
+  if (opts.processor) params.processor = opts.processor // else backend uses DEFAULT_PROCESSOR
   return apiClient.post<GoldenEvaluation>(
     `/api/v1/platform/golden/${country}/evaluate`,
     null,
-    { params: { processor: opts.processor ?? 'gemini', limit: opts.limit ?? 0 }, timeout: 600_000 },
+    { params, timeout: 600_000 },
   )
 }
 export function fetchGoldenEvaluation(country: string) {
