@@ -194,6 +194,48 @@ def _build_cross_doc_context_for_diffs(
     return deduped
 
 
+def _build_sample_outputs(db: Session, api_def_id: uuid.UUID) -> dict[str, dict]:
+    """收集 ApiDef 每个样本最新一次 OCR 的完整 structured_data。
+
+    供反思层做「全文检索」（edit_intent.search_value_in_outputs）：客户填写
+    的正确值若出现在输出 JSON 的其他字段下，说明当前规则抓错了来源——检索
+    命中路径直接揭示真实锚点。键用文件名（比 UUID 对 LLM 可读）。
+    """
+    from app.models.api_definition import ApiDefinition as _ApiDef
+    from app.models.document import Document as _Document, ProcessingResult as _PR
+
+    api_def = db.get(_ApiDef, api_def_id)
+    if not api_def:
+        return {}
+    sample_ids: list[uuid.UUID] = []
+    for s in (api_def.config or {}).get("sample_document_ids") or []:
+        try:
+            sample_ids.append(uuid.UUID(str(s)))
+        except Exception:  # noqa: BLE001
+            continue
+    if not sample_ids:
+        return {}
+
+    docs = db.query(_Document).filter(_Document.id.in_(sample_ids)).all()
+    out: dict[str, dict] = {}
+    for doc in docs:
+        pr = (
+            db.query(_PR)
+            .filter(_PR.document_id == doc.id)
+            .order_by(_PR.version.desc())
+            .first()
+        )
+        data = pr.structured_data if pr else None
+        if data is None:
+            continue
+        label = doc.filename or str(doc.id)
+        # 同名文件去重：后缀编号，保证每个样本都进语料
+        if label in out:
+            label = f"{label}#{str(doc.id)[:6]}"
+        out[label] = data
+    return out
+
+
 # (C4 cleanup) — _mirror_source_samples_to_fork removed.
 # Phase 19 collapsed the fork ApiDef onto source, so there's no longer a
 # second ApiDef to mirror docs to. Every call site was either
@@ -1091,6 +1133,9 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
     # Phase 14b — build cross-doc context so the agent sees how each
     # edited / added field actually appears on every confirmed sample.
     cross_doc_context = _build_cross_doc_context_for_diffs(db, src_id, diffs)
+    # 全文检索语料：每个样本最新一次 OCR 的完整结构化输出。RETARGET 型
+    # 修正（客户改了识别内容本身）靠它定位「正确值实际藏在哪个字段下」。
+    sample_outputs = _build_sample_outputs(db, src_id)
     from app.processors.factory import ProcessorFactory as _PF
     _refl_proc, _refl_model = _PF.resolve_spec(
         src_api.processor_type, src_api.model_name
@@ -1102,6 +1147,7 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
         model_name=_refl_model,
         country=src_country,
         cross_doc_context=cross_doc_context,
+        sample_outputs=sample_outputs,
     )
     reflection_summary = [
         {
@@ -1803,10 +1849,14 @@ def _fork_api_definition(
             # a fresh suggestion can contradict an earlier one. Instead of
             # blindly appending (which stacks contradictions), collapse them
             # into ONE coherent prompt that prioritizes the latest intent.
-            # Only fires on already-accumulated prompts (bounds LLM cost);
-            # fail-open → _clone_module falls back to blind-append.
+            # 统筹整合扩展：除「有新建议 + 已有累积」外，模块体**膨胀**时
+            # （反馈块 ≥2 或正文 >600 字符）也触发纯整合（new_suggestions
+            # 允许为空）——把堆叠的历史反馈一次性收敛为单一自洽规则集，
+            # 而不是无限 append。fail-open → _clone_module 回退盲目追加
+            # （composer 端还有确定性去重折叠兜底）。
             new_sugs = list(getattr(r, "fix_suggestions", []) or [])
-            if new_sugs and _reconciler.has_accumulated_feedback(m.ocr_prompt):
+            bloated = _reconciler.is_bloated(m.ocr_prompt)
+            if (new_sugs or bloated) and _reconciler.has_accumulated_feedback(m.ocr_prompt):
                 from app.processors.factory import ProcessorFactory as _PF_rec
                 _rec_proc, _rec_model = _PF_rec.resolve_spec(
                     src_api.processor_type, src_api.model_name

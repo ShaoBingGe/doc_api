@@ -2,7 +2,7 @@ key: my_edit_field_reflection
 display_name: MY 修改字段反思 Agent
 country: MY
 kind: edit
-version: 3
+version: 4
 remark: |-
   马来西亚发票字段修改反思 agent。客户在 MY 模板上修正字段值/名称/格式时调用。
   叠加 MY 票面常见的失败模式：SST/TIN 号被混淆、双货币票面取错、千分位错位等。
@@ -34,6 +34,9 @@ user_prompt_template: |-
   - 原始格式: {original_format} → 修正后: {corrected_format}
 
   # 分析（基于 MY 票面知识）
+  0. **优先采信文末的系统证据块**（若有）：「编辑意图分析」（NORMALIZE=输出
+     规范问题，附客户删除的确切字符；RETARGET=取值来源错误）与「全文检索
+     报告」（正确值实际藏在哪个字段下）——证据先行，不要凭值对猜根因。
   1. 是否抓错相似字段（SST/TIN/SSM/Invoice No. 互混）？
   2. 是否粘连相邻字符（RM 符号、单位、千分位）？
   3. 文档多次出现类似串时取错那个？

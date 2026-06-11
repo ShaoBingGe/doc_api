@@ -30,12 +30,16 @@ logger = logging.getLogger(__name__)
 _FEEDBACK_MARKER = "# 客户反馈补充"
 
 _RECONCILER_SYSTEM = (
-    "你是 OCR 字段 prompt 的「协调器」。给你一个字段当前的 prompt（可能在多轮迭代里"
-    "累积了相互矛盾的指令）、本轮新的修订建议、该字段的结构化规则，以及最新的客户意图。"
+    "你是 OCR 字段 prompt 的「协调器 / 统筹器」。给你一个字段当前的 prompt（可能在多轮迭代里"
+    "累积了相互矛盾或重复的指令）、本轮新的修订建议（可能为空——为空时本次是纯统筹整合）、"
+    "该字段的结构化规则，以及最新的客户意图。"
     "请产出**一份单一、自洽、无矛盾**的字段 prompt：\n"
     "1. 当指令冲突时，**一律以「最新客户意图」为准**，删除与之矛盾的旧指令；\n"
-    "2. 保留仍然有用的识别要点（语义、相对锚点、格式、排歧），但去重、合并；\n"
-    "3. 不要发明客户没要求的新规则；保持简洁。\n"
+    "2. 保留仍然有用的识别要点（语义、标签别名、相对锚点、格式/值模式/枚举、排歧），"
+    "但去重、合并——同义指令并成一条，多条格式规则统一为一条完整规范；\n"
+    "3. 统筹后的 prompt 应按「语义 → 别名 → 锚点 → 格式约束 → 排歧」组织，"
+    "不保留「第 N 轮反馈」之类的过程性标注；\n"
+    "4. 不要发明客户没要求的新规则；保持简洁（目标 ≤300 字）。\n"
     "只返回严格 JSON：{\"coherent_prompt\": <字符串>, \"dropped\": [<被删除/被取代的旧规则>], "
     "\"rationale\": <一句话说明>}。不要 markdown 围栏。"
 )
@@ -45,6 +49,22 @@ def has_accumulated_feedback(prompt: str | None) -> bool:
     """True when the prompt already carries >= 1 accumulated feedback block, i.e.
     a later round could introduce a contradiction worth reconciling."""
     return bool(prompt) and prompt.count(_FEEDBACK_MARKER) >= 1
+
+
+# 模块体「膨胀」阈值：反馈块 ≥2 或正文超长 → 即便本轮没有新建议，也值得
+# 做一次纯统筹整合（把堆叠的历史反馈收敛为单一规则集）。
+BLOAT_FEEDBACK_BLOCKS = 2
+BLOAT_PROMPT_CHARS = 600
+
+
+def is_bloated(prompt: str | None) -> bool:
+    """True 当模块 prompt 已经因反馈堆叠而膨胀，应触发统筹整合。"""
+    if not prompt:
+        return False
+    return (
+        prompt.count(_FEEDBACK_MARKER) >= BLOAT_FEEDBACK_BLOCKS
+        or len(prompt) > BLOAT_PROMPT_CHARS
+    )
 
 
 def reconcile_module_prompt(

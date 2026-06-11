@@ -1,6 +1,6 @@
 key: value_mismatch
 display_name: 值不一致反思
-version: 3
+version: 4
 # Matcher: original had a value, customer changed it.
 match:
   diff_kind: edit
@@ -24,7 +24,12 @@ prompt: |
   - 客户填写的正确值: {corrected_value}
 
   ## 分析要点（先诊断，再泛化）
+  0. **优先采信下方的系统证据块**（若有）：「编辑意图分析」给出字符级判定
+     （NORMALIZE=输出规范问题 / RETARGET=取值来源错误），「全文检索报告」
+     给出正确值在 OCR 输出中的真实出现位置——据此直接定位根因，不要另行猜测。
   1. 是否抓错了字段（如把 "Customer No." 当成 "Invoice No."）？
+     —— 若检索报告显示正确值出现在其他字段下，答案即是；把该来源的邻近标签
+     写进取值锚点，并在排歧中写明与误抓位置的区分依据。
   2. 是否粘连了相邻字符（货币符号/单位/千分位）？
   3. 文档中出现多次类似字符串时，是否取错了那个？
   4. 数据类型/精度问题（截断小数、丢前导零）？

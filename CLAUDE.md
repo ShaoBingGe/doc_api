@@ -148,10 +148,22 @@ GLOBAL_SELF_CHECK               ← 输出前自检（写死在 composer.py）
 - **composer**（`service/composer.py`）：把字段模块 + 四段契约拼成最终 prompt/schema。
   纯字符串拼接 + JSON merge，**永不调 LLM**；json_path 冲突 → `raise ValueError`，不静默覆盖；
   模块顺序由 `order_index` 决定，不在 composer 内重排。
+  **编译效率**：Schema 段渲染紧凑字段树（路径 · 类型 · enum 内联，比 indent=2 dump 小 ~75%；
+  完整约束仍由 response_schema 随调用强制）；`_fold_feedback_blocks` 对模块体内 ≥2 个
+  「# 客户反馈补充」块做确定性去重折叠（语义裁决归 reconciler）。
+  `$.xxx[*]` 结尾的 json_path 其 fragment 注入 items（勿回退到曾经的空 items bug）。
+- **编辑意图分类**（`reflection/edit_intent.py`，纯代码零 LLM）：反思前对每条 diff 做字符级判定 —
+  NORMALIZE（仅删字符 → 输出规范问题，附删除字符/前后缀证据）/ RETARGET（内容抓错 →
+  附全文检索报告：正确值实际藏在 OCR 输出哪个字段下）/ RENAME_ONLY / TYPE_ONLY / CASE_ONLY / MIXED。
+  证据块由 `reflector._append_evidence_blocks` 统一追加到反思 prompt 尾部，**证据先行、推理在后**。
 - **反思 skill**（`reflection/skills/*.yaml`）：一个 diff 可命中多个 skill，各产一段 fix_suggestion；
   同字段多条反馈**累积不覆盖**；公共基底（泛化教义 + 输出 schema）放 `reflection/base/`，薄变体引用之。
+  输出 schema 含 `aliases`（票面实证 + 行业惯例标签别名）/ `value_pattern`（值的正则模式）/
+  `enum_values`（有限集合约束）— FieldRule 同名字段承接并由 composer 渲染。
 - **reconciler**（`service/reconciler.py`）：当某字段 prompt 已含累积反馈、本轮又有新建议且**矛盾**时，
   调 LLM 协调成单一自洽 prompt，**冲突以最新客户意图为准**；fail-open（失败回退到累积追加）。
+  **统筹扩展**：模块体膨胀（`is_bloated`：反馈块 ≥2 或 >600 字符）时即便无新建议也触发纯整合，
+  把堆叠的历史反馈收敛为单一规则集（按 语义→别名→锚点→格式→排歧 组织）。
 - **评测 harness**（`eval/harness.py`）：OCR + 逐字段打分；GT 与 json_path 根对齐
   （`ground_truth.align_for_path`，数组根路径下把 dict GT 包成 `[gt]`，避免假分）。
 

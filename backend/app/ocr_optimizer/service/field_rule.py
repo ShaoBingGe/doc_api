@@ -45,9 +45,12 @@ class FieldRule(BaseModel):
     """
     model_config = ConfigDict(extra="forbid")
 
-    semantic: str = ""                       # business meaning + aliases
+    semantic: str = ""                       # business meaning
+    aliases: list[str] = Field(default_factory=list)         # 标签别名：样本实证 + 行业惯例写法（Invoice No. / Inv # / 发票号码…）
     anchors: list[str] = Field(default_factory=list)        # RELATIVE anchors (neighbouring labels/regions), not coordinates
     format_rule: str = ""                    # type / unit / null / normalization
+    value_pattern: str = ""                  # 值的正则/模式描述（如 ^[A-Z]{2,3}-\d{6}$ / YYYY-MM-DD）
+    enum_values: list[str] = Field(default_factory=list)     # 值为有限集合时的全部合法取值（币种/税种/单位…）
     disambiguation: list[str] = Field(default_factory=list)  # easily-confused fields + how to tell apart
     generalization: Generalization | None = None             # cross-sample inferred rule
     provenance: list[str] = Field(default_factory=list)      # e.g. "round 2: diff edit billFromName"
@@ -62,12 +65,22 @@ class FieldRule(BaseModel):
         lines: list[str] = []
         if self.semantic.strip():
             lines.append(f"- 语义：{self.semantic.strip()}")
+        if self.aliases:
+            al = " / ".join(a.strip() for a in self.aliases if a.strip())
+            if al:
+                lines.append(f"- 标签别名（票面可能写作）：{al}")
         if self.anchors:
             anchors = "；".join(a.strip() for a in self.anchors if a.strip())
             if anchors:
                 lines.append(f"- 取值锚点（相对位置/邻近标签，勿用绝对坐标）：{anchors}")
         if self.format_rule.strip():
             lines.append(f"- 格式：{self.format_rule.strip()}")
+        if self.value_pattern.strip():
+            lines.append(f"- 值模式：`{self.value_pattern.strip()}`")
+        if self.enum_values:
+            ev = " | ".join(str(e).strip() for e in self.enum_values if str(e).strip())
+            if ev:
+                lines.append(f"- 枚举约束（只能输出其中之一）：{ev}")
         if self.disambiguation:
             dis = "；".join(d.strip() for d in self.disambiguation if d.strip())
             if dis:

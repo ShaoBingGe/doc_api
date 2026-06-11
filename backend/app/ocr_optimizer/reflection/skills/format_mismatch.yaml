@@ -1,6 +1,6 @@
 key: format_mismatch
 display_name: 格式/类型反思
-version: 3
+version: 4
 # Matcher: applies when the customer changes the field's name or format (type)
 # regardless of value diff.
 match:
@@ -26,6 +26,9 @@ prompt: |
   - 原始值: {original_value} → 修正后值: {corrected_value}
 
   ## 分析要点
+  0. **优先采信下方的「编辑意图分析」块**（若有）：NORMALIZE 判定附带客户
+     删除的确切字符与模式（前缀/后缀/散布字符）——把它直译为一条输出
+     规范化规则即可，不要因此改动取值锚点。
   1. 命名是否需更精确（原名是否模糊/不符行业惯例）？
   2. 数据类型是否需严格（number / date / boolean）？
   3. 输出形式是否需规范化（日期 ISO、金额纯数字、电话去横线）？

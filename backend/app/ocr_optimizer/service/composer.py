@@ -123,11 +123,15 @@ def assemble_prompt(modules: Iterable, *, country_global: str | None) -> str:
         body_parts.append(f"## {i}. {name}\n{ident_line}{body}\n")
 
     schema = assemble_schema(mod_list)
-    schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
+    # 编译效率：完整 JSON Schema 已通过 response_schema 随每次调用强制
+    # （ocr_runner / extract 均传 composed_schema），prompt 内不再重复
+    # indent=2 的全量 dump（实测占整段 prompt ~28%）。这里只渲染紧凑
+    # 字段树（路径 · 类型），结构信息无损、体积缩到约 1/5。
     schema_reference = (
         "# 整体输出 Schema\n"
-        "返回的 JSON 必须符合下列 Schema：\n"
-        f"```json\n{schema_json}\n```\n"
+        "返回的 JSON 必须符合调用时附带的 response_schema（完整约束以其为准）。"
+        "字段速查（路径 · 类型）：\n"
+        f"{_render_schema_tree(schema)}\n"
     )
     country_section = ""
     if country_global and country_global.strip():
@@ -206,24 +210,132 @@ def assemble_schema(modules: Iterable) -> dict:
 _BRACKETS_RE = re.compile(r"\[(\*|\d+)\]")
 
 
+def _render_schema_tree(schema: dict, *, max_depth: int = 6) -> str:
+    """把 JSON Schema 渲染为缩进字段树（纯字符串工作，无 LLM）。
+
+    每行一个字段：`- name: type`；数组写作 `name[]: <items type>`；枚举内联
+    （`enum: A | B`）。比 indent=2 的 Schema dump 小 ~80%，且对 LLM 的可读性
+    更高（没有 "type"/"properties" 语法噪声）。异常结构回退为单行 JSON。
+    """
+    lines: list[str] = []
+
+    def _type_of(node: dict) -> str:
+        t = node.get("type")
+        if isinstance(t, list):
+            return "/".join(str(x) for x in t)
+        return str(t or "any")
+
+    def _walk(node: dict, name: str | None, depth: int) -> None:
+        if depth > max_depth or not isinstance(node, dict):
+            return
+        indent = "  " * depth
+        if "anyOf" in node and isinstance(node["anyOf"], list):
+            label = f"{indent}- {name}: anyOf ↓" if name else f"{indent}- anyOf ↓"
+            lines.append(label)
+            for i, sub in enumerate(node["anyOf"], 1):
+                if isinstance(sub, dict):
+                    _walk(sub, f"(选项{i})", depth + 1)
+            return
+        t = _type_of(node)
+        if t == "array":
+            items = node.get("items") or {}
+            it = _type_of(items) if isinstance(items, dict) else "any"
+            if name is not None:
+                lines.append(f"{indent}- {name}[]: {it}")
+            if isinstance(items, dict) and items.get("properties"):
+                for k, v in items["properties"].items():
+                    _walk(v if isinstance(v, dict) else {}, k, depth + 1)
+            return
+        if t == "object" or node.get("properties"):
+            if name is not None:
+                lines.append(f"{indent}- {name}: object")
+            props = node.get("properties") or {}
+            for k, v in props.items():
+                _walk(v if isinstance(v, dict) else {}, k, depth + (1 if name is not None else 0))
+            return
+        # 标量
+        suffix = ""
+        enum = node.get("enum")
+        if isinstance(enum, list) and enum:
+            suffix = "（enum: " + " | ".join(str(e) for e in enum[:12]) + "）"
+        fmt = node.get("format")
+        if isinstance(fmt, str) and fmt:
+            suffix += f"（format: {fmt}）"
+        if name is not None:
+            lines.append(f"{indent}- {name}: {t}{suffix}")
+
+    try:
+        _walk(schema or {}, None, 0)
+    except Exception:  # noqa: BLE001 — 防御：任何渲染问题退回紧凑 JSON
+        return "```json\n" + json.dumps(schema, ensure_ascii=False) + "\n```"
+    if not lines:
+        return "```json\n" + json.dumps(schema, ensure_ascii=False) + "\n```"
+    return "\n".join(lines)
+
+
 def _render_module_body(m) -> str:
     """Phase 2 — render a module's body.
 
     Opt-in structured path: if the module carries a renderable FieldRule
     (in-memory `field_rule` attr or persisted under ocr_suggestions), render
-    its uniform skeleton (语义/取值锚点/格式/排歧/跨样本规则). Otherwise fall
-    back to the raw ocr_prompt — so production modules authored before Phase 2
-    render EXACTLY as in Phase 1 (no accuracy risk; the structured path is only
-    taken once upstream producers populate a FieldRule in Phase 3+).
+    its uniform skeleton (语义/别名/取值锚点/格式/值模式/枚举/排歧/跨样本规则).
+    Otherwise fall back to the raw ocr_prompt — so production modules authored
+    before Phase 2 render EXACTLY as in Phase 1 (no accuracy risk; the
+    structured path is only taken once upstream producers populate a FieldRule
+    in Phase 3+).
 
     Still pure string work — composer never calls an LLM (CLAUDE.md §③.4).
+    渲染时对累积的「# 客户反馈补充」块做确定性折叠（去重行 + 合并为单块），
+    阻止反馈堆叠线性膨胀 prompt；语义级整合在上游 reconciler（可调 LLM）。
     """
     from .field_rule import field_rule_of
 
     fr = field_rule_of(m)
     if fr is not None and fr.is_renderable():
         return fr.render_skeleton()
-    return (getattr(m, "ocr_prompt", "") or "").strip()
+    return _fold_feedback_blocks((getattr(m, "ocr_prompt", "") or "").strip())
+
+
+_FEEDBACK_HEADER = "# 客户反馈补充"
+
+
+def _fold_feedback_blocks(prompt: str) -> str:
+    """把 ocr_prompt 中多个「# 客户反馈补充」块折叠为一个去重块。
+
+    历史行为是每轮盲目 append（§⑤.3 累积不覆盖），同一条建议跨轮重复出现时
+    prompt 线性膨胀。这里做**纯字符串**折叠：
+      - ≤1 个反馈块：原样返回（零行为变化）；
+      - ≥2 个反馈块：基体保持不动，所有反馈行按出现顺序去重（精确匹配），
+        合并为单块「# 客户反馈补充（已合并 N 块去重）」。
+    语义矛盾的裁决不在这里（composer 无 LLM）——那是 reconciler 的职责。
+    """
+    if prompt.count(_FEEDBACK_HEADER) < 2:
+        return prompt
+
+    segments = prompt.split(_FEEDBACK_HEADER)
+    base = segments[0].rstrip()
+    n_blocks = len(segments) - 1
+
+    seen: set[str] = set()
+    merged: list[str] = []
+    for seg in segments[1:]:
+        for raw_line in seg.splitlines():
+            line = raw_line.strip()
+            # 跳过块头残留（如「（第 2 轮）」标注行）与空行
+            if not line:
+                continue
+            key = line.lstrip("-• ").strip()
+            if key and key not in seen:
+                seen.add(key)
+                merged.append(raw_line.rstrip())
+
+    if not merged:
+        return base
+    return (
+        base
+        + f"\n\n{_FEEDBACK_HEADER}（已合并 {n_blocks} 块去重）\n"
+        + "\n".join(merged)
+    )
 
 
 def _normalize_path(path: str) -> str:
@@ -283,10 +395,17 @@ def _inject(schema: dict, norm_path: str, fragment: dict) -> None:
             # already advanced into items in the previous step; the array
             # token itself is a no-op here unless it appears at the very end
             if is_last:
-                # path ends with [*] meaning the module IS the array items schema
-                # need to back up: caller fragment becomes the items schema.
-                # We achieved that already by descending into items above when
-                # the previous step set it up, so nothing more to do.
+                # Path ends with [*]: the module's fragment IS the items schema.
+                # 历史 bug：这里曾直接 return 而不写入 fragment，导致所有
+                # `$.xxx[*]` 模块的 items 永远是空 {} —— response_schema 对
+                # 数组行项目零约束。现在真正注入（merge 以兼容同根多模块，
+                # 如 `lineItems[*]` 与 `lineItems[*].name` 并存）。
+                if cursor:
+                    merged = _merge_schema(cursor, fragment)
+                    cursor.clear()
+                    cursor.update(merged)
+                else:
+                    cursor.update(fragment)
                 return
 
 

@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..service.llm_failover import llm_text_completion_failover
+from . import edit_intent as edit_intent_mod
 from .country_agents_loader import CountryAgent, load_country_agents
 from .master import route
 from .skills_loader import Skill
@@ -41,6 +42,10 @@ class ReflectionResult:
     # free-text fix_suggestions path still works). Consumed by the fork /
     # composer skeleton render in later phases.
     field_rule: "Any | None" = None
+    # 编辑意图分类（edit_intent.classify 的判定）：NORMALIZE / RETARGET /
+    # RENAME_ONLY / TYPE_ONLY / CASE_ONLY / MIXED / NONE。随 provenance 透传，
+    # 供 reconciler 在跨轮矛盾时按「最新意图类型」裁决。
+    edit_intent: str = "NONE"
 
 
 _REFLECTION_SYSTEM = (
@@ -57,6 +62,7 @@ def reflect_on_diffs(
     model_name: str | None = None,
     country: str | None = None,
     cross_doc_context: dict[str, list[dict]] | None = None,
+    sample_outputs: dict[str, dict] | None = None,
 ) -> dict[str, ReflectionResult]:
     """
     Run reflection for each diff.
@@ -84,12 +90,16 @@ def reflect_on_diffs(
             3 invoices (e.g. notice that invoiceNumber always starts with
             3 letters then digits, or that an OCR-extracted "W1 529054"
             is consistently corrected to "529054" — strip the prefix).
+        sample_outputs: {sample_label: 最新 OCR structured_data} —— 供
+            RETARGET（内容修正型）diff 做「全文检索」：客户期望的正确值
+            实际出现在哪些字段下，揭示真实取值来源与锚点。
 
     Returns:
         {module_key (or temp key for adds): ReflectionResult}
     """
     modules_by_key = modules_by_key or {}
     cross_doc_context = cross_doc_context or {}
+    sample_outputs = sample_outputs or {}
     results: dict[str, ReflectionResult] = {}
 
     # Country-scoped agents (one per kind). Loaded once per call.
@@ -102,6 +112,21 @@ def reflect_on_diffs(
         ctx = _build_context(diff, modules_by_key)
         # Phase 14b — enrich with cross-doc samples for this field name(s)
         ctx["cross_doc_samples"] = _build_cross_doc_block(diff, cross_doc_context)
+
+        # ── 编辑意图分类（确定性证据，先于 LLM）──────────────────────────
+        # NORMALIZE（仅删字符 → 输出规范问题）/ RETARGET（内容抓错 → 需要
+        # 重新定位）等判定 + 字符级证据，注入反思 prompt，让 agent 不必
+        # 猜根因。RETARGET 额外做全文检索：正确值藏在哪些字段下。
+        intent = edit_intent_mod.classify(diff)
+        ctx["edit_intent_block"] = intent.render_block()
+        ctx["retrieval_block"] = ""
+        if intent.intent in ("RETARGET", "MIXED") and intent.value_changed and sample_outputs:
+            cv = "" if diff.get("corrected_value") is None else str(diff.get("corrected_value"))
+            hits = edit_intent_mod.search_value_in_outputs(cv, sample_outputs)
+            ctx["retrieval_block"] = edit_intent_mod.render_retrieval_block(
+                cv, hits, searched_samples=len(sample_outputs),
+            )
+        result.edit_intent = intent.intent
 
         # ── Country-only routing (design v5) ────────────────────────────
         # If the source ApiDef is country-templated AND has an agent for
@@ -152,14 +177,16 @@ def reflect_on_diffs(
 
         # Phase 3 — lift a structured FieldRule from any skill output that
         # emitted the aligned fields. Purely additive: fix_suggestions remain.
-        result.field_rule = _field_rule_from_outputs(result.skill_outputs, diff)
+        result.field_rule = _field_rule_from_outputs(
+            result.skill_outputs, diff, intent=result.edit_intent,
+        )
 
         results[key] = result
 
     return results
 
 
-def _field_rule_from_outputs(skill_outputs: list[dict], diff: dict):
+def _field_rule_from_outputs(skill_outputs: list[dict], diff: dict, *, intent: str = "NONE"):
     """Merge FieldRule-aligned fields from one or more skill outputs into a
     single FieldRule. Returns None if no output carried structured fields.
 
@@ -171,6 +198,9 @@ def _field_rule_from_outputs(skill_outputs: list[dict], diff: dict):
 
     semantic = ""
     format_rule = ""
+    value_pattern = ""
+    aliases: list[str] = []
+    enum_values: list[str] = []
     anchors: list[str] = []
     disambiguation: list[str] = []
     gen: Generalization | None = None
@@ -188,12 +218,17 @@ def _field_rule_from_outputs(skill_outputs: list[dict], diff: dict):
         if not isinstance(out, dict):
             continue
         if any(k in out for k in ("anchors", "format_rule", "disambiguation",
-                                  "generalization", "semantic")):
+                                  "generalization", "semantic", "aliases",
+                                  "value_pattern", "enum_values")):
             found = True
         if not semantic and isinstance(out.get("semantic"), str):
             semantic = out["semantic"].strip()
         if not format_rule and isinstance(out.get("format_rule"), str):
             format_rule = out["format_rule"].strip()
+        if not value_pattern and isinstance(out.get("value_pattern"), str):
+            value_pattern = out["value_pattern"].strip()
+        aliases.extend(_as_list(out.get("aliases")))
+        enum_values.extend(_as_list(out.get("enum_values")))
         anchors.extend(_as_list(out.get("anchors")))
         disambiguation.extend(_as_list(out.get("disambiguation")))
         g = out.get("generalization")
@@ -220,12 +255,16 @@ def _field_rule_from_outputs(skill_outputs: list[dict], diff: dict):
     provenance = []
     if diff.get("kind"):
         nm = diff.get("corrected_name") or diff.get("original_name") or diff.get("module_key") or ""
-        provenance.append(f"reflection {diff.get('kind')} {nm}".strip())
+        tag = f" intent={intent}" if intent and intent != "NONE" else ""
+        provenance.append(f"reflection {diff.get('kind')} {nm}{tag}".strip())
 
     fr = FieldRule(
         semantic=semantic,
+        aliases=_dedup(aliases),
         anchors=_dedup(anchors),
         format_rule=format_rule,
+        value_pattern=value_pattern,
+        enum_values=_dedup(enum_values),
         disambiguation=_dedup(disambiguation),
         generalization=gen,
         provenance=provenance,
@@ -286,6 +325,24 @@ def _build_cross_doc_block(
     return "\n".join(lines)
 
 
+def _append_evidence_blocks(user_prompt: str, ctx: dict) -> str:
+    """把三类系统证据块追加到反思 user prompt 尾部（统一出口）：
+      1. 编辑意图分析（字符级 diff 判定 NORMALIZE/RETARGET 等）
+      2. 全文检索报告（RETARGET 时正确值的真实来源字段）
+      3. 跨样本对照（同字段在全部已审视样本中的实际值）
+    证据在前、推理在后——agent 基于确定性证据归纳规则，而不是凭值对猜根因。
+    """
+    blocks = [
+        (ctx.get("edit_intent_block") or "").strip(),
+        (ctx.get("retrieval_block") or "").strip(),
+        (ctx.get("cross_doc_samples") or "").strip(),
+    ]
+    extra = "\n\n".join(b for b in blocks if b)
+    if extra:
+        return user_prompt.rstrip() + "\n\n" + extra
+    return user_prompt
+
+
 def _build_context(diff: dict, modules_by_key: dict[str, dict]) -> dict[str, Any]:
     """Pull description / ocr_prompt / siblings for the reflected module."""
     mk = diff.get("module_key")
@@ -323,9 +380,7 @@ def _invoke_skill(
     # Phase 3 — global skills now also see the cross-sample block (previously
     # only country agents did), so every reflection path can infer a rule that
     # holds across all confirmed samples instead of overfitting to one doc.
-    cross_doc_block = (ctx.get("cross_doc_samples") or "").strip()
-    if cross_doc_block:
-        user_prompt = user_prompt.rstrip() + "\n\n" + cross_doc_block
+    user_prompt = _append_evidence_blocks(user_prompt, ctx)
     try:
         result = llm_text_completion_failover(
             processor_spec=processor_spec,
@@ -360,9 +415,7 @@ def _invoke_country_agent(
     char variances jointly.
     """
     user_prompt = agent.render(diff, ctx)
-    cross_doc_block = (ctx.get("cross_doc_samples") or "").strip()
-    if cross_doc_block:
-        user_prompt = user_prompt.rstrip() + "\n\n" + cross_doc_block
+    user_prompt = _append_evidence_blocks(user_prompt, ctx)
     try:
         result = llm_text_completion_failover(
             processor_spec=processor_spec,
