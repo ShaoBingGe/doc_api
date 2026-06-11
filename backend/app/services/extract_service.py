@@ -97,10 +97,17 @@ def extract_document(
         from app.ocr_optimizer import get_active_composed_prompt
         active_prompt = get_active_composed_prompt(db, api_def.id)
 
+        # Availability-aware resolution（已发布 API 不能因行里钉死的 provider
+        # 在当前环境不可达而识别失效 —— 与 reprocess_document 的 env-first
+        # 契约一致；按模板 prompt 识别不变，仅换可用的执行引擎）。
+        from app.processors.factory import ProcessorFactory
+        proc_used, model_pref = ProcessorFactory.resolve_spec(
+            api_def.processor_type, api_def.model_name
+        )
         raw_output, structured_data, model_name, tokens_used = _run_processor(
             storage_path=temp_path,
-            processor_type=api_def.processor_type,
-            model_name=api_def.model_name,
+            processor_type=proc_used,
+            model_name=model_pref,
             prompt=active_prompt,
             schema=api_def.response_schema,
         )
@@ -124,6 +131,7 @@ def extract_document(
         tokens_used=tokens_used,
         processing_time_ms=elapsed_ms,
         request_ip=request_ip,
+        processor_used=proc_used,
     )
 
     return ExtractResponse(
@@ -132,7 +140,7 @@ def extract_document(
         api_version=api_def.version,
         data=structured_data,
         metadata=ExtractMetadata(
-            processor=api_def.processor_type,
+            processor=proc_used,
             model=model_name,
             tokens_used=tokens_used or 0,
             processing_time_ms=elapsed_ms,
@@ -268,6 +276,7 @@ def _persist_audit(
     tokens_used: int | None,
     processing_time_ms: int,
     request_ip: str,
+    processor_used: str | None = None,
 ) -> None:
     """Persist Document + ProcessingResult for audit trail. Non-fatal on error."""
     try:
@@ -284,7 +293,7 @@ def _persist_audit(
         result = ProcessingResult(
             document_id=doc.id,
             version=1,
-            processor_type=api_def.processor_type,
+            processor_type=processor_used or api_def.processor_type,
             model_name=model_name,
             raw_output=raw_output,
             structured_data=structured_data,

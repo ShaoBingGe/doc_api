@@ -107,6 +107,8 @@ export interface CustomizeJobStatus {
   newApiCode?: string | null
   errorMessage?: string | null
   reflectionSummary?: Array<Record<string, unknown>>
+  /** {save_as_new?: boolean, new_name?: string} — 另存为新模板时由后端回传 */
+  options?: { save_as_new?: boolean; new_name?: string }
 }
 
 // ─── Sample GT review state ───────────────────────────────────────────────────
@@ -246,7 +248,7 @@ interface WorkspaceStore {
   addNewFieldDraft: () => void
   updateAddDraft: (idx: number, patch: Partial<FieldEditDraft>) => void
   removeAddDraft: (idx: number) => void
-  submitCustomize: () => Promise<string | null>
+  submitCustomize: (opts?: { saveAsNew?: boolean; newName?: string }) => Promise<string | null>
   pollCustomizeJob: () => Promise<void>
   clearCustomizeJob: () => void
 
@@ -774,6 +776,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
             newApiCode: d.new_api_code,
             errorMessage: d.error_message,
             reflectionSummary: d.reflection_summary,
+            options: d.options ?? {},
           }
           set({ customizeJob: rehydrated })
           // Keep polling alive
@@ -969,7 +972,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   removeAddDraft: (idx) =>
     set((s) => ({ addFieldDrafts: s.addFieldDrafts.filter((_, i) => i !== idx) })),
 
-  submitCustomize: async () => {
+  submitCustomize: async (opts?: { saveAsNew?: boolean; newName?: string }) => {
     const { apiDefinitionId, fieldEditDrafts, addFieldDrafts } = get()
     if (!apiDefinitionId) {
       toast.error('未绑定 API，无法保存')
@@ -991,7 +994,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     // Phase 23.1 (now via flushDraftsToOverlay) — sync drafts → overlay
     // before fork. Single source of truth contract.
     await get().flushDraftsToOverlay()
-    const payload = {
+    const payload: Record<string, unknown> = {
       diffs: [...editDiffs, ...addDiffs].map((d) => ({
         kind: d.kind,
         module_key: d.moduleKey ?? null,
@@ -1002,6 +1005,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         original_format: d.originalFormat ?? null,
         corrected_format: d.correctedFormat,
       })),
+    }
+    if (opts?.saveAsNew) {
+      payload.save_as_new = true
+      if (opts.newName?.trim()) payload.new_name = opts.newName.trim()
     }
     set({ customizeSubmitting: true })
     try {
@@ -1052,6 +1059,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         newApiCode: d.new_api_code,
         errorMessage: d.error_message,
         reflectionSummary: d.reflection_summary,
+        options: d.options ?? {},
       }
       set({ customizeJob: updated })
       if (updated.status === 'completed' || updated.status === 'failed') return

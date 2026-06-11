@@ -68,6 +68,39 @@ def create_tables() -> None:
     Base.metadata.create_all(bind=engine)
 
 
+def ensure_customize_job_columns() -> None:
+    """Idempotent add of `customize_jobs.options` (JSON) for pre-existing DBs.
+
+    Same prototype-only pattern as ensure_tenant_columns: `create_all` never
+    ALTERs, so DBs created before the save-as-new feature lack the column.
+    JSON is stored as TEXT in SQLite; nullable so old rows need no backfill.
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+        try:
+            if is_sqlite:
+                cols = {row[1] for row in conn.execute(text('PRAGMA table_info("customize_jobs")'))}
+            else:
+                cols = {
+                    row[0]
+                    for row in conn.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns "
+                            "WHERE table_name = :t"
+                        ),
+                        {"t": "customize_jobs"},
+                    )
+                }
+            if cols and "options" not in cols:
+                col_type = "TEXT" if is_sqlite else "JSON"
+                conn.execute(text(f'ALTER TABLE "customize_jobs" ADD COLUMN options {col_type}'))
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("ensure_customize_job_columns failed")
+
+
 def ensure_tenant_columns() -> None:
     """
     Idempotent lightweight migration for the prototype SQLite DB.

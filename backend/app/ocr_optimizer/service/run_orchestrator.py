@@ -664,13 +664,19 @@ def _run_one_round(
         )
 
     # ── Step 1: Full OCR on every sample ─────────────────────────────────
+    # Availability-aware resolution: a row pinned to an unreachable provider
+    # (e.g. gemini on a 大陆 server) must not zero out every round's accuracy.
+    from app.processors.factory import ProcessorFactory
+    _proc, _model = ProcessorFactory.resolve_spec(
+        api_def.processor_type, api_def.model_name
+    )
     ocr_outputs = ocr_runner.run_ocr_on_samples(
         db,
         sample_document_ids=sample_ids,
         composed_prompt=current_version.composed_prompt,
         composed_schema=current_version.composed_schema,
-        processor_spec=api_def.processor_type or "mock",
-        model_name=api_def.model_name,
+        processor_spec=_proc,
+        model_name=_model,
     )
     metrics["total_ocr_calls"] += len(sample_ids)
     rnd.ocr_raw_outputs = ocr_outputs
@@ -992,8 +998,10 @@ def _to_uuid(x: Any) -> uuid.UUID:
 
 
 def _default_llm_provider(api_def: ApiDefinition) -> str:
-    proc = api_def.processor_type or "mock"
-    model = api_def.model_name
+    from app.processors.factory import ProcessorFactory
+    proc, model = ProcessorFactory.resolve_spec(
+        api_def.processor_type, api_def.model_name
+    )
     return f"{proc}|{model}" if model else proc
 
 

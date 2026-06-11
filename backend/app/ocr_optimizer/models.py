@@ -316,6 +316,10 @@ class CustomizeJob(UUIDMixin, Base):
     )
     phase_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     diffs: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # Job-level options, e.g. {"save_as_new": true, "new_name": "..."} —
+    # save_as_new clones the source ApiDef (own api_code) and runs the
+    # customize + 3-round iteration on the CLONE; source stays untouched.
+    options: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     reflection_summary: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     rounds_done: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     rounds_total: Mapped[int] = mapped_column(Integer, nullable=False, default=3)

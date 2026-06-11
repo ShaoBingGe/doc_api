@@ -204,6 +204,13 @@ schema 冲突 `raise ValueError`，调用方 `try/except`：迭代末尾回退�
 新字段的 LLM 扩展必须在**建新版本前**完成（给第 1 轮一个完整起点）；
 同字段多条反馈默认累积；仅当**跨轮矛盾**时才调 reconciler，产出协调后的 ocr_prompt（composer 仍渲染 ocr_prompt）。
 
+### ⑥ processor 永远走 resolve_spec，禁止钉死
+任何 OCR / 反思 / 优化 / 提取调用**必须**经 `ProcessorFactory.resolve_spec(api_def.processor_type, model_name)`
+解析（偏好可用→`DEFAULT_PROCESSOR`→mock），**禁止**直接把 `api_def.processor_type` 传给执行层。
+行级 processor_type 是偏好不是契约——历史行钉着 gemini，大陆服务器只配 qwen；
+直传会让迭代轮 OCR 全错（每轮 0 分，「进度始终为 0」事故）而上传识别却正常。
+LLM_FALLBACK_CHAIN 由 `get_chain` 做同样的可用性过滤。降级时丢弃外族 model_name。
+
 ---
 
 ## 五、失败处理：降级而非 500

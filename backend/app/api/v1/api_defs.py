@@ -465,7 +465,7 @@ def customize_api_definition(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ) -> dict:
-    """Request body: {"diffs": [<FieldDiff>, ...]}
+    """Request body: {"diffs": [<FieldDiff>, ...], "save_as_new": bool?, "new_name": str?}
 
     FieldDiff shape:
       {
@@ -478,6 +478,10 @@ def customize_api_definition(
         "original_format": str | null,           # "string" / "number" / ...
         "corrected_format": str | null
       }
+
+    save_as_new=true：在源 API 的克隆上做定制 + 3 轮迭代（克隆有自己的
+    api_code），源 API（含已发布的）保持原样继续对外服务；
+    省略或 false：在原 API 上原地 bump 新版本（api_code 不变，Phase 19 行为）。
     """
     svc._get_or_404(db, api_def_id, user)  # access guard
 
@@ -488,10 +492,19 @@ def customize_api_definition(
         if not isinstance(d, dict) or d.get("kind") not in ("edit", "add"):
             raise HTTPException(status_code=400, detail=f"diff[{i}] has invalid 'kind'")
 
+    options: dict = {}
+    if body.get("save_as_new"):
+        options["save_as_new"] = True
+        new_name = (body.get("new_name") or "").strip()
+        if new_name:
+            options["new_name"] = new_name[:128]
+
     job = customer_iteration.submit_customize_job(
         db,
         source_api_definition_id=api_def_id,
         diffs=diffs,
+        user_id=getattr(user, "id", None),
+        options=options or None,
     )
     background.add_task(customer_iteration.run_customize_job, job.id)
     return {

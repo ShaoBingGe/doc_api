@@ -16,6 +16,7 @@ import {
   Loader2,
   Sparkles,
   Table as TableIcon,
+  GitBranch,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useWorkspaceStore, type Annotation, type CustomizeJobStatus, type FieldEditDraft, type ProcessingResult } from '../../stores/workspace-store'
@@ -1554,6 +1555,24 @@ function CustomizeBar() {
           <div className="text-xs text-red-300/80">{customizeJob.errorMessage}</div>
         )}
         {customizeJob.status === 'completed' && (
+          customizeJob.options?.save_as_new && customizeJob.newApiDefinitionId ? (
+            <div className="space-y-2">
+              <p className="text-[11px] text-emerald-200/80 leading-relaxed">
+                ✓ 已在新模板上完成定制与迭代优化 — 当前模板未被改动，
+                仍按原 api_code 对外服务。
+              </p>
+              <button
+                onClick={() => {
+                  const newId = customizeJob.newApiDefinitionId
+                  clearCustomizeJob()
+                  if (newId) window.location.assign(`/workspace/api/${newId}`)
+                }}
+                className="w-full px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded transition-colors"
+              >
+                前往新模板工作区
+              </button>
+            </div>
+          ) : (
           <div className="space-y-2">
             <p className="text-[11px] text-emerald-200/80 leading-relaxed">
               ✓ 新版本已直接激活在本工作区 — 无需切换 URL。
@@ -1574,6 +1593,7 @@ function CustomizeBar() {
               刷新本工作区查看结果
             </button>
           </div>
+          )
         )}
       </div>
     )
@@ -1581,17 +1601,34 @@ function CustomizeBar() {
 
   if (totalCount === 0) return null
   return (
-    <button
-      onClick={() => void submitCustomize()}
-      disabled={customizeSubmitting}
-      className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-md bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 hover:to-purple-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-all shadow-lg shadow-purple-500/20"
-    >
-      {customizeSubmitting ? (
-        <><Loader2 className="w-4 h-4 animate-spin" /> 提交中...</>
-      ) : (
-        <><Sparkles className="w-4 h-4" /> 保存并生成客户专属模板（{totalCount} 处改动）</>
-      )}
-    </button>
+    <div className="space-y-1.5">
+      <button
+        onClick={() => void submitCustomize()}
+        disabled={customizeSubmitting}
+        className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-md bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 hover:to-purple-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-all shadow-lg shadow-purple-500/20"
+      >
+        {customizeSubmitting ? (
+          <><Loader2 className="w-4 h-4 animate-spin" /> 提交中...</>
+        ) : (
+          <><Sparkles className="w-4 h-4" /> 优化当前模板（{totalCount} 处改动 · api_code 不变）</>
+        )}
+      </button>
+      <button
+        onClick={() => {
+          const name = window.prompt(
+            '另存为新模板：源模板（含已发布的 API）保持不变，\n' +
+            '改动将在新模板上做迭代优化，并获得独立的 api_code。\n\n' +
+            '新模板名称（留空则自动命名）：',
+          )
+          if (name === null) return // 用户取消
+          void submitCustomize({ saveAsNew: true, newName: name || undefined })
+        }}
+        disabled={customizeSubmitting}
+        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md border border-purple-500/40 text-purple-300 hover:bg-purple-500/10 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-all"
+      >
+        <GitBranch className="w-4 h-4" /> 另存为新模板（不影响当前 API）
+      </button>
+    </div>
   )
 }
 

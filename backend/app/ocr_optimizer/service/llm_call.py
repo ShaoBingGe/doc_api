@@ -155,9 +155,13 @@ def enrich_module_with_llm(module_spec: dict, api_def: Any) -> None:
         "Design the module."
     )
 
+    from app.processors.factory import ProcessorFactory
+    _proc, _model = ProcessorFactory.resolve_spec(
+        api_def.processor_type, api_def.model_name
+    )
     result = llm_text_completion(
-        processor_spec=api_def.processor_type or "mock",
-        model_name=api_def.model_name,
+        processor_spec=_proc,
+        model_name=_model,
         system_instruction=sys_inst,
         user_prompt=user_prompt,
         as_json=True,

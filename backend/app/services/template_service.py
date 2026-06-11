@@ -310,13 +310,21 @@ def subscribe_template(
     short = uuid.uuid4().hex[:6]
     api_code = f"{template_id}-{short}"
 
+    # Stamp the RESOLVED processor, not the template's literal preference —
+    # template dicts say "gemini" but the running environment may only have
+    # qwen (大陆云). Runtime resolution would save us anyway, but new rows
+    # should record what will actually serve them.
+    from app.processors.factory import ProcessorFactory
+    proc, model = ProcessorFactory.resolve_spec(
+        template["processor_type"], template["model_name"]
+    )
     body = CreateApiDefinitionRequest(
         name=custom_name or template["name"],
         api_code=api_code,
         description=template["description"],
         response_schema=template["response_schema"],
-        processor_type=template["processor_type"],
-        model_name=template["model_name"],
+        processor_type=proc,
+        model_name=model,
         config={"source_template_id": template_id},
     )
     return api_definition_service.create_api_definition(

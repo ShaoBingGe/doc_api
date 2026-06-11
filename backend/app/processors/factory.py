@@ -142,6 +142,77 @@ class ProcessorFactory:
         return sorted(cls._build_registry().keys())
 
     @classmethod
+    def is_available(cls, processor_type: Optional[str]) -> bool:
+        """A processor is available when its deps import AND its credentials exist.
+
+        Registration (`_build_registry`) only proves the package imports; a
+        provider without an API key still fails at call time (the exact failure
+        behind「迭代优化进度始终为 0」— rows pinned to gemini on a server that
+        can't reach it). mock / piaozone need no key here (piaozone resolves its
+        token internally).
+        """
+        if not processor_type:
+            return False
+        proc = processor_type.strip().lower()
+        if proc not in cls._build_registry():
+            return False
+        try:
+            from app.core.config import get_settings
+            s = get_settings()
+        except Exception:  # pragma: no cover — settings unreadable → only mock is safe
+            return proc == "mock"
+        key_by_proc = {
+            "gemini": s.GEMINI_API_KEY,
+            "openai": s.OPENAI_API_KEY,
+            "qwen": s.QWEN_API_KEY,
+        }
+        if proc in key_by_proc:
+            return bool(key_by_proc[proc])
+        return True
+
+    @classmethod
+    def resolve_spec(
+        cls,
+        preferred: Optional[str],
+        model_name: Optional[str] = None,
+    ) -> tuple[str, Optional[str]]:
+        """Resolve (processor_type, model_name) honoring runtime availability.
+
+        Order: `preferred`（per-API override，可用才生效）→ settings.DEFAULT_PROCESSOR
+        → "mock"。降级时丢弃 model_name —— 旧 API 行里残留的 "gemini-2.5-flash"
+        对 qwen 无意义（QwenProcessor 会忽略外族模型名，但其他处理器不会）。
+
+        This is THE single entry point for every OCR / reflection / optimizer /
+        extract call site. Per-row `processor_type` stays a preference, never a
+        hard pin — switching DEFAULT_PROCESSOR in .env takes effect everywhere
+        without DB migrations (same contract reprocess_document already had).
+        """
+        pref = (preferred or "").split("|", 1)[0].strip().lower() or None
+        if pref and cls.is_available(pref):
+            return pref, model_name
+
+        try:
+            from app.core.config import get_settings
+            default = (get_settings().DEFAULT_PROCESSOR or "").strip().lower()
+        except Exception:  # pragma: no cover
+            default = ""
+        if default and default != pref and cls.is_available(default):
+            if pref:
+                logger.warning(
+                    "Processor %r unavailable (missing key/deps) — falling back to "
+                    "DEFAULT_PROCESSOR=%r; stale model_name %r dropped",
+                    pref, default, model_name,
+                )
+            return default, None
+
+        if pref or default:
+            logger.warning(
+                "Neither preferred=%r nor DEFAULT_PROCESSOR=%r is available — using mock",
+                pref, default,
+            )
+        return "mock", None
+
+    @classmethod
     def register(cls, name: str, processor_cls: Type[DocumentProcessor]) -> None:
         """Register a custom processor type at runtime."""
         if not (isinstance(processor_cls, type) and issubclass(processor_cls, DocumentProcessor)):

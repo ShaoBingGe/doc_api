@@ -29,10 +29,16 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: ensure DB tables exist (development convenience)
-    from app.core.database import create_tables, ensure_tenant_columns
+    from app.core.database import (
+        create_tables,
+        ensure_customize_job_columns,
+        ensure_tenant_columns,
+    )
     create_tables()
     # Idempotent prototype migration: add tenant_id to data tables if missing.
     ensure_tenant_columns()
+    # Idempotent: add customize_jobs.options (save-as-new feature) if missing.
+    ensure_customize_job_columns()
     # Ensure the super admin exists (default admin / 666666). Idempotent.
     try:
         from app.core.database import SessionLocal

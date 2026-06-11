@@ -56,7 +56,15 @@ def get_chain(
 
     Always starts with (primary_spec, primary_model), then appends any
     additional entries from LLM_FALLBACK_CHAIN that aren't duplicates.
+
+    Availability filter: entries whose provider has no credentials / deps in
+    the current environment are dropped up front — a stale chain config
+    (e.g. gemini-first on a server that can't reach Gemini) must not burn a
+    failed call per step before reaching a working provider. If filtering
+    empties the chain, fall back to [DEFAULT_PROCESSOR(resolved), mock].
     """
+    from app.processors.factory import ProcessorFactory
+
     settings = get_settings()
     chain_cfg = _parse_chain(getattr(settings, "LLM_FALLBACK_CHAIN", "") or "")
     chain: list[tuple[str, str | None]] = []
@@ -68,7 +76,23 @@ def get_chain(
         if entry not in chain:
             chain.append(entry)
 
-    return chain
+    filtered = [
+        (p, m) for (p, m) in chain
+        if p == "mock" or ProcessorFactory.is_available(p)
+    ]
+    dropped = [p for (p, m) in chain if (p, m) not in filtered]
+    if dropped:
+        logger.info("LLM chain: dropped unavailable providers %s", dropped)
+
+    if not any(p != "mock" for (p, _m) in filtered):
+        resolved, _ = ProcessorFactory.resolve_spec(None)
+        if resolved != "mock":
+            filtered.insert(0, (resolved, None))
+
+    if not any(p == "mock" for (p, _m) in filtered):
+        filtered.append(("mock", None))
+
+    return filtered
 
 
 def llm_text_completion_failover(

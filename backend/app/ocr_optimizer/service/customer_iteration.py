@@ -73,6 +73,7 @@ def _job_to_dict(job: CustomizeJob) -> dict:
         "new_api_code": job.new_api_code,
         "status": job.status,
         "phase_detail": job.phase_detail or "",
+        "options": job.options or {},
         "rounds_done": job.rounds_done or 0,
         "rounds_total": job.rounds_total or 3,
         "overall_accuracy": job.overall_accuracy,
@@ -546,8 +547,14 @@ def submit_customize_job(
     source_api_definition_id: uuid.UUID,
     diffs: list[dict],
     user_id: uuid.UUID | None = None,
+    options: dict | None = None,
 ) -> CustomizeJob:
-    """Persist a job. Caller schedules `run_customize_job(job.id)` after commit."""
+    """Persist a job. Caller schedules `run_customize_job(job.id)` after commit.
+
+    options: {"save_as_new": bool, "new_name": str|None} — save_as_new runs the
+    customize + iteration on a CLONE of the source ApiDef (own api_code), so
+    the published source keeps serving unchanged.
+    """
     if not diffs:
         raise ValidationError("No field corrections provided")
 
@@ -555,6 +562,7 @@ def submit_customize_job(
         id=uuid.uuid4(),
         source_api_definition_id=source_api_definition_id,
         diffs=diffs,
+        options=options or None,
         status=CustomizeJobStatus.queued.value,
         phase_detail="排队中...",
         rounds_total=3,
@@ -716,6 +724,159 @@ def reap_stale_jobs() -> int:
 # ── Pipeline ─────────────────────────────────────────────────────────────────
 
 
+def _clone_api_for_save_as_new(
+    db: Session,
+    src_api: ApiDefinition,
+    *,
+    new_name: str | None = None,
+    user_id: uuid.UUID | None = None,
+) -> ApiDefinition:
+    """「另存为新模板」：把源 ApiDef 克隆成一个完全独立的新 API。
+
+    复制内容：最优 prompt 版本（模块最多的那个）+ 全部字段模块 + 样本文档
+    （Document/Annotation 行级复制，磁盘文件共享）+ pending_edits overlay。
+    源 API（含已发布的）不被本次定制触碰，api_code 照常对外服务。
+
+    GT 隔离是行级复制的根本原因：后续 cascade_rename_annotations 等操作按
+    ApiDef 圈定文档；若与源共享 Document 行，对克隆的字段重命名会反向污染
+    源工作区的 Ground Truth。
+    """
+    from app.models.annotation import Annotation as _Ann
+    from app.models.document import Document as _Doc
+    from app.models.api_definition import ApiDefinitionStatus as _Status
+
+    # 1. 唯一 api_code：{源}-c1 / -c2 / ...
+    base = src_api.api_code or "api"
+    n = 1
+    while (
+        db.query(ApiDefinition)
+        .filter(ApiDefinition.api_code == f"{base}-c{n}")
+        .first()
+    ):
+        n += 1
+    api_code = f"{base}-c{n}"
+
+    # 2. 选源版本：模块最多者优先（与 _execute_pipeline 的防御规则一致）
+    from sqlalchemy import func as _f
+    cands = (
+        db.query(OcrPromptVersion, _f.count(OcrModule.id).label("mc"))
+        .outerjoin(OcrModule, OcrModule.prompt_version_id == OcrPromptVersion.id)
+        .filter(OcrPromptVersion.api_definition_id == src_api.id)
+        .group_by(OcrPromptVersion.id)
+        .all()
+    )
+    if not cands:
+        raise ValidationError("源 API 没有可复制的 prompt 版本")
+    cands.sort(key=lambda x: (
+        -int(x[1] or 0),
+        -(x[0].created_at.timestamp() if x[0].created_at else 0),
+    ))
+    src_version = cands[0][0]
+    src_modules = (
+        db.query(OcrModule)
+        .filter(OcrModule.prompt_version_id == src_version.id)
+        .order_by(OcrModule.order_index)
+        .all()
+    )
+
+    # 3. 克隆 ApiDefinition 行（待验证状态——迭代完由客户决定是否发布）
+    cfg = copy.deepcopy(src_api.config or {})
+    src_sample_ids = list(cfg.get("sample_document_ids") or [])
+    clone = ApiDefinition(
+        id=uuid.uuid4(),
+        user_id=user_id or src_api.user_id,
+        tenant_id=src_api.tenant_id,
+        name=(new_name or f"{src_api.name}-新模板"),
+        api_code=api_code,
+        description=src_api.description,
+        status=_Status.pending_review,
+        version=1,
+        response_schema=copy.deepcopy(src_api.response_schema),
+        processor_type=src_api.processor_type,
+        model_name=src_api.model_name,
+        config=cfg,
+        pending_edits=copy.deepcopy(src_api.pending_edits) if src_api.pending_edits else None,
+    )
+    db.add(clone)
+    db.flush()
+
+    # 4. 行级复制样本文档 + 标注（GT 隔离）
+    id_map: dict[str, str] = {}
+    for sid in src_sample_ids:
+        try:
+            src_doc = db.get(_Doc, uuid.UUID(str(sid)))
+        except Exception:  # noqa: BLE001
+            src_doc = None
+        if not src_doc:
+            continue
+        new_doc = _Doc(
+            id=uuid.uuid4(),
+            user_id=src_doc.user_id,
+            organization_id=src_doc.organization_id,
+            tenant_id=src_doc.tenant_id,
+            filename=src_doc.filename,
+            file_type=src_doc.file_type,
+            file_size=src_doc.file_size,
+            storage_path=src_doc.storage_path,  # 磁盘文件共享，不复制字节
+            processor_key=src_doc.processor_key,
+            api_definition_id=clone.id,
+            status=src_doc.status,
+        )
+        db.add(new_doc)
+        db.flush()
+        id_map[str(src_doc.id)] = str(new_doc.id)
+        for ann in db.query(_Ann).filter(_Ann.document_id == src_doc.id).all():
+            db.add(_Ann(
+                id=uuid.uuid4(),
+                document_id=new_doc.id,
+                processing_result_id=None,  # 源的 ProcessingResult 不随克隆
+                result_version=None,
+                created_by=ann.created_by,
+                field_name=ann.field_name,
+                field_value=ann.field_value,
+                field_type=ann.field_type,
+                bounding_box=copy.deepcopy(ann.bounding_box) if ann.bounding_box else None,
+                source=ann.source,
+                confidence=ann.confidence,
+                is_corrected=ann.is_corrected,
+                original_value=ann.original_value,
+                original_bbox=copy.deepcopy(ann.original_bbox) if ann.original_bbox else None,
+            ))
+
+    cfg["sample_document_ids"] = [id_map[s] for s in src_sample_ids if s in id_map]
+    cfg["cloned_from_api_id"] = str(src_api.id)
+    clone.config = cfg
+    flag_modified(clone, "config")
+
+    # 5. 复制 prompt 版本 + 模块
+    new_ver = OcrPromptVersion(
+        id=uuid.uuid4(),
+        api_definition_id=clone.id,
+        version="1",
+        parent_version_id=src_version.id,
+        status=PromptVersionStatus.active.value,
+        origin=VersionOrigin.init.value,
+        composed_prompt=src_version.composed_prompt,
+        composed_schema=copy.deepcopy(src_version.composed_schema),
+        country_global_text=src_version.country_global_text,
+        notes=f"save-as-new clone of {src_api.api_code} v{src_version.version}",
+        activated_at=datetime.now(timezone.utc),
+    )
+    db.add(new_ver)
+    db.flush()
+    for m in src_modules:
+        db.add(_clone_module(m, new_version_id=new_ver.id, patch={}))
+
+    db.commit()
+    db.refresh(clone)
+    logger.info(
+        "save-as-new: cloned ApiDef %s (%s) → %s (%s) with %d sample docs, %d modules",
+        src_api.id, src_api.api_code, clone.id, clone.api_code,
+        len(id_map), len(src_modules),
+    )
+    return clone
+
+
 def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
     diffs: list[dict] = list(job.diffs or [])
     src_id = job.source_api_definition_id
@@ -749,6 +910,30 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
             job.id, confirmed_src, MIN_SAMPLES_FOR_ITERATION, total_src,
         )
         return
+
+    # ── 「另存为新模板」分支（save_as_new）────────────────────────────────
+    # 在克隆上做定制 + 迭代；源 API（含已发布的）保持原样继续服务。
+    # 此处源已通过 ≥3 已审视样本的门禁，克隆会带走这些样本的行级副本，
+    # 因此克隆的 Phase-3 门禁必然立即通过，不会二次驻留 waiting。
+    opts = dict(job.options or {})
+    if opts.get("save_as_new"):
+        if job.new_api_definition_id and job.new_api_definition_id != job.source_api_definition_id:
+            # 重入（如进程重启后 resume）：克隆已存在，直接续用
+            existing = db.get(ApiDefinition, job.new_api_definition_id)
+            if not existing:
+                raise NotFoundError("save-as-new 克隆已被删除，请重新提交定制")
+            src_api, src_id = existing, existing.id
+        else:
+            _update_job(db, job, phase_detail="正在创建新模板（克隆源 API 与样本）")
+            clone = _clone_api_for_save_as_new(
+                db, src_api,
+                new_name=opts.get("new_name"),
+                user_id=job.user_id,
+            )
+            _update_job(db, job,
+                        new_api_definition_id=clone.id,
+                        new_api_code=clone.api_code)
+            src_api, src_id = clone, clone.id
 
     # ── Defensive source-version pick ─────────────────────────────────────
     # If the source's currently-active version has been mutated down to a
@@ -906,11 +1091,15 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
     # Phase 14b — build cross-doc context so the agent sees how each
     # edited / added field actually appears on every confirmed sample.
     cross_doc_context = _build_cross_doc_context_for_diffs(db, src_id, diffs)
+    from app.processors.factory import ProcessorFactory as _PF
+    _refl_proc, _refl_model = _PF.resolve_spec(
+        src_api.processor_type, src_api.model_name
+    )
     reflections = reflect_on_diffs(
         diffs,
         modules_by_key=modules_by_key,
-        processor_spec=src_api.processor_type or "gemini",
-        model_name=src_api.model_name,
+        processor_spec=_refl_proc,
+        model_name=_refl_model,
         country=src_country,
         cross_doc_context=cross_doc_context,
     )
@@ -1264,13 +1453,17 @@ def _confirm_version_accuracy(db: Session, run, version_id: uuid.UUID) -> float 
     if not sample_ids:
         return None
 
+    from app.processors.factory import ProcessorFactory as _PF
+    _conf_proc, _conf_model = _PF.resolve_spec(
+        api_def.processor_type, api_def.model_name
+    )
     outputs = run_ocr_on_samples(
         db,
         sample_document_ids=sample_ids,
         composed_prompt=version.composed_prompt,
         composed_schema=version.composed_schema,
-        processor_spec=api_def.processor_type or "mock",
-        model_name=api_def.model_name,
+        processor_spec=_conf_proc,
+        model_name=_conf_model,
     )
     report = score_outputs(module_specs_from_orm(modules), outputs, gts)
     return report.overall_accuracy
@@ -1614,6 +1807,10 @@ def _fork_api_definition(
             # fail-open → _clone_module falls back to blind-append.
             new_sugs = list(getattr(r, "fix_suggestions", []) or [])
             if new_sugs and _reconciler.has_accumulated_feedback(m.ocr_prompt):
+                from app.processors.factory import ProcessorFactory as _PF_rec
+                _rec_proc, _rec_model = _PF_rec.resolve_spec(
+                    src_api.processor_type, src_api.model_name
+                )
                 coherent = _reconciler.reconcile_module_prompt(
                     module_key=m.module_key,
                     display_name=m.display_name,
@@ -1621,8 +1818,8 @@ def _fork_api_definition(
                     new_suggestions=new_sugs,
                     field_rule=getattr(r, "field_rule", None),
                     latest_intent=getattr(r, "diff", None) or {},
-                    processor_spec=src_api.processor_type or "gemini",
-                    model_name=src_api.model_name,
+                    processor_spec=_rec_proc,
+                    model_name=_rec_model,
                 )
                 if coherent:
                     patch["__reconciled_prompt"] = coherent
@@ -1635,14 +1832,18 @@ def _fork_api_definition(
         f"- {m.module_key} ({m.display_name or ''}): {(m.description or '')[:80]}"
         for m in src_modules[:5]
     )
+    from app.processors.factory import ProcessorFactory as _PF_add
+    _add_proc, _add_model = _PF_add.resolve_spec(
+        src_api.processor_type, src_api.model_name
+    )
     for i, (d, reflection_key) in enumerate(add_specs):
         rout = reflections.get(reflection_key) if reflection_key else None
         new_modules.append(_module_from_add_diff(
             d, new_version_id=new_version.id, order_index=order_start + i,
             reflection_outputs=rout,
             sibling_examples=sibling_examples,
-            processor_spec=src_api.processor_type or "gemini",
-            model_name=src_api.model_name,
+            processor_spec=_add_proc,
+            model_name=_add_model,
         ))
 
     try:
