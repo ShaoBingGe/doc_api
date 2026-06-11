@@ -60,10 +60,19 @@ class QwenProcessor(DocumentProcessor):
 
     # ── helpers ────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _is_vision_name(name: str) -> bool:
+        """qwen 系视觉模型命名：含 "vl"（qwen-vl-plus / qwen3-vl-flash）或
+        含 "ocr"（qwen3.5-ocr / qwen-vl-ocr）。曾用「仅 vl」判定，导致
+        qwen3.5-ocr 被误判为文本模型：评测时显式传入被静默回退到
+        QWEN_MODEL（评测结果被偷换），生产时被误加 response_format 而
+        返回空 content。"""
+        n = (name or "").lower()
+        return "vl" in n or "ocr" in n
+
     def _pick_model(self, *, vision: bool) -> str:
         if self._explicit:
-            is_vl = "vl" in self._explicit.lower()
-            if vision == is_vl:
+            if vision == self._is_vision_name(self._explicit):
                 return self._explicit
         return self.vision_model if vision else self.text_model
 
@@ -92,8 +101,9 @@ class QwenProcessor(DocumentProcessor):
         # 终轮确认）都是单次打分，采样噪声会翻转「哪个版本更好」的判定；
         # 与 GeminiProcessor 的默认 temperature=0 对齐。
         body: dict = {"model": model, "messages": messages, "temperature": 0}
-        # qwen text models support OpenAI-style json_object; vision models may not.
-        if as_json and "vl" not in model.lower():
+        # response_format=json_object 只给纯文本模型：DashScope 视觉模型
+        # （vl/ocr 命名）带此参数会返回 200 + 空 content（qwen3.5-ocr 实测）。
+        if as_json and not self._is_vision_name(model):
             body["response_format"] = {"type": "json_object"}
         resp = httpx.post(
             f"{self.base_url}/chat/completions",
