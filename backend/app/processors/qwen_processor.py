@@ -88,7 +88,10 @@ class QwenProcessor(DocumentProcessor):
         return f"data:{mime};base64," + base64.b64encode(data).decode()
 
     def _chat(self, *, model: str, messages: list, as_json: bool) -> str:
-        body: dict = {"model": model, "messages": messages}
+        # temperature=0：评测确定性。优化轮的版本对比（门口认证 / 单调守护 /
+        # 终轮确认）都是单次打分，采样噪声会翻转「哪个版本更好」的判定；
+        # 与 GeminiProcessor 的默认 temperature=0 对齐。
+        body: dict = {"model": model, "messages": messages, "temperature": 0}
         # qwen text models support OpenAI-style json_object; vision models may not.
         if as_json and "vl" not in model.lower():
             body["response_format"] = {"type": "json_object"}
