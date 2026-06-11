@@ -45,14 +45,16 @@ def get_golden_seed_file(country: str, seed_id: str) -> FileResponse:
     return FileResponse(path, media_type="application/pdf")
 
 
-@router.post("/golden/{country}/evaluate", summary="用当前国家模板对黄金集跑 OCR（按需）")
+@router.post("/golden/{country}/evaluate", summary="后台触发：用当前国家模板对黄金集跑 OCR")
 def evaluate_golden(
     country: str,
     processor: str | None = Query(default=None, description="OCR processor spec；留空用 DEFAULT_PROCESSOR"),
     limit: int = Query(default=0, ge=0, description="0 = 全部种子"),
-    db: Session = Depends(get_db),
 ) -> dict:
-    return golden_review.evaluate(db, country, processor_spec=processor or None, limit=limit)
+    # Runs in a background thread (OCR is minutes long); returns immediately.
+    # Frontend polls GET /evaluation until `running` clears. This is what keeps
+    # the single-worker site responsive during evaluation.
+    return golden_review.start_evaluate_async(country, processor_spec=processor or None, limit=limit)
 
 
 @router.get("/golden/{country}/evaluation", summary="读取缓存的最新评测结果")

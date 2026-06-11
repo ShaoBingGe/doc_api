@@ -162,14 +162,21 @@ def evaluate(db, country: str, *, processor_spec: str | None = None, limit: int 
     conflict data (GT vs latest), cache it, and return it. Never raises on OCR
     failure — degrades to a structured `failed`/`ocr_error` result."""
     country = country.upper()
+
+    def _fail(payload: dict) -> dict:
+        # always clear the "running" marker so polling/UI never sticks
+        payload = {**payload, "running": False}
+        _write_cache(country, payload)
+        return payload
+
     seeds = load_seeds(country)
     if not seeds:
-        return {"country": country, "error": "no_golden_set", "per_seed": {}}
+        return _fail({"country": country, "error": "no_golden_set", "per_seed": {}})
 
     try:
         modules, prompt, schema = _build_eval_inputs(country)
     except FileNotFoundError:
-        return {"country": country, "error": "no_template", "per_seed": {}}
+        return _fail({"country": country, "error": "no_template", "per_seed": {}})
 
     name_by_key = {m.module_key: (m.display_name or _leaf(m.json_path) or m.module_key)
                    for m in modules}
@@ -199,12 +206,12 @@ def evaluate(db, country: str, *, processor_spec: str | None = None, limit: int 
             strict=True,
         )
     except Exception as exc:  # processor unavailable, etc. — never 500
-        return {
+        return _fail({
             "country": country,
             "error": "eval_failed",
             "detail": str(exc)[:300],
             "per_seed": {},
-        }
+        })
 
     # Group per_sample → per seed. per_seed is keyed by the no-dash hex seed id
     # (matches load_seeds + the frontend); score_outputs' doc_id is the dashed
@@ -272,3 +279,43 @@ def load_cached_eval(country: str) -> dict | None:
             return json.load(f)
     except Exception:
         return None
+
+
+# ── background runner ─────────────────────────────────────────────────────────
+#
+# evaluate() OCRs every golden seed sequentially (minutes). Running it inline in
+# the request worker froze the whole site (single worker, 1-by-1 OCR). So the
+# endpoint kicks it off in a daemon thread (its OWN DB session) and returns
+# immediately; status lives in the cache file so the frontend can poll it.
+
+def is_running(country: str) -> bool:
+    c = load_cached_eval(country)
+    return bool(c and c.get("running"))
+
+
+def start_evaluate_async(country: str, *, processor_spec: str | None = None, limit: int = 0) -> dict:
+    """Launch evaluate() in the background. Returns immediately with a status."""
+    import threading
+
+    country = country.upper()
+    if is_running(country):
+        return {"country": country, "running": True, "already": True, "per_seed": {}}
+
+    # mark running so polling + concurrent-click guard see it right away
+    _write_cache(country, {"country": country, "running": True, "per_seed": {}})
+
+    def _worker():
+        from app.core.database import SessionLocal
+        db = SessionLocal()
+        try:
+            evaluate(db, country, processor_spec=processor_spec, limit=limit)
+        except Exception as exc:  # never leave a stuck "running" marker
+            _write_cache(country, {
+                "country": country, "running": False, "error": "eval_failed",
+                "detail": str(exc)[:300], "per_seed": {},
+            })
+        finally:
+            db.close()
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"country": country, "running": True, "started": True, "per_seed": {}}

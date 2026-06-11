@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, RefreshCw, FileText, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import apiClient, {
   fetchPlatformCountryTemplates,
@@ -30,6 +30,44 @@ export default function CountryTemplates() {
   const [evaluation, setEvaluation] = useState<GoldenEvaluation | null>(null)
   const [loading, setLoading] = useState(true)
   const [evaluating, setEvaluating] = useState(false)
+  const pollRef = useRef<{ cancelled: boolean } | null>(null)
+
+  function stopPoll() {
+    if (pollRef.current) pollRef.current.cancelled = true
+    pollRef.current = null
+  }
+
+  // Poll the evaluation cache until the background run finishes.
+  async function pollEvaluation(c: string) {
+    stopPoll()
+    const token = { cancelled: false }
+    pollRef.current = token
+    setEvaluating(true)
+    while (!token.cancelled) {
+      await new Promise((r) => setTimeout(r, 4000))
+      if (token.cancelled) return
+      let data
+      try {
+        data = (await fetchGoldenEvaluation(c)).data
+      } catch {
+        continue // transient; keep polling
+      }
+      if (token.cancelled) return
+      if (data?.running) continue // still going — keep last results on screen
+      // finished
+      setEvaluating(false)
+      pollRef.current = null
+      if (data?.error) {
+        toast.error(`评测失败：${data.error}${data.detail ? ' · ' + data.detail : ''}`)
+      } else if (data?.summary) {
+        toast.success(
+          `评测完成：${data.summary.seeds} 篇，冲突 ${data.summary.conflicts}，OCR 失败 ${data.summary.ocr_errors}`,
+        )
+      }
+      setEvaluation(data?.per_seed && Object.keys(data.per_seed).length ? data : null)
+      return
+    }
+  }
 
   // load country list once
   useEffect(() => {
@@ -46,34 +84,36 @@ export default function CountryTemplates() {
   // load seeds + cached evaluation when country changes
   useEffect(() => {
     if (!country) return
+    stopPoll()
+    setEvaluating(false)
     setLoading(true)
     Promise.all([fetchGoldenSeeds(country), fetchGoldenEvaluation(country)])
       .then(([s, e]) => {
         setSeeds(s.data.seeds)
-        setEvaluation(e.data?.per_seed ? e.data : null)
+        const ev = e.data
+        if (ev?.running) {
+          setEvaluation(ev?.per_seed && Object.keys(ev.per_seed).length ? ev : null)
+          pollEvaluation(country) // a run is already in progress → resume polling
+        } else {
+          setEvaluation(ev?.per_seed && Object.keys(ev.per_seed).length ? ev : null)
+        }
       })
       .catch(() => toast.error('加载黄金种子失败'))
       .finally(() => setLoading(false))
+    return stopPoll
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [country])
 
   async function runEvaluate() {
     if (!country || evaluating) return
     setEvaluating(true)
-    toast.info('正在用当前国家模板对黄金集跑 OCR，请稍候…')
+    toast.info('已在后台开始评测（OCR 较慢，完成后自动刷新）')
     try {
-      const { data } = await evaluateGolden(country)
-      if (data.error) {
-        toast.error(`评测失败：${data.error}${data.detail ? ' · ' + data.detail : ''}`)
-      } else {
-        toast.success(
-          `评测完成：${data.summary?.seeds ?? 0} 篇，冲突 ${data.summary?.conflicts ?? 0}，OCR 失败 ${data.summary?.ocr_errors ?? 0}`,
-        )
-      }
-      setEvaluation(data?.per_seed ? data : null)
+      await evaluateGolden(country) // returns immediately ({running:true})
+      pollEvaluation(country)
     } catch {
-      toast.error('评测请求失败（Gemini 可能不可用）')
-    } finally {
       setEvaluating(false)
+      toast.error('评测启动失败')
     }
   }
 

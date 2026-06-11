@@ -407,6 +407,7 @@ export interface GoldenEvaluation {
   generated_at?: string
   processor?: string
   cached?: boolean
+  running?: boolean
   error?: string
   detail?: string
   summary?: { seeds: number; conflicts: number; ocr_errors: number; overall_accuracy: number }
