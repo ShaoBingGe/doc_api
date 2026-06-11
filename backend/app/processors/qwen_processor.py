@@ -39,7 +39,9 @@ except ImportError:  # pragma: no cover
 # Keep requests bounded: most invoices are 1-2 pages.
 _MAX_PAGES = 5
 _RENDER_DPI = 150
-_HTTP_TIMEOUT = 180.0
+# qwen3-vl-plus 实测 ~34s/页，5 页 PDF 单次调用可贴近 180s——放宽到 5 分钟，
+# 与前端 OCR_TIMEOUT（api-client.ts）保持一致。
+_HTTP_TIMEOUT = 300.0
 
 
 class QwenProcessor(DocumentProcessor):

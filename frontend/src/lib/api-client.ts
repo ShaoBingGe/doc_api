@@ -10,6 +10,11 @@ const apiClient = axios.create({
   timeout: 30_000,
 })
 
+/** 同步跑 OCR 的请求专用超时：qwen3-vl-plus 单页 ~34s，5 页 PDF 最坏 ~3 分钟。
+ *  所有「上传即识别 / 重试识别 / 重新处理」的调用都必须带上它，
+ *  否则 30s 全局默认会在模型返回前掐断请求（表现为「OCR 识别服务超时」）。 */
+export const OCR_TIMEOUT = 300_000
+
 apiClient.interceptors.request.use((config) => {
   const apiKey = localStorage.getItem('api_key')
   if (apiKey) {
@@ -71,12 +76,13 @@ export function reprocessDocument(
     processor_type: processorType ?? null,
     prompt: extra?.prompt ?? null,
     extra_fields: extra?.extra_fields ?? null,
-  })
+  }, { timeout: OCR_TIMEOUT })
 }
 
 export function uploadDocument(formData: FormData) {
   return apiClient.post('/api/v1/documents/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: OCR_TIMEOUT,
   })
 }
 
@@ -279,6 +285,7 @@ export function uploadDocumentWithAnnotations(file: File, annotationsFile: File)
   form.append('annotations', annotationsFile)
   return apiClient.post('/api/v1/documents/upload-with-annotations', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: OCR_TIMEOUT,
   })
 }
 

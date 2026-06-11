@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import apiClient, { updateAnnotation, deleteAnnotation, reprocessDocument } from '../lib/api-client'
+import apiClient, { OCR_TIMEOUT, updateAnnotation, deleteAnnotation, reprocessDocument } from '../lib/api-client'
 import { toast } from '../lib/toast'
 
 export type WorkspaceStep = 'annotate' | 'configure' | 'test' | 'publish'
@@ -879,7 +879,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const res = await apiClient.post(
         '/api/v1/api-definitions/' + apiDefId + '/documents',
         fd,
-        { headers: { 'Content-Type': 'multipart/form-data' } },
+        // 上传即同步跑 OCR：qwen3-vl-plus 多页 PDF 可达数分钟，
+        // 必须覆盖 30s 全局默认超时
+        { headers: { 'Content-Type': 'multipart/form-data' }, timeout: OCR_TIMEOUT },
       )
       const d = res.data
       const newDoc: SampleDoc = {
@@ -1343,6 +1345,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     try {
       const res = await apiClient.post(
         `/api/v1/api-definitions/${apiDefId}/samples/${docId}/retry-ocr`,
+        undefined,
+        { timeout: OCR_TIMEOUT },  // 同步 OCR，30s 默认必超时
       )
       const { status, annotations_created, error } = res.data
       if (error) {

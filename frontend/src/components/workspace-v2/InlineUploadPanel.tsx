@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { Upload, Loader2, FileJson, Image as ImageIcon, X, Check } from 'lucide-react'
-import apiClient, { uploadDocumentWithAnnotations } from '../../lib/api-client'
+import apiClient, { OCR_TIMEOUT, uploadDocumentWithAnnotations } from '../../lib/api-client'
 import { toast } from '../../lib/toast'
 import { cn } from '../../lib/utils'
 
@@ -125,7 +125,7 @@ function UploadNewDoc({ onUploadComplete, apiDefinitionId }: InlineUploadPanelPr
     try {
       const res = await apiClient.post('/api/v1/documents/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120_000,  // §6.4 auto-OCR runs synchronously; allow up to 2min
+        timeout: OCR_TIMEOUT,  // §6.4 auto-OCR 同步执行；qwen3-vl-plus 多页可达数分钟
       })
       const documentId: string = res.data.id
       toast.success(apiDefinitionId ? '文档上传成功，已完成首次识别' : '文档上传成功')
