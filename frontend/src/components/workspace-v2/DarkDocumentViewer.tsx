@@ -30,6 +30,9 @@ function AnchorLayer({ annotations, results, selectedFieldId, hoveredFieldId, on
   return (
     <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
       {annotations.map((ann) => {
+        // 未定位字段（boundingBox=null）不画焦点点——宁可不画，也不在
+        // 错误位置放一个误导的点（旧 _defaultBbox 盲铺的根因）。
+        if (!ann.boundingBox) return null
         const result = resultMap.get(ann.id)
         const confidence = result?.confidence ?? -1
         const isSelected = ann.id === selectedFieldId

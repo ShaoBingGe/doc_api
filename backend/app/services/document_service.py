@@ -336,6 +336,20 @@ def _run_extraction(
                 logger.warning("Failed to pad structured_data with required keys: %s", _exc)
         inferred_schema = _infer_schema(raw_structured)
 
+        # 字段焦点定位（第一步）：从原生 PDF 文字层拿词坐标，把抽取出的值
+        # 匹配回票面位置，给无 bbox 的字段补真实坐标（匹配不到留空，前端降级）。
+        # 纯本地、确定性、不调 LLM、不改 prompt；扫描件/图片词表为空即跳过。
+        try:
+            from app.services import word_locator
+            words = word_locator.extract_words(doc.storage_path)
+            if words:
+                located, total = word_locator.locate_fields(structured_data, words)
+                logger.info(
+                    "word-locator: doc=%s 定位 %d/%d 字段", doc.id, located, total
+                )
+        except Exception as _exc:  # noqa: BLE001
+            logger.warning("word-locator failed for doc=%s: %s", doc.id, _exc)
+
         result = ProcessingResult(
             document_id=doc.id,
             version=previous_version + 1,

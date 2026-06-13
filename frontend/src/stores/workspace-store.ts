@@ -10,7 +10,9 @@ export interface Annotation {
   label: string
   fieldType: 'text' | 'number' | 'date' | 'boolean' | 'string' | 'array'
   page: number
-  boundingBox: { x: number; y: number; width: number; height: number }
+  // null = 该字段未定位（原生 PDF 词坐标没匹配到 / 扫描件无文字层）。
+  // 不再用序号盲铺假坐标——前端据 null 降级（不画焦点点、点击不假放大）。
+  boundingBox: { x: number; y: number; width: number; height: number } | null
   value?: string | number | boolean | null
   isManual?: boolean
 }
@@ -290,14 +292,6 @@ function _normConfidence(c: unknown): number {
   return c <= 1 ? c * 100 : c
 }
 
-function _defaultBbox(idx: number): Annotation['boundingBox'] {
-  return {
-    x: 5 + (idx % 4) * 22,
-    y: 10 + Math.floor(idx / 4) * 9,
-    width: 20,
-    height: 4,
-  }
-}
 
 function parseStructuredData(sd: unknown): {
   annotations: Annotation[]
@@ -325,7 +319,7 @@ function parseStructuredData(sd: unknown): {
             width: Number(rawBbox.width ?? rawBbox.w ?? 0),
             height: Number(rawBbox.height ?? rawBbox.h ?? 0),
           }
-        : _defaultBbox(idxCounter)
+        : null
       const page = rawBbox && typeof rawBbox.page === 'number' ? (rawBbox.page as number) : 1
       const value = v.value as string | number | boolean | null
       const fieldType: Annotation['fieldType'] = typeof value === 'number' ? 'number' : 'text'
@@ -365,7 +359,7 @@ function parseStructuredData(sd: unknown): {
       label: pathPrefix || `field_${idxCounter}`,
       fieldType: typeof node === 'number' ? 'number' : 'text',
       page: 1,
-      boundingBox: _defaultBbox(idxCounter),
+      boundingBox: null,
     })
     results.push({ annotationId: id, value: node as string | number | boolean | null, confidence: 90 })
   }
@@ -377,7 +371,7 @@ function parseStructuredData(sd: unknown): {
       const rawBbox = item.bbox as (Annotation['boundingBox'] & { page?: number }) | null | undefined
       const bbox: Annotation['boundingBox'] = rawBbox
         ? { x: rawBbox.x, y: rawBbox.y, width: rawBbox.width, height: rawBbox.height }
-        : _defaultBbox(idx)
+        : null
       const page = rawBbox && typeof rawBbox.page === 'number' ? rawBbox.page : 1
       const fieldType: Annotation['fieldType'] = typeof item.value === 'number' ? 'number' : 'text'
       annotations.push({ id, label: item.keyName, fieldType, page, boundingBox: bbox })

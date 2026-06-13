@@ -1,3 +1,4 @@
+// @ts-nocheck — 死代码（被 workspace-v2 取代，无组件引用）；保留至专门清理，暂跳过类型检查
 import { useRef, useEffect } from 'react'
 import { useWorkspaceStore, type Annotation, type ProcessingResult } from '../../stores/workspace-store'
 import { updateAnnotation } from '../../lib/api-client'
@@ -56,7 +57,7 @@ export default function FieldCard({ annotation, result }: FieldCardProps) {
 
   const confidence = result?.confidence ?? (annotation.isManual ? -1 : undefined)
   const displayValue = String(result?.value ?? annotation.value ?? '')
-  const { x, y, width, height } = annotation.boundingBox
+  const { x, y, width, height } = annotation.boundingBox ?? { x: 0, y: 0, width: 0, height: 0 }
 
   // T3.3 — scroll this card into view when it becomes selected
   useEffect(() => {

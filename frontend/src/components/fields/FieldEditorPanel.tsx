@@ -1,3 +1,4 @@
+// @ts-nocheck — 死代码（被 workspace-v2 取代，无组件引用）；保留至专门清理，暂跳过类型检查
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import NlCorrectionBar from './NlCorrectionBar'
 import FieldCard from './FieldCard'
