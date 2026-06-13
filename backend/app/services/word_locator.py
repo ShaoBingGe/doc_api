@@ -31,9 +31,8 @@ try:
 except ImportError:  # pragma: no cover
     _PYMUPDF = False
 
-# 匹配一个值最多跨多少个连续词——防 O(n²) 爆炸 + 抑制误匹配（一个字段值
-# 极少跨 8 个以上 OCR 词）。
-_MAX_WINDOW = 8
+# 短文本精确拼接匹配的最大窗口（多数标量字段 ≤ 12 词）。
+_MAX_WINDOW = 12
 # 一页最多取多少词——异常长的页（合同附页）截断，发票场景远用不到。
 _MAX_WORDS_PER_PAGE = 4000
 
@@ -98,13 +97,85 @@ def extract_words(storage_path: str) -> list[Word]:
 
 # ── 值 → 坐标匹配 ─────────────────────────────────────────────────────────────
 
-_NORM_STRIP_RE = re.compile(r"[\s,\-–—:/$¥€£]")
+_NORM_STRIP_RE = re.compile(r"[\s,\-–—:/$¥€£.]")
 
 
 def _norm(s: str) -> str:
-    """匹配用归一化：去空格/千分位逗号/破折号/货币符/冒号/斜杠，转小写。
-    **保留小数点与数字**（去掉会把 6000.00 变 600000）。"""
+    """匹配用归一化：去空格/千分位逗号/破折号/货币符/冒号/斜杠/句点，转小写。
+    句点也去（"Dia." → "dia"，"Sdn. Bhd." 对齐）——数字小数点的精度比较
+    走 _as_number 数值路径，文本路径不依赖小数点。"""
     return _NORM_STRIP_RE.sub("", str(s or "")).lower()
+
+
+# ── 日期匹配（票面 DMY/月名 vs 输出 ISO）─────────────────────────────────────
+
+_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}$")
+_NUM_DATE_RE = re.compile(r"(\d{1,4})[/\-.](\d{1,2})[/\-.](\d{1,4})")
+_DM_MON_RE = re.compile(r"(\d{1,2})\s*[-/ ]?\s*([A-Za-z]{3,9})\s*[-/, ]*\s*(\d{2,4})")
+_MON_D_RE = re.compile(r"([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{2,4})")
+
+
+def _norm_year(y: int) -> int:
+    return 2000 + y if y < 100 else y
+
+
+def _parse_date_candidates(text: str) -> set[tuple[int, int, int]]:
+    """从一段文本里抽出所有可能的 (year, month, day)。
+
+    发票日期格式繁杂且 DMY/MDY 歧义（09/07 既可能 7月9日也可能 9月7日），
+    所以对数字式日期把 DMY 和 MDY **都**作为候选——只要其中之一等于目标
+    （目标来自 ISO，y/m/d 已确定）即命中，不会误配（错的那个候选不会等于目标）。
+    """
+    out: set[tuple[int, int, int]] = set()
+    t = str(text or "")
+
+    for m in _NUM_DATE_RE.finditer(t):
+        a, b, c = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if a > 99:                              # YYYY-MM-DD
+            out.add((a, b, c))
+        if c > 31 or c > 99:                     # ?/?/YYYY → DMY 与 MDY 都试
+            yr = _norm_year(c)
+            if 1 <= b <= 12 and 1 <= a <= 31:
+                out.add((yr, b, a))             # DMY
+            if 1 <= a <= 12 and 1 <= b <= 31:
+                out.add((yr, a, b))             # MDY
+
+    for m in _DM_MON_RE.finditer(t):            # 9 Jul 2025 / 09-July-25
+        mon = _MONTHS.get(m.group(2)[:3].lower())
+        if mon:
+            out.add((_norm_year(int(m.group(3))), mon, int(m.group(1))))
+    for m in _MON_D_RE.finditer(t):             # Jul 9, 2025
+        mon = _MONTHS.get(m.group(1)[:3].lower())
+        if mon:
+            out.add((_norm_year(int(m.group(3))), mon, int(m.group(2))))
+    return out
+
+
+def _locate_date(iso: str, ws: list[Word]) -> dict | None:
+    """目标是 ISO 日期时的专项定位：扫单词及最多 4 连词拼接，解析日期候选，
+    与目标 (y,m,d) 比对。"""
+    parts = iso.split("-")
+    target = (int(parts[0]), int(parts[1]), int(parts[2]))
+    # 优先单词精确命中（"31/07/2025" 一个词 → 最紧的框，不含标签）
+    for w in ws:
+        if target in _parse_date_candidates(w.text):
+            return _merge_bbox([w])
+    # 跨词日期（"9" "Jul" "2025"）：拼接最多 4 词
+    for i in range(len(ws)):
+        joined = ""
+        window: list[Word] = []
+        for j in range(i, min(i + 4, len(ws))):
+            if ws[j].page != ws[i].page:
+                break
+            joined += (" " if joined else "") + ws[j].text
+            window.append(ws[j])
+            if target in _parse_date_candidates(joined):
+                return _merge_bbox(window)
+    return None
 
 
 def _as_number(s: str) -> float | None:
@@ -150,8 +221,17 @@ def locate_value(value: str, words: list[Word]) -> dict | None:
     if not val or not words:
         return None
 
-    # 按 (page, y, x) 排序，保证「连续词」在阅读序上相邻
-    ws = sorted(words, key=lambda w: (w.page, round(w.y, 1), w.x))
+    # 用 PyMuPDF 的原生阅读序（block→line→word，对表格更准）；不再按
+    # round(y) 重排（会把表格同行不同列的词亚像素差异打乱）。
+    ws = words
+
+    # 日期专项：票面 09/07/2025 / 9 Jul 2025 vs 输出 ISO 2025-07-09
+    if _ISO_DATE_RE.match(val):
+        hit = _locate_date(val, ws)
+        if hit:
+            return hit
+        # 日期没匹配到也不再走文本路径（ISO 串本身不会原样出现在票面）
+        return None
 
     num = _as_number(val)
     if num is not None and len(val) <= 24:  # 长串不当数字（如发票号 IV-852866）
@@ -209,6 +289,33 @@ def _locate_text(val: str, ws: list[Word]) -> dict | None:
                 return _merge_bbox(window)
             if len(joined) > len(target) + 4:
                 break  # 已超出目标长度，本起点无望
+    # 长文本（地址/明细描述，跨多词甚至多行）：完整拼接匹配不现实
+    # （OCR 换行、单引号、缩写差异）。改用「前缀词锚定 + 词数框范围」——
+    # 焦点放大只需框到那块区域，不要求像素级精确。
+    return _locate_long_text(val, ws)
+
+
+def _locate_long_text(val: str, ws: list[Word]) -> dict | None:
+    """长文本（≥3 词）锚定：用开头的显著词在词流定位起点，再按目标词数
+    向后框出范围。容忍尾部 OCR 差异/换行——对焦够用。"""
+    toks = [_norm(t) for t in re.split(r"\s+", str(val)) if _norm(t)]
+    sig = [t for t in toks if len(t) >= 2]   # 跳过单字符噪声词
+    if len(toks) < 3 or len(sig) < 2:
+        return None
+    a0, a1 = sig[0], sig[1]
+    n = len(toks)
+    nws = [_norm(w.text) for w in ws]
+    for i in range(len(ws)):
+        if nws[i] != a0 and not (len(a0) >= 4 and nws[i].startswith(a0)):
+            continue
+        # 第二个锚点须出现在起点后的小窗里（确认不是孤立同词）
+        if a1 not in nws[i + 1: i + 5]:
+            continue
+        end = min(i + n, len(ws))
+        # 不跨页
+        window = [w for w in ws[i:end] if w.page == ws[i].page]
+        if window:
+            return _merge_bbox(window)
     return None
 
 

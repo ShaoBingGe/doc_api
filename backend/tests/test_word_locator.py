@@ -71,10 +71,20 @@ def test_miss_returns_none():
     assert wl.locate_value("NONEXISTENT-XYZ", WORDS) is None
 
 
-def test_iso_date_misses_native_format():
-    # GT 日期已转 ISO（2025-07-31），票面是 31/07/2025 → 第一步不命中（已知，
-    # 留给第二步 anchor_text）。这里固化「优雅返回 None」而非错误命中。
-    assert wl.locate_value("2025-07-31", WORDS) is None
+def test_iso_date_matches_dmy_native_format():
+    # 日期专项匹配：GT 转 ISO（2025-07-31），票面 31/07/2025（DMY）→ 命中。
+    bb = wl.locate_value("2025-07-31", WORDS)
+    assert bb is not None
+    assert abs(bb["x"] - 12) < 0.1 and abs(bb["y"] - 10) < 0.1
+
+
+def test_date_parser_variants():
+    from app.services.word_locator import _parse_date_candidates as p
+    assert (2025, 7, 9) in p("09/07/2025")      # DMY
+    assert (2025, 7, 9) in p("9 Jul 2025")       # 月名
+    assert (2025, 7, 9) in p("Jul 9, 2025")      # 月名在前
+    assert (2025, 7, 9) in p("2025-07-09")       # ISO 原样
+    assert p("not a date") == set()
 
 
 def test_empty_inputs():
