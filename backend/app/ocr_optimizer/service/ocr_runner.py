@@ -14,6 +14,7 @@ import json
 import logging
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -24,6 +25,10 @@ from app.processors.base import extract_json
 from app.processors.factory import ProcessorFactory
 
 logger = logging.getLogger(__name__)
+
+# OCR 并发度：视觉调用是网络 IO，但 _run_single 内的 PyMuPDF 渲染吃
+# CPU/内存，2G 机器上压到 3。
+_OCR_CONCURRENCY = 3
 
 
 def run_ocr_on_samples(
@@ -44,26 +49,46 @@ def run_ocr_on_samples(
     """
     outputs: dict[str, Any] = {}
 
+    # 预取 storage_path（主线程，DB 操作不能进工作线程）。
+    specs: list[tuple[str, str]] = []
     for sid in sample_document_ids:
         sid_str = str(sid)
-        try:
-            doc = db.get(Document, sid)
-            if not doc:
-                raise NotFoundError(f"sample document {sid} not found")
-            if not doc.storage_path:
-                raise ValueError(f"document {sid} has no storage_path")
+        doc = db.get(Document, sid)
+        if not doc:
+            outputs[sid_str] = {"_error": f"sample document {sid} not found"}
+        elif not doc.storage_path:
+            outputs[sid_str] = {"_error": f"document {sid} has no storage_path"}
+        else:
+            specs.append((sid_str, doc.storage_path))
 
+    if not specs:
+        return outputs
+
+    def _ocr_one(sid_str: str, path: str) -> tuple[str, Any]:
+        try:
             parsed = _run_single(
-                file_path=doc.storage_path,
+                file_path=path,
                 composed_prompt=composed_prompt,
                 composed_schema=composed_schema,
                 processor_spec=processor_spec,
                 model_name=model_name,
             )
-            outputs[sid_str] = parsed
-        except Exception as exc:
-            logger.warning("OCR failed for sample %s: %s", sid, exc)
-            outputs[sid_str] = {"_error": str(exc)[:500]}
+            return sid_str, parsed
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("OCR failed for sample %s: %s", sid_str, exc)
+            return sid_str, {"_error": str(exc)[:500]}
+
+    # 并发 OCR：纯网络 IO（视觉模型调用），互不依赖。并发数压低到 3，
+    # 因为 _run_single 内含 PyMuPDF 渲染（吃 CPU/内存），2G 机器上不宜过高。
+    workers = min(_OCR_CONCURRENCY, len(specs))
+    if workers <= 1:
+        for sid_str, path in specs:
+            k, v = _ocr_one(sid_str, path)
+            outputs[k] = v
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for k, v in ex.map(lambda s: _ocr_one(*s), specs):
+                outputs[k] = v
     return outputs
 
 

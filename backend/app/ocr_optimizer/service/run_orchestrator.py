@@ -64,6 +64,10 @@ logger = logging.getLogger(__name__)
 MIN_SAMPLES = 3
 DEFAULT_MAX_ROUNDS = 5
 DEFAULT_TARGET = 0.95
+
+# 每轮 per-module 优化的 LLM 并发度（纯文本调用，不吃本地 CPU/内存，
+# 可比 OCR 高）。受 DashScope QPS 与失败链兜底约束，取 6。
+_MODULE_OPT_CONCURRENCY = 6
 HARD_MODULE_LIMIT = 20
 
 
@@ -795,51 +799,76 @@ def _run_one_round(
     db.commit()
 
     # ── Step 3: Per-module optimizer (skip modules already at 1.0) ───────
+    # 性能：每个未达标字段串行调 optimize_module + verify_module_fix（各 1 次
+    # LLM）曾是迭代慢的最大头（30 字段 × 2 × 3 轮 = 180 次串行 LLM ≈ 30 分钟）。
+    # 各字段完全独立 → 用线程池并发跑纯 LLM 部分；DB 写回仍在主线程串行
+    # （SQLAlchemy session 非线程安全）。session 配 expire_on_commit=False，
+    # 工作线程读已加载的 ORM 属性安全。
+    provider_spec = _split_provider(run.llm_provider)[0]
+    provider_model = _split_provider(run.llm_provider)[1]
     updates: dict[str, dict] = {}
-    for mod, it in zip(modules, iterations):
-        if it.aggregate_accuracy >= 1.0:
-            continue
-        history = persistence.load_recent_module_history(
+
+    targets = [(mod, it) for mod, it in zip(modules, iterations)
+               if it.aggregate_accuracy < 1.0]
+    # history 含 DB 查询 → 主线程预取
+    histories: dict[str, list] = {}
+    for mod, _it in targets:
+        h = persistence.load_recent_module_history(
             db, run.api_definition_id, mod.module_key, k=3
         )
-        # Exclude current iteration from history (it lives in DB but is "now")
-        history = [h for h in history if h.get("round_num") != round_num]
+        histories[mod.module_key] = [x for x in h if x.get("round_num") != round_num]
 
-        result = module_optimizer.optimize_module(
-            module=mod,
-            iteration=it,
-            history=history,
-            processor_spec=_split_provider(run.llm_provider)[0],
-            model_name=_split_provider(run.llm_provider)[1],
-        )
-        metrics["total_llm_calls"] += 1
-
-        # ── Local self-verify (design v4 "局部验证") ──────────────────
-        # Before accepting the mutation, ask the verifier judge whether
-        # the new prompt actually fixes the failing samples. A `reject`
-        # verdict makes us drop the mutation and keep the old module
-        # prompt for this round.
-        if result and (result.get("new_ocr_prompt") or result.get("new_description")):
-            verdict = module_optimizer.verify_module_fix(
-                module=mod,
-                iteration=it,
-                proposed=result,
-                processor_spec=_split_provider(run.llm_provider)[0],
-                model_name=_split_provider(run.llm_provider)[1],
+    def _optimize_and_verify(mod, it) -> dict:
+        """纯 LLM（无 DB），可在工作线程跑。返回供主线程串行应用的结果。
+        单字段任何异常都吞掉（返回空结果）——绝不让一个字段拖垮整轮。"""
+        out = {"mod": mod, "it": it, "result": None, "rejected": None, "verdict": None, "llm_calls": 0}
+        try:
+            result = module_optimizer.optimize_module(
+                module=mod, iteration=it, history=histories.get(mod.module_key, []),
+                processor_spec=provider_spec, model_name=provider_model,
             )
-            metrics["total_llm_calls"] += 1
-            if verdict.get("verdict") == "reject":
-                logger.info(
-                    "round %d: verifier rejected mutation for %s — keeping old prompt. reason: %s",
-                    round_num, mod.module_key, verdict.get("reasoning", "")[:120],
+            out["llm_calls"] += 1
+            if result and (result.get("new_ocr_prompt") or result.get("new_description")):
+                verdict = module_optimizer.verify_module_fix(
+                    module=mod, iteration=it, proposed=result,
+                    processor_spec=provider_spec, model_name=provider_model,
                 )
-                # Persist the rejected attempt in the iteration for audit
-                it.optimization_suggestion = (
-                    (result.get("optimization_suggestion") or "")
-                    + f"\n\n[VERIFIER REJECT] {verdict.get('reasoning', '')[:200]}"
-                )
-                result = None  # discard the mutation
+                out["llm_calls"] += 1
+                if verdict.get("verdict") == "reject":
+                    out["rejected"] = result
+                    out["verdict"] = verdict
+                    result = None
+            out["result"] = result
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("module optimize failed for %s: %s", mod.module_key, exc)
+        return out
 
+    if targets:
+        from concurrent.futures import ThreadPoolExecutor
+        workers = min(_MODULE_OPT_CONCURRENCY, len(targets))
+        if workers <= 1:
+            applied = [_optimize_and_verify(mod, it) for mod, it in targets]
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                applied = list(ex.map(lambda mi: _optimize_and_verify(*mi), targets))
+    else:
+        applied = []
+
+    # 主线程串行应用结果到 ORM + 计数
+    for out in applied:
+        metrics["total_llm_calls"] += out["llm_calls"]
+        mod, it = out["mod"], out["it"]
+        if out["rejected"] is not None:
+            verdict = out["verdict"] or {}
+            logger.info(
+                "round %d: verifier rejected mutation for %s — keeping old prompt. reason: %s",
+                round_num, mod.module_key, verdict.get("reasoning", "")[:120],
+            )
+            it.optimization_suggestion = (
+                (out["rejected"].get("optimization_suggestion") or "")
+                + f"\n\n[VERIFIER REJECT] {verdict.get('reasoning', '')[:200]}"
+            )
+        result = out["result"]
         if result:
             it.aggregate_diff = result.get("aggregate_diff")
             it.optimization_suggestion = result.get("optimization_suggestion")
