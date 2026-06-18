@@ -60,6 +60,9 @@ MIN_SAMPLES_FOR_ITERATION = 3
 MAX_SAMPLES_HINT = 10  # informational only; messaging caps the suggestion at 9 new uploads
 STALE_OPTIMIZING_MIN = 10  # minutes before an "optimizing" job is considered stuck
 
+# fork 阶段 reconciler / add-field 扩展的 LLM 并发度（纯文本长 prompt 调用）。
+_FORK_LLM_CONCURRENCY = 6
+
 
 # ── DB serialization helpers ────────────────────────────────────────────────
 
@@ -1835,66 +1838,94 @@ def _fork_api_definition(
 
     from . import reconciler as _reconciler
 
+    from concurrent.futures import ThreadPoolExecutor
+    from app.processors.factory import ProcessorFactory as _PF_fork
+    _fork_proc, _fork_model = _PF_fork.resolve_spec(
+        src_api.processor_type, src_api.model_name
+    )
+
+    # ── 并发预算 reconciler（fork 阶段最大头）──────────────────────────────
+    # 每个累积/膨胀字段一次长 prompt LLM（~22s）。曾串行：N 字段 × 22s 是
+    # fork 慢的主因。reconcile_module_prompt 纯 LLM（读已加载属性，无 DB），
+    # 并发安全；_clone_module 是纯构造，留在主线程串行。
+    # 统筹整合：除「有新建议 + 已有累积」外，模块体膨胀（反馈块 ≥2 或
+    # 正文 >600 字符）也触发纯整合，避免无限 append；fail-open 回退盲追加。
+    reconcile_targets = []
+    for m in src_modules:
+        r = reflections.get(m.module_key)
+        if r is None:
+            continue
+        new_sugs = list(getattr(r, "fix_suggestions", []) or [])
+        if (new_sugs or _reconciler.is_bloated(m.ocr_prompt)) and \
+                _reconciler.has_accumulated_feedback(m.ocr_prompt):
+            reconcile_targets.append((m, r, new_sugs))
+
+    def _reconcile_one(m, r, new_sugs):
+        try:
+            c = _reconciler.reconcile_module_prompt(
+                module_key=m.module_key, display_name=m.display_name,
+                current_prompt=m.ocr_prompt or "", new_suggestions=new_sugs,
+                field_rule=getattr(r, "field_rule", None),
+                latest_intent=getattr(r, "diff", None) or {},
+                processor_spec=_fork_proc, model_name=_fork_model,
+            )
+            return m.module_key, c
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("reconcile %s failed: %s", m.module_key, exc)
+            return m.module_key, None
+
+    coherent_by_key: dict[str, str] = {}
+    if reconcile_targets:
+        with ThreadPoolExecutor(max_workers=min(_FORK_LLM_CONCURRENCY, len(reconcile_targets))) as ex:
+            for k, c in ex.map(lambda t: _reconcile_one(*t), reconcile_targets):
+                if c:
+                    coherent_by_key[k] = c
+
+    # 串行 clone（纯构造，用预算好的 coherent prompt）
     new_modules: list[OcrModule] = []
     for m in src_modules:
         patch = edits_by_key.get(m.module_key, {})
-        # Phase 8: attach the reflection result for this source module so
-        # _clone_module can record it into ocr_suggestions["reflections"].
         r = reflections.get(m.module_key)
         if r is not None:
             patch = dict(patch)  # don't mutate the shared dict
             patch["__reflection"] = r
-            # Phase 4 — cross-round contradiction reconciliation (req 5):
-            # when this field's prompt ALREADY carries accumulated feedback,
-            # a fresh suggestion can contradict an earlier one. Instead of
-            # blindly appending (which stacks contradictions), collapse them
-            # into ONE coherent prompt that prioritizes the latest intent.
-            # 统筹整合扩展：除「有新建议 + 已有累积」外，模块体**膨胀**时
-            # （反馈块 ≥2 或正文 >600 字符）也触发纯整合（new_suggestions
-            # 允许为空）——把堆叠的历史反馈一次性收敛为单一自洽规则集，
-            # 而不是无限 append。fail-open → _clone_module 回退盲目追加
-            # （composer 端还有确定性去重折叠兜底）。
-            new_sugs = list(getattr(r, "fix_suggestions", []) or [])
-            bloated = _reconciler.is_bloated(m.ocr_prompt)
-            if (new_sugs or bloated) and _reconciler.has_accumulated_feedback(m.ocr_prompt):
-                from app.processors.factory import ProcessorFactory as _PF_rec
-                _rec_proc, _rec_model = _PF_rec.resolve_spec(
-                    src_api.processor_type, src_api.model_name
-                )
-                coherent = _reconciler.reconcile_module_prompt(
-                    module_key=m.module_key,
-                    display_name=m.display_name,
-                    current_prompt=m.ocr_prompt or "",
-                    new_suggestions=new_sugs,
-                    field_rule=getattr(r, "field_rule", None),
-                    latest_intent=getattr(r, "diff", None) or {},
-                    processor_spec=_rec_proc,
-                    model_name=_rec_model,
-                )
-                if coherent:
-                    patch["__reconciled_prompt"] = coherent
+            if m.module_key in coherent_by_key:
+                patch["__reconciled_prompt"] = coherent_by_key[m.module_key]
         new_modules.append(_clone_module(m, new_version_id=new_version.id, patch=patch))
 
     order_start = max((m.order_index for m in new_modules), default=-1) + 1
     # Build a compact sibling-example block once, reuse across all add diffs.
-    # Helps the LLM align style with the rest of the template.
     sibling_examples = "\n".join(
         f"- {m.module_key} ({m.display_name or ''}): {(m.description or '')[:80]}"
         for m in src_modules[:5]
     )
-    from app.processors.factory import ProcessorFactory as _PF_add
-    _add_proc, _add_model = _PF_add.resolve_spec(
-        src_api.processor_type, src_api.model_name
-    )
-    for i, (d, reflection_key) in enumerate(add_specs):
+
+    # ── 并发新增字段扩展（_module_from_add_diff 纯构造 + LLM，无 DB）──────
+    def _add_one(i, d, reflection_key):
         rout = reflections.get(reflection_key) if reflection_key else None
-        new_modules.append(_module_from_add_diff(
-            d, new_version_id=new_version.id, order_index=order_start + i,
-            reflection_outputs=rout,
-            sibling_examples=sibling_examples,
-            processor_spec=_add_proc,
-            model_name=_add_model,
-        ))
+        try:
+            return i, _module_from_add_diff(
+                d, new_version_id=new_version.id, order_index=order_start + i,
+                reflection_outputs=rout, sibling_examples=sibling_examples,
+                processor_spec=_fork_proc, model_name=_fork_model,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("add field #%d failed: %s", i, exc)
+            return i, None
+
+    if len(add_specs) <= 1:
+        for i, (d, rk) in enumerate(add_specs):
+            _, mod = _add_one(i, d, rk)
+            if mod is not None:
+                new_modules.append(mod)
+    else:
+        with ThreadPoolExecutor(max_workers=min(_FORK_LLM_CONCURRENCY, len(add_specs))) as ex:
+            add_res = list(ex.map(
+                lambda x: _add_one(x[0], x[1][0], x[1][1]), list(enumerate(add_specs))
+            ))
+        for _i, mod in sorted(add_res, key=lambda x: x[0]):
+            if mod is not None:
+                new_modules.append(mod)
 
     try:
         new_version.composed_schema = composer.assemble_schema(new_modules)

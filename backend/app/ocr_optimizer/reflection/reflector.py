@@ -24,6 +24,9 @@ from .skills_loader import Skill
 
 logger = logging.getLogger(__name__)
 
+# 反思并发度：每 diff 一次长 prompt LLM（~20s），纯网络 IO，可较高。
+_REFLECT_CONCURRENCY = 6
+
 
 @dataclass
 class ReflectionResult:
@@ -100,23 +103,20 @@ def reflect_on_diffs(
     modules_by_key = modules_by_key or {}
     cross_doc_context = cross_doc_context or {}
     sample_outputs = sample_outputs or {}
-    results: dict[str, ReflectionResult] = {}
 
     # Country-scoped agents (one per kind). Loaded once per call.
     country_agents = load_country_agents(country) if country else {}
 
-    for idx, diff in enumerate(diffs):
+    def _reflect_one(idx: int, diff: dict) -> tuple[str, ReflectionResult]:
+        """单个 diff 的反思（纯 LLM，无 DB）——可在工作线程跑。
+        反思 prompt 很长（跨样本对照+检索+教义），单次 ~20s；diff 间互相
+        独立，并发后总耗时 ≈ 单 diff 而非 N×单 diff。"""
         key = diff.get("module_key") or f"_new_{idx}"
         result = ReflectionResult(module_key=key, kind=diff.get("kind", "edit"), diff=diff)
 
         ctx = _build_context(diff, modules_by_key)
-        # Phase 14b — enrich with cross-doc samples for this field name(s)
         ctx["cross_doc_samples"] = _build_cross_doc_block(diff, cross_doc_context)
 
-        # ── 编辑意图分类（确定性证据，先于 LLM）──────────────────────────
-        # NORMALIZE（仅删字符 → 输出规范问题）/ RETARGET（内容抓错 → 需要
-        # 重新定位）等判定 + 字符级证据，注入反思 prompt，让 agent 不必
-        # 猜根因。RETARGET 额外做全文检索：正确值藏在哪些字段下。
         intent = edit_intent_mod.classify(diff)
         ctx["edit_intent_block"] = intent.render_block()
         ctx["retrieval_block"] = ""
@@ -128,61 +128,56 @@ def reflect_on_diffs(
             )
         result.edit_intent = intent.intent
 
-        # ── Country-only routing (design v5) ────────────────────────────
-        # If the source ApiDef is country-templated AND has an agent for
-        # this diff kind, use ONLY that agent. Do not layer global skills
-        # on top — the country agent already encodes the country-specific
-        # knowledge (taxonomy, tax-ID conventions, format rules) that
-        # would otherwise be in global skills.
-        # If no country agent is configured (e.g. non-templated ApiDef
-        # OR a country without agent files), fall back to global skills
-        # so reflection still happens.
         agent = country_agents.get(diff.get("kind", "edit"))
+        outputs: list[tuple[str, dict]] = []
         if agent:
-            output = _invoke_country_agent(
-                agent, diff, ctx,
-                processor_spec=processor_spec, model_name=model_name,
-            )
-            if output:
-                result.skill_outputs.append({"skill": agent.key, "output": output})
-                if isinstance(output, dict):
-                    if isinstance(output.get("fix_suggestion"), str) and output["fix_suggestion"].strip():
-                        result.fix_suggestions.append(output["fix_suggestion"].strip())
-                    if isinstance(output.get("description_patch"), str) and output["description_patch"].strip():
-                        if not result.description_patch:
-                            result.description_patch = output["description_patch"].strip()
+            o = _invoke_country_agent(agent, diff, ctx, processor_spec=processor_spec, model_name=model_name)
+            if o:
+                outputs.append((agent.key, o))
         else:
-            # Fallback: no country agent → run global skills
             for skill in route(diff):
-                output = _invoke_skill(
-                    skill, diff, ctx,
-                    processor_spec=processor_spec, model_name=model_name,
-                )
-                if output is None:
-                    continue
-                result.skill_outputs.append({"skill": skill.key, "output": output})
-                if isinstance(output, dict):
-                    if isinstance(output.get("fix_suggestion"), str) and output["fix_suggestion"].strip():
-                        result.fix_suggestions.append(output["fix_suggestion"].strip())
-                    if isinstance(output.get("description_patch"), str) and output["description_patch"].strip():
-                        if not result.description_patch:
-                            result.description_patch = output["description_patch"].strip()
+                o = _invoke_skill(skill, diff, ctx, processor_spec=processor_spec, model_name=model_name)
+                if o is not None:
+                    outputs.append((skill.key, o))
 
-        # Summarize rationale
+        for skill_key, output in outputs:
+            result.skill_outputs.append({"skill": skill_key, "output": output})
+            if isinstance(output, dict):
+                if isinstance(output.get("fix_suggestion"), str) and output["fix_suggestion"].strip():
+                    result.fix_suggestions.append(output["fix_suggestion"].strip())
+                if isinstance(output.get("description_patch"), str) and output["description_patch"].strip():
+                    if not result.description_patch:
+                        result.description_patch = output["description_patch"].strip()
+
         rats = [
             o["output"].get("rationale") for o in result.skill_outputs
             if isinstance(o.get("output"), dict) and o["output"].get("rationale")
         ]
         result.rationale_summary = " | ".join(rats)
-
-        # Phase 3 — lift a structured FieldRule from any skill output that
-        # emitted the aligned fields. Purely additive: fix_suggestions remain.
         result.field_rule = _field_rule_from_outputs(
             result.skill_outputs, diff, intent=result.edit_intent,
         )
+        return key, result
 
-        results[key] = result
+    # 并发反思（每 diff 一次长 prompt LLM，互相独立）。单 diff 失败不拖垮整批。
+    def _safe(idx: int, diff: dict):
+        try:
+            return _reflect_one(idx, diff)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("reflect diff#%d failed: %s", idx, exc)
+            key = diff.get("module_key") or f"_new_{idx}"
+            return key, ReflectionResult(module_key=key, kind=diff.get("kind", "edit"), diff=diff)
 
+    results: dict[str, ReflectionResult] = {}
+    if len(diffs) <= 1:
+        for idx, diff in enumerate(diffs):
+            k, r = _safe(idx, diff)
+            results[k] = r
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(_REFLECT_CONCURRENCY, len(diffs))) as ex:
+            for k, r in ex.map(lambda p: _safe(*p), list(enumerate(diffs))):
+                results[k] = r
     return results
 
 
