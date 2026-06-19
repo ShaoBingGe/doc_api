@@ -1,0 +1,238 @@
+id: 'JP_1'
+remark: 日本（JP）国家发票模板。Design v7 — Part1 (JP country global) + Part2 (defer to schema descriptions) + Part3 (platform output contract reference only; composer injects from assets/global_output_contract.yaml). 字段骨架沿用平台通用集（下游 composer / 输出契约通用），description 按日本（御請求書）票面本地化；依据 japan-inv/init 8 样本 + 海信日本 schema。
+structure_prompt_version: '6'
+prompt_template:
+  prompt_format: |-
+    # 任务
+    请识别并提取这张日本（JP）票据文档（PDF / 图片），按下方 JSON Schema 输出合法 JSON。
+    文档以日文（御請求書 / 領収書）为主，可能包含多张票据、跨页票据、印刷模糊等情况，请尽可能准确识别。
+
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Part 1 · 日本（JP）国家全局说明
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    ## 1.1 票据种类分类（docType + invoiceType）
+    - **invoice**：正式付款凭证（日文「請求書 / 御請求書 / ご請求書」），含开票方与收票方、请求番号、日期、消費税信息、明细与合计金额。
+      下列子类型一律归为 invoice：
+      - Commercial Invoice（标准发票，默认子类；票面「請求書」「御請求書」）
+      - Proforma Invoice（见積書 / 形式发票；票面含「見積書」「PROFORMA」）
+      - Credit Note（赤伝 / 貸方票；票面含「返品」「赤伝」「CREDIT」或 totalAmount < 0）
+      - Tax Invoice（適格請求書 / インボイス；票面含「適格請求書」「インボイス」或带登録番号 T...）
+    - **receipt**：领收凭证（日文「領収書 / レシート / 受領書」），一般无逐项税务明细。
+    - **other**：納品書（仅交货无金额请求）、注文書、契約書等不属 invoice/receipt 的文档。
+      注意：标题为「納品書 兼 請求書」「請求書 兼 領収書」时按是否含请求金额判定，优先归 invoice。
+
+    ## 1.2 内容与格式统一要求
+    - **语言**：JP 票据以日文为主，少量英文。**保持原文，不翻译**（公司名、品名、住所均原样输出）。
+    - **货币**：默认 JPY（円 / ¥）。
+      - 日元**通常为整数无小数**（如 `508,200` → `508200`）；千分位 `,`，**去千分位与「円」「¥」符号**后输出纯数值。
+      - 偶有外币（USD 等）票面，按票面货币标识输出对应 currency。
+    - **消費税率**：以百分比字符串输出。日本现行两档：
+      - `"10%"` 标準税率（默认）
+      - `"8%"` 軽減税率（飲食料品・定期購読新聞等；票面常标「※」「軽減」「8%対象」）
+      - 同一票面可能同时存在 10% 与 8%，需在 detailOfTaxSummary 按税率分别汇总。
+    - **日期处理（绝对规则）**：
+      1. **年份必须 ≥ 2015**；解析出更早年份一律抛弃。
+      2. **和暦转西暦**：票面「令和N年」= 西暦 (2018 + N) 年（令和元年=2019）；「令和7年5月1日」→ `2025-05-01`。
+      3. 日式 `YYYY年MM月DD日` / `YYYY/MM/DD` 均规整为 **YYYY-MM-DD**。
+    - **方向判定（开票方 vs 收票方，极重要）**：
+      - **billFrom（开票方/請求元）**：出具请求书、收款的一方，通常在票面右上、盖公司印、带登録番号 T...，行末「上記の通りご請求申し上げます」的主体。
+      - **billTo（收票方/請求先・宛先）**：被请求付款方，常在左上「〇〇 御中 / 様」之后，本数据集多为「ハイセンスジャパン株式会社」及其部门/サービスセンター。
+      - 「御中」「様」前的名称是 billToName；带印章/登録番号/「発行者」的是 billFromName。
+
+    ## 1.3 JP 税号/登记号强制规定
+    - **適格請求書発行事業者登録番号（インボイス登録番号）**：
+      - 格式：**字母 `T` + 13 位数字**（如 `T2010001091903`、`T4010401022860`）。
+      - 关键词：「登録番号」「適格請求書発行事業者登録番号」「インボイス番号」，常紧邻开票方公司名/印章。
+      - **仅取开票方** → `billFromTaxIdentificationNumber`。日本制度下登録番号属开票方，不取收票方。
+    - **请求书番号 invoiceNumber**：
+      - 关键词：「請求書番号」「ご請求番号」「請求No」「伝票番号」「No.」「お客様番号」（无专用番号时取票面唯一单号）。
+      - 典型形态多样：`00025700-00194021`、`1-2025055195777-IP`、`2504X6YH0501000010010`、`45602`、`EMS-JP-03494-2409~2508`。
+      - **严禁将登録番号（T+13位）、电话号码、邮编（〒）误取为请求书番号。**
+
+    ## 1.4 必填字段与缺失处理
+    - **invoice / receipt 类型**：`docType`、`invoiceType`、`page`、`currency` 必须输出；票面无 currency 时按 JP 上下文默认 JPY。
+    - **other 类型**：仅 `docType`、`page` 必须输出。
+    - **缺失信息**：无法找到的字段一律不输出，**不要推断、不要捏造**。
+
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Part 2 · 字段识别规则
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    下方 JSON Schema 中每个字段的 `description` 已包含：业务含义、JP 票面常见关键词与典型格式、取值位置锚点、易混淆字段辨别要点、数值字段取值方法。
+
+    **请严格按 schema 中每字段的 description 提取。**
+
+    > 字段识别规则（"在哪里找、找什么"）由本 Part 2 + schema description 承担；
+    > 输出装配规则（"找到后怎么组装成 JSON"）已统一抽到 Part 3 平台契约。
+
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Part 3 · 输出契约与装配规则
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    > 本部分由平台统一管理，运行时由 composer 从
+    > `backend/app/ocr_optimizer/assets/global_output_contract.yaml`
+    > 强制注入。本 yaml 中**不复制具体规则**，避免双向维护漂移。
+    >
+    > 涵盖：3.1 顶层 ARRAY 结构；3.2 数值字段统一规范（去千分位、去货币符号、保留精度）；
+    >   3.3 税额装配（detailOfTaxSummary 按税率分组 + 总税额一致性）；
+    >   3.4 行项目装配（一行一项 + qty×price 校验）；3.5 跨页装配（合并 + page 数组）；
+    >   3.6 Credit Note 装配；3.7 缺失字段处理；3.8 字段输出顺序。
+    >
+    > 国家级特例（如 JP 日元整数、和暦转换、10%/8% 双税率）写在 Part 1 作为"输入侧事实"，
+    > 为 Part 3 平台规则提供解析依据。本国家无 Part 3 特例 override。
+
+  json_schema:
+    title: invoice_and_receipts
+    type: ARRAY
+    items:
+      anyOf:
+        - type: OBJECT
+          properties:
+            docType:
+              type: STRING
+              description: 票据类型：invoice（請求書/御請求書）或 receipt（領収書/レシート）。納品書/注文書/契約書等归 other。
+              enum:
+                - invoice
+                - receipt
+            page:
+              type: ARRAY
+              description: "所在文档中的页码列表（从1开始）。一张票据跨多页时作为一个数组整体输出，如 [2, 3, 4]。"
+              items:
+                type: NUMBER
+            invoiceType:
+              type: STRING
+              description: |-
+                发票子类型：
+                  - 'Commercial Invoice'（默认）：标准請求書/御請求書。
+                  - 'Proforma Invoice'：見積書 / 含 'PROFORMA' 关键词。
+                  - 'Credit Note'：赤伝/返品票，或 totalAmount < 0。
+                  - 'Tax Invoice'：適格請求書/インボイス，或带登録番号 T...。
+              enum:
+                - Commercial Invoice
+                - Proforma Invoice
+                - Credit Note
+                - Tax Invoice
+            nameOfInvoice:
+              type: STRING
+              description: 票面标题原文，如「請求書」「御請求書」「ご請求書」「領収書」「納品書」「見積書」。保持日文原文。
+            invoiceNumber:
+              type: STRING
+              description: |-
+                请求书番号/单据编号。关键词：「請求書番号」「ご請求番号」「請求No」「伝票番号」「No.」。
+                典型形态：00025700-00194021、1-2025055195777-IP、2504X6YH0501000010010、45602、EMS-JP-03494-2409~2508。
+                严禁将登録番号(T+13位)、电话、邮编(〒)误取为请求书番号。
+            invoiceDate:
+              type: STRING
+              description: |-
+                开票/请求日期。关键词：「請求日」「発行日」「年月日」。和暦「令和N年」转西暦(2018+N)；日式 YYYY年MM月DD日 / YYYY/MM/DD 统一规整为 YYYY-MM-DD。年份必须 ≥ 2015。
+            totalNetAmount:
+              type: NUMBER
+              description: 税抜合计（不含消費税）。关键词：「小計」「税抜」「税抜金額」。日元整数，去千分位与「円/¥」。
+            totalAmount:
+              type: NUMBER
+              description: 税込合计/请求总额（含消費税，应付金额）。关键词：「合計」「ご請求金額」「お支払金額」「税込」。日元整数，去千分位与「円/¥」。
+            totalTaxAmount:
+              type: NUMBER
+              description: 消費税合计。关键词：「消費税」「消費税額」「税額」。多档税率时为各档税额之和。优先取票面标注的税额，严禁用 总额-净额 反推。
+            currency:
+              type: STRING
+              description: 货币代码。默认 JPY（円/¥）；票面明确外币时按票面输出。
+            billToName:
+              type: STRING
+              description: |-
+                收票方/请求先名称（被请求付款方）。锚点：「〇〇 御中」「〇〇 様」前的名称。本数据集多为「ハイセンスジャパン株式会社」及其部门/関西サービスセンター等。
+            billToComposite:
+              type: STRING
+              description: 收票方完整地址块（含〒邮编、都道府県、市区町村、番地、建物名）。原样保留日文。
+            billToCountry:
+              type: STRING
+              description: 收票方所在国家。日本票据默认「日本 / Japan」，无明确标识时可不输出。
+            billToCountryCode:
+              type: STRING
+              description: 收票方国家代码（ISO，如 JP）。无法确定时不输出。
+            billToTaxIdentificationNumber:
+              type: STRING
+              description: 收票方税号。日本登録番号制度下通常**不取收票方**；除非票面明确标注收票方登録番号，否则不输出。
+            billFromName:
+              type: STRING
+              description: |-
+                开票方/请求元名称（出具请求书、收款方）。锚点：票面右上、带公司印章、紧邻登録番号 T... 的主体；「発行者」「請求元」。如「日本通運株式会社」「Field Serve Japan」。
+            billFromComposite:
+              type: STRING
+              description: 开票方完整地址块，含〒邮编+都道府県+住所+建物（如「〒108-0023 東京都港区芝浦3-9-1 芝浦ルネサイトタワー9F」）。原样保留日文。
+            billFromCountry:
+              type: STRING
+              description: 开票方所在国家。日本票据默认「日本 / Japan」。
+            billFromCountryCode:
+              type: STRING
+              description: 开票方国家代码（ISO，如 JP）。无法确定时不输出。
+            billFromTaxIdentificationNumber:
+              type: STRING
+              description: |-
+                开票方適格請求書発行事業者登録番号（インボイス登録番号）。格式：字母 T + 13 位数字（如 T2010001091903）。关键词：「登録番号」「適格請求書発行事業者登録番号」。仅取开票方。
+            billFromBusinessRegistrationNumber:
+              type: STRING
+              description: 开票方法人番号（13 位数字，无 T 前缀）。仅当票面单独标注「法人番号」时输出；与登録番号(T+13位)区分，勿混用。
+            purchaseOrderNumber:
+              type: STRING
+              description: 采购订单号。关键词：「注文番号」「発注番号」「PO」「お客様注文No」。
+            dueDate:
+              type: STRING
+              description: 付款期限。关键词：「お支払期限」「支払期日」「お振込期限」。规整为 YYYY-MM-DD（和暦转西暦）。
+            salesOrderNumber:
+              type: STRING
+              description: 销售订单号。关键词：「受注番号」「売上伝票番号」。
+            deliveryOrderNumber:
+              type: STRING
+              description: 交货单号。关键词：「納品書番号」「納品No」「出荷番号」。
+            detailOfGoodsOrServices:
+              type: ARRAY
+              description: 商品/役务明细行。一行一项，按票面顺序。
+              items:
+                type: OBJECT
+                properties:
+                  articleName:
+                    type: STRING
+                    description: 品名/役务名称（「品名」「品目」「内容」「摘要」列）。保持日文原文。
+                  description:
+                    type: STRING
+                    description: 该行补充说明/规格（型番、期間、備考等）。
+                  quantity:
+                    type: NUMBER
+                    description: 数量（「数量」「数」列）。
+                  netAmount:
+                    type: NUMBER
+                    description: 该行税抜金额（「金額」「税抜金額」列）。日元整数，去千分位。
+                  tax:
+                    type: NUMBER
+                    description: 该行消費税额（如逐行标注）。
+                  taxRate:
+                    type: STRING
+                    description: 该行税率，"10%" 或 "8%"（軽減税率，常带「※」「軽減」标记）。
+                  grossAmount:
+                    type: NUMBER
+                    description: 该行税込金额（如票面逐行给出含税额）。
+            detailOfTaxSummary:
+              type: ARRAY
+              description: 按税率分组的消費税汇总（「10%対象」「8%対象」分别一行）。
+              items:
+                type: OBJECT
+                properties:
+                  taxCategory:
+                    type: STRING
+                    description: 税种/分类原名，如「消費税額」「課税」「課税対象」。保持票面原文。
+                  taxRate:
+                    type: STRING
+                    description: 税率字符串，"10%" 或 "8%"。
+                  netTaxableAmount:
+                    type: NUMBER
+                    description: 该税率对应的税抜对象金额（「10%対象 税抜」等）。日元整数。
+                  tax:
+                    type: NUMBER
+                    description: 该税率对应的消費税额。日元整数。
+            originalInvoiceReferences:
+              type: ARRAY
+              description: 仅 Credit Note（赤伝/返品）时填：被冲销的原请求书号列表。
+              items:
+                type: STRING

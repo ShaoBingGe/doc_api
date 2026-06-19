@@ -7,10 +7,11 @@ import {
 } from '../../lib/api-client'
 import { toast } from '../../lib/toast'
 
-const CHIP_ORDER = ['MY', 'CN', 'US', 'EU', 'GLOBAL']
+const CHIP_ORDER = ['MY', 'JP', 'CN', 'US', 'EU', 'GLOBAL']
 
 const COUNTRY_LABEL: Record<string, string> = {
   MY: '🇲🇾 MY',
+  JP: '🇯🇵 JP',
   CN: '🇨🇳 CN',
   US: '🇺🇸 US',
   EU: '🇪🇺 EU',

@@ -60,7 +60,7 @@ def list_available_countries() -> list[dict[str, Any]]:
     Returns a list of `{country: str, available: bool}` for the hardcoded
     chip list defined in UI_DESIGN §14.2: MY, CN, US, EU, GLOBAL.
     """
-    chips = ["MY", "CN", "US", "EU", "GLOBAL"]
+    chips = ["MY", "JP", "CN", "US", "EU", "GLOBAL"]
     found: set[str] = set()
     for p in _REPO_ROOT.glob("*_invoice_prompt.yaml"):
         # filename e.g. "MY_invoice_prompt.yaml" → "MY"
