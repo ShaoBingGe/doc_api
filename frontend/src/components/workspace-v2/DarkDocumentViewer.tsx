@@ -8,6 +8,15 @@ import { useWorkspaceStore, type Annotation, type ProcessingResult } from '../..
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
 
+// PDF.js 渲染日文/中文等 CJK 文本必须加载 CMap 字体映射，否则 CJK 字符
+// 渲染不出来（只剩线框/拉丁字符）。standardFontDataUrl 补内嵌标准字体。
+// ⚠️ 必须是模块级稳定引用——传内联对象会让 react-pdf 每次 render 重载 PDF。
+const PDF_OPTIONS = {
+  cMapUrl: `//unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
+  cMapPacked: true,
+  standardFontDataUrl: `//unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`,
+}
+
 // ─── Anchor point overlay ────────────────────────────────────────────────────
 //
 // Each field is shown as a single point (the center of its stored bbox). No
@@ -562,6 +571,7 @@ export default function DarkDocumentViewer() {
               <div className="relative shadow-2xl rounded-lg overflow-hidden bg-white">
                 <Document
                   file={documentInfo.fileUrl}
+                  options={PDF_OPTIONS}
                   onLoadSuccess={handleLoadSuccess}
                   onLoadError={() => setPdfError(true)}
                   loading={
