@@ -1,9 +1,10 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Loader2, Trash2, Code2, Plus, BookTemplate, Rocket, PauseCircle } from 'lucide-react'
 import { useApiStore } from '../stores/api-store'
 import { updateApiStatus } from '../lib/api-client'
 import { toast } from '../lib/toast'
+import ApiUsageModal from '../components/api/ApiUsageModal'
 
 const statusStyles: Record<string, string> = {
   active: 'bg-green-50 text-green-700',
@@ -30,6 +31,7 @@ const sourceStyles: Record<string, string> = {
 export default function ApiList() {
   const navigate = useNavigate()
   const { apiDefinitions, isLoading, fetchApiDefinitions, deleteApiDefinition } = useApiStore()
+  const [usageApi, setUsageApi] = useState<{ id: string; code: string; name: string } | null>(null)
 
   useEffect(() => {
     fetchApiDefinitions()
@@ -163,6 +165,16 @@ export default function ApiList() {
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right">
                   <div className="flex items-center justify-end gap-1.5">
+                    {api.status === 'active' && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setUsageApi({ id: api.id, code: api.api_code, name: api.name }) }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                        title="查看调用方式（端点 / Key / 示例代码）"
+                      >
+                        <Code2 className="w-3.5 h-3.5" />
+                        调用
+                      </button>
+                    )}
                     {api.status === 'active' ? (
                       <button
                         onClick={(e) => handleDeactivate(e, api.id)}
@@ -196,6 +208,15 @@ export default function ApiList() {
           </tbody>
         </table>
       </div>
+
+      {usageApi && (
+        <ApiUsageModal
+          apiDefId={usageApi.id}
+          apiCode={usageApi.code}
+          apiName={usageApi.name}
+          onClose={() => setUsageApi(null)}
+        />
+      )}
     </div>
   )
 }

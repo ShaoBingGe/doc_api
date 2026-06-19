@@ -392,15 +392,67 @@ def get_stats(db: Session, api_def_id: uuid.UUID, user=None) -> ApiStatsResponse
     return ApiStatsResponse()
 
 
+def _extract_fields_from_schema(schema: dict | None) -> list[dict]:
+    """从 composed_schema 提取调用方会收到的字段速览（name / type / 子字段）。
+
+    composed_schema 顶层是单票对象 {type:object, properties:{...}}。数组字段
+    （如 detailOfGoodsOrServices）展开一层 items 的子字段，方便调用方对照。
+    """
+    if not isinstance(schema, dict):
+        return []
+    props = schema.get("properties")
+    if not isinstance(props, dict):
+        return []
+
+    def _type_of(node: dict) -> str:
+        t = node.get("type")
+        return "/".join(t) if isinstance(t, list) else str(t or "any")
+
+    fields: list[dict] = []
+    for name, node in props.items():
+        if not isinstance(node, dict):
+            continue
+        t = _type_of(node)
+        entry: dict = {"name": name, "type": t}
+        if t == "array":
+            items = node.get("items") or {}
+            sub = items.get("properties") if isinstance(items, dict) else None
+            if isinstance(sub, dict):
+                entry["children"] = [
+                    {"name": k, "type": _type_of(v if isinstance(v, dict) else {})}
+                    for k, v in sub.items()
+                ]
+        fields.append(entry)
+    return fields
+
+
+def _active_composed_schema(db: Session, api_def_id: uuid.UUID) -> dict | None:
+    from app.ocr_optimizer.models import OcrPromptVersion, PromptVersionStatus
+    v = (
+        db.query(OcrPromptVersion)
+        .filter(
+            OcrPromptVersion.api_definition_id == api_def_id,
+            OcrPromptVersion.status == PromptVersionStatus.active.value,
+        )
+        .first()
+    )
+    return v.composed_schema if v else None
+
+
 def get_api_docs(db: Session, api_def_id: uuid.UUID, user=None) -> ApiDocsResponse:
     api_def = _get_or_404(db, api_def_id, user)
+    # 真实返回结构以 active 版本的 composed_schema 为准（response_schema 可能是
+    # 创建时的旧快照）；提取字段速览供调用方对照。
+    composed = _active_composed_schema(db, api_def.id)
+    fields = _extract_fields_from_schema(composed) or _extract_fields_from_schema(api_def.response_schema)
     return ApiDocsResponse(
         api_code=api_def.api_code,
         name=api_def.name,
         description=api_def.description,
         version=api_def.version,
         endpoint=_build_endpoint_url(api_def.api_code),
-        response_schema=api_def.response_schema,
+        response_schema=composed or api_def.response_schema,
+        fields=fields,
         error_codes=[
             {"http": 401, "code": "invalid_api_key", "description": "API Key 无效或已吊销"},
             {"http": 404, "code": "api_not_found", "description": "api_code 不存在"},

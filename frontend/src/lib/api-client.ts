@@ -142,6 +142,29 @@ export function deleteApiKey(id: string) {
   return apiClient.delete(`/api/v1/api-keys/${id}`)
 }
 
+export interface ApiDocsField {
+  name: string
+  type: string
+  children?: { name: string; type: string }[]
+}
+
+export interface ApiDocs {
+  api_code: string
+  name: string
+  description: string
+  version: number
+  endpoint: string
+  method: string
+  authentication: string
+  request_formats: string[]
+  fields: ApiDocsField[]
+  error_codes: { http: number; code: string; description: string }[]
+}
+
+export function fetchApiDocs(apiDefId: string) {
+  return apiClient.get<ApiDocs>(`/api/v1/api-definitions/${apiDefId}/docs`)
+}
+
 export function fetchTemplates(params?: { country?: string; language?: string }) {
   return apiClient.get('/api/v1/templates', { params })
 }

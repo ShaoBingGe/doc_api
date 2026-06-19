@@ -92,4 +92,5 @@ class ApiDocsResponse(BaseModel):
     authentication: str = "X-API-Key header"
     request_formats: list[str] = ["multipart/form-data", "application/json (file_url / file_base64)"]
     response_schema: dict | None = None
+    fields: list[dict] = []  # 返回字段速览：[{name, type, children?}]
     error_codes: list[dict] = []
