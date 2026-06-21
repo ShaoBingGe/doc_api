@@ -148,9 +148,6 @@ prompt_template:
             billToCountry:
               type: STRING
               description: 收票方所在国家。日本票据默认「日本 / Japan」，无明确标识时可不输出。
-            billToCountryCode:
-              type: STRING
-              description: 收票方国家代码（ISO，如 JP）。无法确定时不输出。
             billToTaxIdentificationNumber:
               type: STRING
               description: 收票方税号。日本登録番号制度下通常**不取收票方**；除非票面明确标注收票方登録番号，否则不输出。
@@ -164,28 +161,16 @@ prompt_template:
             billFromCountry:
               type: STRING
               description: 开票方所在国家。日本票据默认「日本 / Japan」。
-            billFromCountryCode:
-              type: STRING
-              description: 开票方国家代码（ISO，如 JP）。无法确定时不输出。
             billFromTaxIdentificationNumber:
               type: STRING
               description: |-
                 开票方適格請求書発行事業者登録番号（インボイス登録番号）。格式：字母 T + 13 位数字（如 T2010001091903）。关键词：「登録番号」「適格請求書発行事業者登録番号」。仅取开票方。
-            billFromBusinessRegistrationNumber:
-              type: STRING
-              description: 开票方法人番号（13 位数字，无 T 前缀）。仅当票面单独标注「法人番号」时输出；与登録番号(T+13位)区分，勿混用。
             purchaseOrderNumber:
               type: STRING
               description: 采购订单号。关键词：「注文番号」「発注番号」「PO」「お客様注文No」。
             dueDate:
               type: STRING
               description: 付款期限。关键词：「お支払期限」「支払期日」「お振込期限」。规整为 YYYY-MM-DD（和暦转西暦）。
-            salesOrderNumber:
-              type: STRING
-              description: 销售订单号。关键词：「受注番号」「売上伝票番号」。
-            deliveryOrderNumber:
-              type: STRING
-              description: 交货单号。关键词：「納品書番号」「納品No」「出荷番号」。
             detailOfGoodsOrServices:
               type: ARRAY
               description: 商品/役务明细行。一行一项，按票面顺序。
@@ -198,6 +183,9 @@ prompt_template:
                   description:
                     type: STRING
                     description: 该行补充说明/规格（型番、期間、備考等）。
+                  orderNumber:
+                    type: STRING
+                    description: 该行关联的注文/受注番号（「注文番号」「ご注文No」「受注番号」「お客様注文番号」），日本明细行常逐行标注。
                   quantity:
                     type: NUMBER
                     description: 数量（「数量」「数」列）。
