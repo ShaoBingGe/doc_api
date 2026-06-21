@@ -113,12 +113,19 @@ prompt_template:
                 - Proforma Invoice
                 - Credit Note
                 - Tax Invoice
+            nameOfInvoice:
+              type: STRING
+              description: 票面标题原文，如「請求書」「御請求書」「ご請求書」「領収書」「納品書」「見積書」。保持日文原文。
             invoiceNumber:
               type: STRING
               description: |-
                 请求书番号/单据编号。关键词：「請求書番号」「ご請求番号」「請求No」「伝票番号」「No.」。
                 典型形态：00025700-00194021、1-2025055195777-IP、2504X6YH0501000010010、45602、EMS-JP-03494-2409~2508。
                 严禁将登録番号(T+13位)、电话、邮编(〒)误取为请求书番号。
+            invoiceDate:
+              type: STRING
+              description: |-
+                开票/请求日期。关键词：「請求日」「発行日」「年月日」。和暦「令和N年」转西暦(2018+N)；日式 YYYY年MM月DD日 / YYYY/MM/DD 统一规整为 YYYY-MM-DD。年份必须 ≥ 2015。
             totalNetAmount:
               type: NUMBER
               description: 税抜合计（不含消費税）。关键词：「小計」「税抜」「税抜金額」。日元整数，去千分位与「円/¥」。
@@ -131,3 +138,89 @@ prompt_template:
             currency:
               type: STRING
               description: 货币代码。默认 JPY（円/¥）；票面明确外币时按票面输出。
+            billToName:
+              type: STRING
+              description: |-
+                收票方/请求先名称（被请求付款方）。锚点：「〇〇 御中」「〇〇 様」前的名称。本数据集多为「ハイセンスジャパン株式会社」及其部门/関西サービスセンター等。
+            billToComposite:
+              type: STRING
+              description: 收票方完整地址块（含〒邮编、都道府県、市区町村、番地、建物名）。原样保留日文。
+            billToCountry:
+              type: STRING
+              description: 收票方所在国家。日本票据默认「日本 / Japan」，无明确标识时可不输出。
+            billToTaxIdentificationNumber:
+              type: STRING
+              description: 收票方税号。日本登録番号制度下通常**不取收票方**；除非票面明确标注收票方登録番号，否则不输出。
+            billFromName:
+              type: STRING
+              description: |-
+                开票方/请求元名称（出具请求书、收款方）。锚点：票面右上、带公司印章、紧邻登録番号 T... 的主体；「発行者」「請求元」。如「日本通運株式会社」「Field Serve Japan」。
+            billFromComposite:
+              type: STRING
+              description: 开票方完整地址块，含〒邮编+都道府県+住所+建物（如「〒108-0023 東京都港区芝浦3-9-1 芝浦ルネサイトタワー9F」）。原样保留日文。
+            billFromCountry:
+              type: STRING
+              description: 开票方所在国家。日本票据默认「日本 / Japan」。
+            billFromTaxIdentificationNumber:
+              type: STRING
+              description: |-
+                开票方適格請求書発行事業者登録番号（インボイス登録番号）。格式：字母 T + 13 位数字（如 T2010001091903）。关键词：「登録番号」「適格請求書発行事業者登録番号」。仅取开票方。
+            purchaseOrderNumber:
+              type: STRING
+              description: 采购订单号。关键词：「注文番号」「発注番号」「PO」「お客様注文No」。
+            dueDate:
+              type: STRING
+              description: 付款期限。关键词：「お支払期限」「支払期日」「お振込期限」。规整为 YYYY-MM-DD（和暦转西暦）。
+            detailOfGoodsOrServices:
+              type: ARRAY
+              description: 商品/役务明细行。一行一项，按票面顺序。
+              items:
+                type: OBJECT
+                properties:
+                  articleName:
+                    type: STRING
+                    description: 品名/役务名称（「品名」「品目」「内容」「摘要」列）。保持日文原文。
+                  description:
+                    type: STRING
+                    description: 该行补充说明/规格（型番、期間、備考等）。
+                  orderNumber:
+                    type: STRING
+                    description: 该行关联的注文/受注番号（「注文番号」「ご注文No」「受注番号」「お客様注文番号」），日本明细行常逐行标注。
+                  quantity:
+                    type: NUMBER
+                    description: 数量（「数量」「数」列）。
+                  netAmount:
+                    type: NUMBER
+                    description: 该行税抜金额（「金額」「税抜金額」列）。日元整数，去千分位。
+                  tax:
+                    type: NUMBER
+                    description: 该行消費税额（如逐行标注）。
+                  taxRate:
+                    type: STRING
+                    description: 该行税率，"10%" 或 "8%"（軽減税率，常带「※」「軽減」标记）。
+                  grossAmount:
+                    type: NUMBER
+                    description: 该行税込金额（如票面逐行给出含税额）。
+            detailOfTaxSummary:
+              type: ARRAY
+              description: 按税率分组的消費税汇总（「10%対象」「8%対象」分别一行）。
+              items:
+                type: OBJECT
+                properties:
+                  taxCategory:
+                    type: STRING
+                    description: 税种/分类原名，如「消費税額」「課税」「課税対象」。保持票面原文。
+                  taxRate:
+                    type: STRING
+                    description: 税率字符串，"10%" 或 "8%"。
+                  netTaxableAmount:
+                    type: NUMBER
+                    description: 该税率对应的税抜对象金额（「10%対象 税抜」等）。日元整数。
+                  tax:
+                    type: NUMBER
+                    description: 该税率对应的消費税额。日元整数。
+            originalInvoiceReferences:
+              type: ARRAY
+              description: 仅 Credit Note（赤伝/返品）时填：被冲销的原请求书号列表。
+              items:
+                type: STRING
