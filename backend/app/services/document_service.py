@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import uuid
 from pathlib import Path
 from typing import BinaryIO
@@ -320,20 +321,29 @@ def _run_extraction(
         elapsed_ms = int(time.time() * 1000) - start_ms
 
         structured_data = _normalize_structured_data(raw_structured)
-        # N4 — pad structured_data with null for any required field the
-        # LLM omitted. Guarantees every sample exposes the SAME top-level
-        # key set (cross-sample parity), so the workspace's field list is
-        # consistent across docs and downstream consumers don't crash on
-        # missing keys.
+        # When the doc is bound to an API definition, reconcile the LLM output
+        # against that API's contract field set:
+        #   1. PROJECT — drop fields the model free-formed that are NOT in the
+        #      contract. The VLM isn't hard-bound to the schema, so a pruned
+        #      API (e.g. JP 8-field) otherwise still surfaces the model's full
+        #      canonical invoice (billFrom/lineItems/bankAccount/… → 97 leaves).
+        #      Projecting makes "标准识别" honor the defined schema.
+        #   2. PAD — N4: add null for any contract field the model omitted, so
+        #      every sample exposes the SAME top-level key set (cross-sample
+        #      parity) and downstream consumers don't crash on missing keys.
+        # `required` = modules + user-added + confirmed-observed − deleted, so
+        # projection only removes brand-new free-formed junk and never shrinks
+        # the legitimately-confirmed field set.
         if doc.api_definition_id:
             try:
                 from app.services import pending_edits_service
                 required = pending_edits_service.compute_required_field_set(
                     db, doc.api_definition_id,
                 )
+                structured_data = _project_to_field_set(structured_data, required)
                 structured_data = _pad_with_required_keys(structured_data, required)
             except Exception as _exc:  # noqa: BLE001
-                logger.warning("Failed to pad structured_data with required keys: %s", _exc)
+                logger.warning("Failed to reconcile structured_data with required keys: %s", _exc)
         inferred_schema = _infer_schema(raw_structured)
 
         # 字段焦点定位（第一步）：从原生 PDF 文字层拿词坐标，把抽取出的值
@@ -601,6 +611,66 @@ def _create_annotations(
             bounding_box=bbox,
         )
         db.add(ann)
+
+
+def _field_top_level(key_name: str) -> str:
+    """Top-level field token of a flattened keyName.
+
+    'docType' → 'docType'; 'page[0]' → 'page'; 'billFrom.name' → 'billFrom';
+    'detailOfGoodsOrServices[0].description' → 'detailOfGoodsOrServices'.
+    """
+    if not key_name:
+        return ""
+    return re.split(r"[.\[]", key_name, maxsplit=1)[0]
+
+
+def _project_to_field_set(
+    structured_data: list[dict] | dict, allowed: list[str],
+) -> list[dict] | dict:
+    """Drop fields the LLM produced that are NOT part of the API's contract.
+
+    The OCR model is not hard-bound to the API's schema, so a powerful VLM
+    (qwen3-vl-plus) free-forms the *full* canonical invoice — e.g. a JP API
+    pruned to 8 fields still gets billFrom.* / detailOfGoodsOrServices[*] /
+    bankAccount.* / issueDate / dueDate … back (97 leaves). Projection makes
+    the stored result + annotations honor the defined field set.
+
+    `allowed` is `compute_required_field_set` (modules + user-added +
+    confirmed-observed − deleted), so this only removes brand-new free-formed
+    junk; modules, user-added, and previously-confirmed fields are preserved
+    (keeps the monotonic cross-sample parity guarantee intact).
+
+    Shapes:
+      - normalized leaf-list [{keyName, value, …}] → keep records whose
+        top-level token ∈ allowed.
+      - record-dict {field: value} → keep keys whose top-level token ∈ allowed.
+
+    No-op when `allowed` is empty (unbound doc / no active version).
+    """
+    if not allowed:
+        return structured_data
+    allowed_set = set(allowed)
+
+    def _project_record(rec: dict) -> dict:
+        # field→value record (no keyName wrapper): filter its keys.
+        out = {}
+        for k, v in rec.items():
+            if _field_top_level(k) in allowed_set:
+                out[k] = v
+        return out
+
+    if isinstance(structured_data, list):
+        # Leaf-list shape: each item has a 'keyName'.
+        if structured_data and isinstance(structured_data[0], dict) and "keyName" in structured_data[0]:
+            return [
+                r for r in structured_data
+                if isinstance(r, dict) and _field_top_level(r.get("keyName", "")) in allowed_set
+            ]
+        # Record-list shape: filter keys of each record.
+        return [_project_record(r) if isinstance(r, dict) else r for r in structured_data]
+    if isinstance(structured_data, dict):
+        return _project_record(structured_data)
+    return structured_data
 
 
 def _pad_with_required_keys(
