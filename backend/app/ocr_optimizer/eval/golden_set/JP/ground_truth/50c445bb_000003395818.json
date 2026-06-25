@@ -1,0 +1,19 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "請求書",
+    "invoiceNumber": "000003395818",
+    "invoiceDate": "2025-05-08",
+    "currency": "JPY",
+    "totalAmount": 1709661,
+    "totalTaxAmount": 155423,
+    "billFromName": "株式会社カカクコム",
+    "billFromTaxIdentificationNumber": "T9011001065997",
+    "billToName": "TVS REGZA株式会社",
+    "page": [
+      1,
+      2,
+      3
+    ]
+  }
+]

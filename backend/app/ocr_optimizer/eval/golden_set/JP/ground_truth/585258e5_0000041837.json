@@ -1,0 +1,14 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "請求書",
+    "invoiceNumber": "0000041837",
+    "invoiceDate": "2025-05-31",
+    "currency": "JPY",
+    "totalAmount": 264000,
+    "totalTaxAmount": 24000,
+    "billFromName": "株式会社JOETSU",
+    "billFromTaxIdentificationNumber": "T5070001039646",
+    "billToName": "TVS REGZA株式会社"
+  }
+]

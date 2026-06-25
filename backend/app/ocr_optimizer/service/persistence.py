@@ -140,6 +140,74 @@ def list_iterations_for_run(db: Session, run_id: uuid.UUID) -> list[OcrModuleIte
     )
 
 
+def field_accuracy_timeline(db: Session, run_id: uuid.UUID) -> dict:
+    """Per-round × per-field accuracy for one Run — the convergence dashboard.
+
+    Shape (ready for a multi-line chart / heatmap on the 迭代过程 tab):
+        {
+          "run_id": "...",
+          "fields": [{"module_key": "...", "display_name": "..."}, ...],
+          "rounds": [
+            {"round_num": 1, "overall_accuracy": 0.83, "phase": "completed",
+             "fields": {"doc_type": 1.0, "invoice_number": 0.6, ...}},
+            ...
+          ],
+        }
+    Field accuracy comes straight from OcrModuleIteration.aggregate_accuracy
+    (the same per-module score the iteration computed), so the dashboard shows
+    exactly what drove each round's optimize decisions.
+    """
+    run = db.get(OcrOptimizationRun, run_id)
+    if not run:
+        raise NotFoundError(f"OcrOptimizationRun {run_id} not found")
+
+    rounds = (
+        db.query(OcrOptimizationRound)
+        .filter(OcrOptimizationRound.run_id == run_id)
+        .order_by(OcrOptimizationRound.round_num)
+        .all()
+    )
+
+    field_keys: set[str] = set()
+    timeline: list[dict] = []
+    for rnd in rounds:
+        iters = (
+            db.query(OcrModuleIteration)
+            .filter(OcrModuleIteration.round_id == rnd.id)
+            .all()
+        )
+        fields = {it.module_key: round(it.aggregate_accuracy or 0.0, 4) for it in iters}
+        field_keys |= set(fields.keys())
+        timeline.append({
+            "round_num": rnd.round_num,
+            "overall_accuracy": rnd.overall_accuracy,
+            "phase": rnd.phase,
+            "fields": fields,
+        })
+
+    # Resolve display names from any of this API's modules carrying the key.
+    display: dict[str, str] = {}
+    if field_keys:
+        rows = (
+            db.query(OcrModule.module_key, OcrModule.display_name)
+            .join(OcrPromptVersion, OcrModule.prompt_version_id == OcrPromptVersion.id)
+            .filter(OcrPromptVersion.api_definition_id == run.api_definition_id)
+            .filter(OcrModule.module_key.in_(field_keys))
+            .all()
+        )
+        for mk, dn in rows:
+            display.setdefault(mk, dn or mk)
+
+    return {
+        "run_id": str(run_id),
+        "fields": [
+            {"module_key": k, "display_name": display.get(k, k)}
+            for k in sorted(field_keys)
+        ],
+        "rounds": timeline,
+    }
+
+
 # ── Module history (for module_optimizer's history input) ────────────────────
 
 def load_recent_module_history(

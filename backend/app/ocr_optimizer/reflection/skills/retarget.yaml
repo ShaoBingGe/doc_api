@@ -1,0 +1,42 @@
+key: retarget
+display_name: 取值来源重定位反思（RETARGET）
+version: 1
+# Matcher: a value-changed edit whose corrected value is NOT obtainable by
+# deleting chars from the original — the model grabbed the WRONG content/source
+# (e.g. took 登録番号 instead of 請求書番号, or buyer TIN instead of seller TIN).
+# edit_intent.classify routed it here and a full-text retrieval report (where
+# the correct value actually appears in the OCR output) is appended as evidence.
+match:
+  diff_kind: edit
+  original_value_is_empty: false
+  edit_intent:
+    - RETARGET
+prompt: |
+  你是 OCR prompt 设计专家。本次修正属于「取值来源错误」——当前抓取的内容/范围错了，
+  需要**重新定位到正确来源**。请产出一条能泛化到所有样本的重定位规则。
+
+  ## 字段信息
+  - module_key: {module_key}
+  - 字段显示名: {display_name}
+  - 当前描述: {description}
+  - 当前 OCR 提示词:
+  ```
+  {original_ocr_prompt}
+  ```
+
+  ## 客户修正
+  - 原始（抓错的）值: {original_value}
+  - 客户填写的正确值: {corrected_value}
+
+  ## 分析要点（证据先行）
+  0. **文末「全文检索报告」已指出正确值实际出现在 OCR 输出的哪个字段/位置下**。
+     据此判断真实取值来源，把该来源的**邻近标签/区块**写进取值锚点。
+  1. 是否抓错了相邻或相似字段（如 登録番号 T+13 ↔ 請求書番号、买方税号 ↔ 卖方税号、
+     Customer No. ↔ Invoice No.）？把误抓来源与正确来源的**区分依据**写进排歧。
+  2. 文档中出现多个相似串时，靠什么锚点选对那一个（左右标签、所在区块、格式特征）？
+  3. 归纳一条覆盖全部样本的定位规则：正确值「在哪个标签之后/哪个区块内、长什么样」。
+  4. 用 `anchors` 写相对锚点，`disambiguation` 写与误抓位置的区分，`value_pattern` 写正确值形态。
+
+  {base_doctrine}
+
+  {base_edit_output}

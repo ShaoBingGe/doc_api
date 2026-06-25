@@ -1,0 +1,18 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "請求書",
+    "invoiceNumber": "1003477752",
+    "invoiceDate": "2025-04-30",
+    "currency": "JPY",
+    "totalAmount": 819180,
+    "totalTaxAmount": 74471,
+    "billFromName": "シャープマーケティングジャパン株式会社",
+    "billFromTaxIdentificationNumber": "T1040001008905",
+    "billToName": "TVS REGZA株式会社",
+    "page": [
+      1,
+      2
+    ]
+  }
+]

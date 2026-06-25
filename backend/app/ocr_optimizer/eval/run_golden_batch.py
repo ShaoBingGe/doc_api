@@ -32,9 +32,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--size", type=int, default=5)
     ap.add_argument("--threshold", type=float, default=0.8)
     ap.add_argument("--seed", type=int, default=None, help="rng seed (omit = random each run)")
-    ap.add_argument("--processor", default="gemini")
+    ap.add_argument("--processor", default=None,
+                    help="OCR backend; omit to follow DEFAULT_PROCESSOR "
+                         "(大陆部署=qwen / 海外=gemini)")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
+
+    # Don't hard-pin gemini — the production processor is deployment-specific
+    # (CLAUDE.md §四⑥). Default to the configured DEFAULT_PROCESSOR so the
+    # baseline reflects what production actually runs (qwen on mainland).
+    if not args.processor:
+        from app.core.config import get_settings
+        args.processor = (get_settings().DEFAULT_PROCESSOR or "mock").strip().lower()
 
     from app.core.database import SessionLocal
     from app.models.api_definition import ApiDefinition

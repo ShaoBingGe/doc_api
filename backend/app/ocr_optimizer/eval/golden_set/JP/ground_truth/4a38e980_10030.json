@@ -1,0 +1,14 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "御請求書",
+    "invoiceNumber": "10030",
+    "invoiceDate": "2025-04-28",
+    "currency": "JPY",
+    "totalAmount": 3752,
+    "totalTaxAmount": 32,
+    "billFromName": "通商国際株式会社",
+    "billFromTaxIdentificationNumber": "T4290001047066",
+    "billToName": "ハイセンスジャパン 株式会社"
+  }
+]

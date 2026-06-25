@@ -1,0 +1,14 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "御請求書",
+    "invoiceNumber": "10974465-1",
+    "invoiceDate": "2025-05-02",
+    "currency": "JPY",
+    "totalAmount": 3024,
+    "totalTaxAmount": 224,
+    "billFromName": "株式会社 ダイオーズジャパン",
+    "billFromTaxIdentificationNumber": "T9-0104-0101-5182",
+    "billToName": "ハイセンスジャパン(株)福岡サービスステーション"
+  }
+]

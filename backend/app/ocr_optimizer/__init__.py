@@ -14,24 +14,49 @@ Public entry points:
       Auto-decompose response_schema into initial modules.
 """
 
-from .models import (
-    OcrModule,
-    OcrModuleIteration,
-    OcrOptimizationRound,
-    OcrOptimizationRun,
-    OcrPromptVersion,
-    OcrSkill,
-    VersionOrigin,
-)
-from .service.run_orchestrator import (
-    abort_run,
-    advance_round,
-    finalize_run,
-    manual_patch,
-    start_optimization,
-)
-from .service.module_initializer import init_version
-from .service.persistence import get_active_composed_prompt
+# PEP 562 lazy re-exports. The public names below live in submodules
+# (.models / .service.*) that themselves import `app.models`. Importing them
+# EAGERLY here makes `python -m app.ocr_optimizer.eval.<cli>` crash on a
+# cold-start circular import: running the CLI initializes THIS package first,
+# its eager `from .models import ...` reaches into `app.models` which loops
+# back into a half-initialized `app.ocr_optimizer.models`. Deferring the
+# imports to first attribute access breaks the cycle — `app.models` (which
+# already registers the OCR ORM tables on Base.metadata) becomes importable
+# standalone, and the CLIs run via `-m` without a warmup shim.
+import importlib
+from typing import Any
+
+_LAZY_EXPORTS: dict[str, str] = {
+    "OcrModule": ".models",
+    "OcrModuleIteration": ".models",
+    "OcrOptimizationRound": ".models",
+    "OcrOptimizationRun": ".models",
+    "OcrPromptVersion": ".models",
+    "OcrSkill": ".models",
+    "VersionOrigin": ".models",
+    "abort_run": ".service.run_orchestrator",
+    "advance_round": ".service.run_orchestrator",
+    "finalize_run": ".service.run_orchestrator",
+    "manual_patch": ".service.run_orchestrator",
+    "start_optimization": ".service.run_orchestrator",
+    "init_version": ".service.module_initializer",
+    "get_active_composed_prompt": ".service.persistence",
+}
+
+
+def __getattr__(name: str) -> Any:  # PEP 562
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = importlib.import_module(target, __name__)
+    value = getattr(module, name)
+    globals()[name] = value  # cache so __getattr__ runs at most once per name
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)
+
 
 __all__ = [
     "OcrPromptVersion",

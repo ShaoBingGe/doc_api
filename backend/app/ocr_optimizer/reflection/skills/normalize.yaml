@@ -1,0 +1,42 @@
+key: normalize
+display_name: 输出规范化反思（NORMALIZE）
+version: 1
+# Matcher: a value-changed edit whose corrected value is the original with
+# certain characters DELETED (strip currency symbol / thousands separators /
+# a fixed prefix or suffix). edit_intent.classify already proved the deletion
+# and attached the exact removed chars as a system evidence block. The取值
+# POSITION was correct — only the OUTPUT needs normalizing.
+match:
+  diff_kind: edit
+  original_value_is_empty: false
+  edit_intent:
+    - NORMALIZE
+prompt: |
+  你是 OCR prompt 设计专家。本次修正属于「输出规范化」——取值位置是对的，
+  但输出需要**删除/规范某些字符**。请产出一条能泛化到所有样本的输出规范规则。
+
+  ## 字段信息
+  - module_key: {module_key}
+  - 字段显示名: {display_name}
+  - 当前描述: {description}
+  - 当前 OCR 提示词:
+  ```
+  {original_ocr_prompt}
+  ```
+
+  ## 客户修正
+  - 原始识别结果: {original_value}
+  - 客户填写的正确值: {corrected_value}
+
+  ## 分析要点（先采信证据，再泛化）
+  0. **文末「编辑意图分析」已给出字符级删除证据**（被删的前缀/后缀/散布字符、删除模式）。
+     直接据此写规则，不要重新猜测取值来源——位置没错，错在没规范输出。
+  1. 被删的是什么？货币符号（RM/¥/円/$）、千分位逗号、单位、固定前缀（如 "W1 "）、
+     括号注释、空白？
+  2. 把它写成一条**确定性的输出规范**：保留什么、删除什么、保留几位小数/前导零。
+  3. 跨样本验证：该规范是否对所有已审视样本都成立（避免只贴合这一张票）？
+  4. 用 `value_pattern`（正则）刻画规范化后的合法形态；用 `format_rule` 写明删除/保留规则。
+
+  {base_doctrine}
+
+  {base_edit_output}

@@ -1,0 +1,17 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "請求書",
+    "invoiceNumber": "00941862",
+    "invoiceDate": "2025-05-19",
+    "currency": "JPY",
+    "totalAmount": 316800,
+    "totalTaxAmount": 28800,
+    "billFromName": "日本資材株式会社",
+    "billFromTaxIdentificationNumber": "T2120001077619",
+    "billToName": "ハイセンスジャパン株式会社",
+    "page": [
+      1
+    ]
+  }
+]

@@ -1,0 +1,18 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "請求書",
+    "invoiceNumber": "000076445",
+    "invoiceDate": "2025-04-30",
+    "currency": "JPY",
+    "totalAmount": 226728,
+    "totalTaxAmount": 19800,
+    "billFromName": "ビーモーション株式会社",
+    "billFromTaxIdentificationNumber": "T4013301015546",
+    "billToName": "ハイセンスジャパン株式会社",
+    "page": [
+      1,
+      2
+    ]
+  }
+]

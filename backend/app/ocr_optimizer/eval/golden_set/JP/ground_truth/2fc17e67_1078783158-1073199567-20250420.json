@@ -1,0 +1,14 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "ご請求書",
+    "invoiceNumber": "1073199567",
+    "invoiceDate": "2025-04-20",
+    "currency": "JPY",
+    "totalAmount": 896173,
+    "totalTaxAmount": 81470,
+    "billFromName": "株式会社清和ビジネス",
+    "billFromTaxIdentificationNumber": "T8010001020600",
+    "billToName": "TVS REGZA 株式会社"
+  }
+]

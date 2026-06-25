@@ -1,0 +1,14 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "請求書",
+    "invoiceNumber": "00064295",
+    "invoiceDate": "2025-04-30",
+    "currency": "JPY",
+    "totalAmount": 853160,
+    "totalTaxAmount": 77560,
+    "billFromName": "株式会社 データビジネスサプライ",
+    "billFromTaxIdentificationNumber": "T1011001014730",
+    "billToName": "TVS REGZA株式会社 行田事業所 IT部"
+  }
+]

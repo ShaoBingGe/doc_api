@@ -1,0 +1,17 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "NTT Communications Bill Payment Notice",
+    "invoiceNumber": "0117-507-557",
+    "invoiceDate": "2025-05-18",
+    "currency": "JPY",
+    "totalAmount": 4400,
+    "totalTaxAmount": 400,
+    "billFromName": "NTTコミュニケーションズ株式会社",
+    "billFromTaxIdentificationNumber": "T7010001064648",
+    "billToName": "TVS REGZA(株) ",
+    "page": [
+      1
+    ]
+  }
+]

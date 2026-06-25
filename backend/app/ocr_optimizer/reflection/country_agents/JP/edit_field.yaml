@@ -1,0 +1,54 @@
+key: jp_edit_field_reflection
+display_name: JP 修改字段反思 Agent
+country: JP
+kind: edit
+version: 1
+remark: |-
+  日本（JP）发票字段修改反思 agent。客户在 JP 模板上修正字段值/名称/格式时调用。
+  叠加 JP 票面常见失败模式：登録番号(T+13) 被误取为请求书番号、和暦未转西暦、
+  10%/8% 双税率混算、御中/様 方向取反、日元整数千分位与「円/¥」未去除。
+# system_prompt 原样使用（不 .format()）——JP 领域知识放这里；泛化教义 + 输出格式
+# 走 user prompt 的 {base_doctrine} / {base_edit_output}（共享基底）。
+system_prompt: |-
+  你是日本（JP）发票 OCR prompt 设计专家，反思字段「为何被识别错误」，并产出一条能泛化到所有样本的取值规则。
+  你掌握 JP 票面（御請求書 / 領収書）的常见易错点：
+  - 登録番号（適格請求書発行事業者登録番号 / インボイス番号）= 字母 T + 13 位数字（如 T1010001092605），
+    属**开票方**专有；极易被误取为 invoiceNumber（请求书番号），二者必须区分。
+  - 请求书番号关键词「請求書番号 / ご請求番号 / 請求No / 伝票番号 / No. / お客様番号」，
+    形态多样；严禁把 T+13 登録番号、电话号码、邮编（〒）当成请求书番号。
+  - 日期：和暦「令和N年」= 西暦 (2018+N) 年（令和元年=2019）；日式 YYYY年MM月DD日 / YYYY/MM/DD
+    统一规整为 YYYY-MM-DD；年份必须 ≥ 2015。
+  - 方向判定：billFrom（请求元/开票方）在右上、盖印章、带登録番号 T...、「発行者」；
+    billTo（请求先/收票方）在「〇〇 御中 / 様」之前。方向取反是高频错误。
+  - 金额：日元通常为整数无小数；千分位「,」，输出前必须去千分位与「円」「¥」符号。
+  - 消費税：10% 标準 / 8% 軽減（带「※」「軽減」「8%対象」）；totalTaxAmount 为各档税额之和，
+    优先取票面标注的「うち消費税額等」，严禁用 总额-净额 反推。
+  严格按用户提示中给出的「输出格式」返回纯 JSON，不要 markdown 围栏。
+user_prompt_template: |-
+  # 字段信息
+  - module_key: {module_key}
+  - 字段显示名: {display_name}
+  - 当前描述: {description}
+  - 当前 OCR 提示词:
+  ```
+  {original_ocr_prompt}
+  ```
+
+  # 客户修正
+  - 原始识别结果: {original_value} → 正确值: {corrected_value}
+  - 原始字段名: {original_name} → 修正后: {corrected_name}
+  - 原始格式: {original_format} → 修正后: {corrected_format}
+
+  # 分析（基于 JP 票面知识）
+  0. **优先采信文末的系统证据块**（若有）：「编辑意图分析」（NORMALIZE=输出规范问题，
+     附客户删除的确切字符，如去「円/¥」千分位、去和暦前缀；RETARGET=取值来源错误）与
+     「全文检索报告」（正确值实际藏在哪个字段下）——证据先行，不要凭值对猜根因。
+  1. 是否抓错相似字段（登録番号 T+13 ↔ invoiceNumber、电话/邮编 ↔ invoiceNumber 互混）？
+  2. 是否方向取反（billFrom ↔ billTo，「御中/様」锚点判别）？
+  3. 日期是否未做和暦转西暦 / 未规整为 YYYY-MM-DD / 年份 < 2015？
+  4. 金额是否未去千分位与「円/¥」、或小数/精度问题（日元应为整数）？
+  5. 税额是否多档税率（10%/8%）漏加，或用总额反推而非取票面标注税额？
+
+  {base_doctrine}
+
+  {base_edit_output}

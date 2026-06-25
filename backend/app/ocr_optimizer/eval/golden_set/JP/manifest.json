@@ -1,0 +1,166 @@
+{
+  "country": "JP",
+  "count": 20,
+  "items": [
+    {
+      "doc": "docs/360e7dfd_000003388091.pdf",
+      "ground_truth": "ground_truth/360e7dfd_000003388091.json",
+      "gt_fields": 13,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "0b1066024c4840e796b01991b0f1d192",
+      "file_md5": "360e7dfdd87ad8171b884ae439262b8b"
+    },
+    {
+      "doc": "docs/50c445bb_000003395818.pdf",
+      "ground_truth": "ground_truth/50c445bb_000003395818.json",
+      "gt_fields": 13,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "430babaf41ca487baa77ad2cb48f1ed1",
+      "file_md5": "50c445bb8b6584bc563e72f96dedbd31"
+    },
+    {
+      "doc": "docs/eb5f12b8_000076446.pdf",
+      "ground_truth": "ground_truth/eb5f12b8_000076446.json",
+      "gt_fields": 12,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "195a9297bd794d62bc7836db66ef4009",
+      "file_md5": "eb5f12b84449b101af65aa97fad67025"
+    },
+    {
+      "doc": "docs/f3d351e0_1003477752.pdf",
+      "ground_truth": "ground_truth/f3d351e0_1003477752.json",
+      "gt_fields": 12,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "299040289c8e47ee84df10bde3d0af31",
+      "file_md5": "f3d351e0f06d3061b5aa6e7ab506ec2c"
+    },
+    {
+      "doc": "docs/8a958bce_000076445.pdf",
+      "ground_truth": "ground_truth/8a958bce_000076445.json",
+      "gt_fields": 12,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "31cdcdda87fa4cd0892acc37a3c7348f",
+      "file_md5": "8a958bce17865e59c123a5ad2d6e5412"
+    },
+    {
+      "doc": "docs/56c8254f_000076411.pdf",
+      "ground_truth": "ground_truth/56c8254f_000076411.json",
+      "gt_fields": 12,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "3621cf924c9b44219f1019a3201fbc87",
+      "file_md5": "56c8254f500d7152ebef23d604daecc1"
+    },
+    {
+      "doc": "docs/4ddb5abd_0117-507-557.pdf",
+      "ground_truth": "ground_truth/4ddb5abd_0117-507-557.json",
+      "gt_fields": 11,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "0c0f9e117de14526bbda4ee43a1c18ff",
+      "file_md5": "4ddb5abd074c053a80e798f5a090ceb2"
+    },
+    {
+      "doc": "docs/ca813f6d_00941862.pdf",
+      "ground_truth": "ground_truth/ca813f6d_00941862.json",
+      "gt_fields": 11,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "154a8b282d024fb385abb0439cf158fd",
+      "file_md5": "ca813f6ddac46509ba6aa0fae0d9b489"
+    },
+    {
+      "doc": "docs/4ad20270_000076477.pdf",
+      "ground_truth": "ground_truth/4ad20270_000076477.json",
+      "gt_fields": 11,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "3ef70e8ac8d1444485db617075c52582",
+      "file_md5": "4ad20270c46fbbeb1f97b885c6fb34a8"
+    },
+    {
+      "doc": "docs/e0bc9360_0117-654-067.pdf",
+      "ground_truth": "ground_truth/e0bc9360_0117-654-067.json",
+      "gt_fields": 11,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "594f93a4e3e24082b54d14279b05cf34",
+      "file_md5": "e0bc9360c0011604f689ff31b21ce091"
+    },
+    {
+      "doc": "docs/0466d879_00000285.pdf",
+      "ground_truth": "ground_truth/0466d879_00000285.json",
+      "gt_fields": 11,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "f8fcb8bbcd2b4d5290d44d0f320a0816",
+      "file_md5": "0466d87974a2edffdac263386883324a"
+    },
+    {
+      "doc": "docs/e5e4e4c1_00064295.pdf",
+      "ground_truth": "ground_truth/e5e4e4c1_00064295.json",
+      "gt_fields": 10,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "1e341526034143b8bfdd60cdfa960094",
+      "file_md5": "e5e4e4c19a6f7cf2fe8e2882f13fdeb4"
+    },
+    {
+      "doc": "docs/f0a1a0c2_10052842.pdf",
+      "ground_truth": "ground_truth/f0a1a0c2_10052842.json",
+      "gt_fields": 10,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "72ae694d476f475f89364bb5b59a516c",
+      "file_md5": "f0a1a0c28cdc749f5defbc984b78ec25"
+    },
+    {
+      "doc": "docs/a595f020_07569.pdf",
+      "ground_truth": "ground_truth/a595f020_07569.json",
+      "gt_fields": 10,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "786e485bbba44486a0ba495ea7b585e1",
+      "file_md5": "a595f020c480b61bdfd477eac0db03f6"
+    },
+    {
+      "doc": "docs/7212d4df_000076128.pdf",
+      "ground_truth": "ground_truth/7212d4df_000076128.json",
+      "gt_fields": 10,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "7e0ac4e36be44189a4a8f5b7f5f21e89",
+      "file_md5": "7212d4df30ea81f5cadeab4c550d96d8"
+    },
+    {
+      "doc": "docs/2fc17e67_1078783158-1073199567-20250420.pdf",
+      "ground_truth": "ground_truth/2fc17e67_1078783158-1073199567-20250420.json",
+      "gt_fields": 10,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "95d9bff2d2b3451f9dd16a50d7a72d7c",
+      "file_md5": "2fc17e67931e12377fe43ff76818f84b"
+    },
+    {
+      "doc": "docs/585258e5_0000041837.pdf",
+      "ground_truth": "ground_truth/585258e5_0000041837.json",
+      "gt_fields": 10,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "9a9349818e3b40d48bc25ecbad313b24",
+      "file_md5": "585258e5363c32a2bc86a411f217c54c"
+    },
+    {
+      "doc": "docs/4a38e980_10030.pdf",
+      "ground_truth": "ground_truth/4a38e980_10030.json",
+      "gt_fields": 10,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "a3faa8b30f2f46989e356b222d244160",
+      "file_md5": "4a38e9809085c73c4a660d40b7520bcd"
+    },
+    {
+      "doc": "docs/26842f13_0000263548.pdf",
+      "ground_truth": "ground_truth/26842f13_0000263548.json",
+      "gt_fields": 10,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "b63d00be83ec4ad99d31ca8d2f8370ef",
+      "file_md5": "26842f134a6f519d8979181602fedf3b"
+    },
+    {
+      "doc": "docs/f96b440d_10974465-1.pdf",
+      "ground_truth": "ground_truth/f96b440d_10974465-1.json",
+      "gt_fields": 10,
+      "source_api_code": "jp-invoice-6b7d7d",
+      "source_doc_id": "be385e5a7f2644d7ba7cd67531a2f838",
+      "file_md5": "f96b440dcd87d55365594870f86411af"
+    }
+  ]
+}

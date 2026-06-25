@@ -1,0 +1,17 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "請求書",
+    "invoiceNumber": "000076477",
+    "invoiceDate": "2025-04-30",
+    "currency": "JPY",
+    "totalAmount": 197920,
+    "totalTaxAmount": 176000,
+    "billFromName": "ビーモーション株式会社",
+    "billFromTaxIdentificationNumber": "T4013301015546",
+    "billToName": "ビーモーション株式会社 営業部 ",
+    "page": [
+      1
+    ]
+  }
+]

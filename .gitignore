@@ -63,3 +63,8 @@ testing/test1_honor.zip
 backend/app/ocr_optimizer/eval/golden_set/*/docs/
 _latest_eval.json
 app/ocr_optimizer/eval/golden_set/*/_latest_eval.json
+
+# 本地测试数据 / 样本发票语料（体积大、含真实数据，勿入库）
+Japan-inv/
+# 根级运行时残留（真实上传在 backend/static/uploads）
+/data/

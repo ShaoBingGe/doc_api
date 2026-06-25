@@ -100,6 +100,17 @@ class Skill:
         if key == "format_changed":
             actual = (diff.get("original_format") or "") != (diff.get("corrected_format") or "")
             return actual == expected
+        if key == "edit_intent":
+            # Route by the char-level edit-intent classification (NORMALIZE /
+            # RETARGET / RENAME_ONLY / TYPE_ONLY / CASE_ONLY / MIXED / NONE) so
+            # value-changed edits reach an intent-specialized skill instead of
+            # all collapsing into the generic value skill. Local import keeps
+            # the skills_loader import graph acyclic.
+            from . import edit_intent as _ei
+            actual = _ei.classify(diff).intent
+            if isinstance(expected, (list, tuple, set)):
+                return actual in expected
+            return actual == expected
         # Unknown predicate — log and skip (don't crash on author typos)
         logger.warning("Unknown skill match predicate: %s", key)
         return False

@@ -1,0 +1,38 @@
+key: case_normalize
+display_name: 大小写规范反思（CASE_ONLY）
+version: 1
+# Matcher: a value-changed edit where original and corrected differ ONLY in
+# letter case (e.g. "sdn bhd" → "SDN BHD", "jpy" → "JPY"). edit_intent.classify
+# proved value.lower() == corrected.lower(). Position and content are correct —
+# only the case convention needs fixing.
+match:
+  diff_kind: edit
+  original_value_is_empty: false
+  edit_intent:
+    - CASE_ONLY
+prompt: |
+  你是 OCR prompt 设计专家。本次修正**仅大小写不同**（取值位置与内容都对）。
+  请产出一条能泛化到所有样本的大小写规范规则。
+
+  ## 字段信息
+  - module_key: {module_key}
+  - 字段显示名: {display_name}
+  - 当前描述: {description}
+  - 当前 OCR 提示词:
+  ```
+  {original_ocr_prompt}
+  ```
+
+  ## 客户修正
+  - 原始识别结果: {original_value}
+  - 客户填写的正确值: {corrected_value}
+
+  ## 分析要点
+  1. 目标大小写约定是什么？全大写（货币代码 JPY/MYR、税号）、全小写、还是保持票面原文？
+  2. 该约定是字段语义决定的（如 ISO 货币码恒大写），还是票面惯例？写明依据。
+  3. 注意**不要破坏专有名词/原文**（公司名、日文/品名应保持原样，不要强制大小写）。
+  4. 用 `format_rule` 写明大小写规范及其适用边界。
+
+  {base_doctrine}
+
+  {base_edit_output}

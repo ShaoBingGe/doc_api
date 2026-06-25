@@ -34,6 +34,7 @@ import {
   fetchOcrVersion,
   fetchOcrRuns,
   fetchOcrRound,
+  fetchFieldAccuracy,
   advanceRound,
   finalizeRun,
   abortRun,
@@ -178,6 +179,177 @@ type DiffRow = {
 function _matchStats(it: IterationResponse | null): { m: number; n: number } {
   const ps = it?.per_sample_results ?? []
   return { m: ps.filter((p) => p.matched).length, n: ps.length }
+}
+
+// ── 字段级准确率收敛看板（每轮 × 每字段热力表） ─────────────────────────────
+//
+// Lets the customer SEE convergence: rows = fields, columns = rounds, cells =
+// per-field accuracy (red→amber→green). The top "总体" row tracks overall
+// accuracy per round; a trend column shows last−first delta. Worst fields sort
+// to the top so problem fields surface. Data: GET .../runs/{id}/field-accuracy.
+
+interface FieldAccuracyData {
+  run_id: string
+  fields: { module_key: string; display_name: string }[]
+  rounds: {
+    round_num: number
+    overall_accuracy: number | null
+    phase: string
+    fields: Record<string, number>
+  }[]
+}
+
+function accCellCls(a: number | null | undefined): string {
+  if (a == null) return 'text-gray-600'
+  if (a >= 0.999) return 'bg-emerald-500/20 text-emerald-300'
+  if (a >= 0.8) return 'bg-amber-500/15 text-amber-300'
+  if (a >= 0.5) return 'bg-orange-500/15 text-orange-300'
+  return 'bg-red-500/15 text-red-300'
+}
+
+function FieldAccuracyHeatmap({
+  apiDefinitionId,
+  runId,
+}: {
+  apiDefinitionId: string
+  runId: string | null
+}) {
+  const [open, setOpen] = useState(true)
+  const [data, setData] = useState<FieldAccuracyData | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!runId) {
+      setData(null)
+      return
+    }
+    let alive = true
+    setLoading(true)
+    fetchFieldAccuracy(apiDefinitionId, runId)
+      .then((res) => {
+        if (alive) setData(res.data as FieldAccuracyData)
+      })
+      .catch((e) => {
+        console.warn('field-accuracy failed', e)
+        if (alive) setData(null)
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [apiDefinitionId, runId])
+
+  const rows = useMemo(() => {
+    if (!data) return []
+    return data.fields
+      .map((f) => {
+        const series = data.rounds.map((r) => {
+          const v = r.fields[f.module_key]
+          return v === undefined ? null : v
+        })
+        const present = series.filter((v): v is number => v != null)
+        const first = present[0] ?? null
+        const last = present[present.length - 1] ?? null
+        const delta = first != null && last != null ? last - first : null
+        return { ...f, series, last, delta }
+      })
+      .sort((a, b) => (a.last ?? 1) - (b.last ?? 1)) // worst first
+  }, [data])
+
+  if (!runId) return null
+
+  return (
+    <div className="border-b border-white/5 bg-[#1b1b20]">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-200 hover:text-white"
+      >
+        {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+        <span className="font-medium">字段级准确率收敛</span>
+        <span className="text-xs text-gray-500">
+          {data ? `${data.rounds.length} 轮 · ${data.fields.length} 字段` : loading ? '加载中…' : '无数据'}
+        </span>
+      </button>
+
+      {open && (
+        <div className="max-h-[40vh] overflow-auto px-2 pb-2">
+          {loading && !data ? (
+            <div className="px-3 py-3 text-xs text-gray-500">加载中…</div>
+          ) : !data || data.rounds.length === 0 ? (
+            <div className="px-3 py-3 text-xs text-gray-500">
+              本 Run 尚无逐轮字段评分（迭代开始后逐轮填充）。
+            </div>
+          ) : (
+            <table className="w-full text-xs border-collapse">
+              <thead className="sticky top-0 bg-[#1b1b20]">
+                <tr className="text-gray-500 text-left">
+                  <th className="py-1.5 px-2 font-medium">字段</th>
+                  {data.rounds.map((r) => (
+                    <th key={r.round_num} className="py-1.5 px-2 font-medium text-center">
+                      R{r.round_num}
+                    </th>
+                  ))}
+                  <th className="py-1.5 px-2 font-medium text-center">趋势</th>
+                </tr>
+              </thead>
+              <tbody>
+                {/* Overall row */}
+                <tr className="border-t border-white/10 bg-white/5">
+                  <td className="py-1.5 px-2 font-medium text-gray-200">总体</td>
+                  {data.rounds.map((r) => (
+                    <td key={r.round_num} className="py-1 px-1 text-center">
+                      <span className={cn('px-1.5 py-0.5 rounded font-medium', accCellCls(r.overall_accuracy))}>
+                        {accPct(r.overall_accuracy)}
+                      </span>
+                    </td>
+                  ))}
+                  <td className="py-1 px-2 text-center text-gray-500">—</td>
+                </tr>
+                {rows.map((row) => (
+                  <tr key={row.module_key} className="border-t border-white/5 hover:bg-white/5">
+                    <td className="py-1.5 px-2">
+                      <div className="font-mono text-gray-300 truncate max-w-[160px]" title={row.display_name}>
+                        {row.module_key}
+                      </div>
+                    </td>
+                    {row.series.map((v, i) => (
+                      <td key={i} className="py-1 px-1 text-center">
+                        {v == null ? (
+                          <span className="text-gray-700">·</span>
+                        ) : (
+                          <span className={cn('px-1.5 py-0.5 rounded font-medium', accCellCls(v))}>
+                            {accPct(v)}
+                          </span>
+                        )}
+                      </td>
+                    ))}
+                    <td
+                      className={cn(
+                        'py-1 px-2 text-center font-medium',
+                        row.delta == null
+                          ? 'text-gray-600'
+                          : row.delta > 1e-4
+                          ? 'text-emerald-400'
+                          : row.delta < -1e-4
+                          ? 'text-red-400'
+                          : 'text-gray-500',
+                      )}
+                    >
+                      {row.delta == null
+                        ? '—'
+                        : `${row.delta > 0 ? '+' : ''}${Math.round(row.delta * 100)}%`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function FieldDiffComparison({
@@ -653,6 +825,12 @@ export default function OptimizationProcessPanel({
           />
         )}
       </div>
+
+      {/* 字段级准确率收敛看板：每轮 × 每字段热力表，让客户看到收敛过程 */}
+      <FieldAccuracyHeatmap
+        apiDefinitionId={apiDefinitionId}
+        runId={versionDetail?.produced_by_run_id ?? activeRun?.id ?? null}
+      />
 
       {/* 字段优化对比：每个字段 优化前→优化后 + Δ + 状态，可展开看逐样本识别结果 */}
       <FieldDiffComparison round={round} nextRound={nextRound} />

@@ -1,0 +1,14 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "請求書",
+    "invoiceNumber": "000076128",
+    "invoiceDate": "2025-04-30",
+    "currency": "JPY",
+    "totalAmount": 495000,
+    "totalTaxAmount": 45000,
+    "billFromName": "ビーモーション株式会社",
+    "billFromTaxIdentificationNumber": "T4013301015546",
+    "billToName": "渡邉康文様"
+  }
+]

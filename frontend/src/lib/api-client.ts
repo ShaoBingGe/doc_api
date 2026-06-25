@@ -251,6 +251,13 @@ export function fetchOcrIterations(apiDefId: string, runId: string) {
   return apiClient.get(`/api/v1/api-definitions/${apiDefId}/ocr-optimizer/runs/${runId}/iterations`)
 }
 
+// Per-round × per-field accuracy timeline (字段级收敛看板).
+export function fetchFieldAccuracy(apiDefId: string, runId: string) {
+  return apiClient.get(
+    `/api/v1/api-definitions/${apiDefId}/ocr-optimizer/runs/${runId}/field-accuracy`,
+  )
+}
+
 // ── Run state machine (paused_for_review) ───────────────────────────────────
 
 export function advanceRound(

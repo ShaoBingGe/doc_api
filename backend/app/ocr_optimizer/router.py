@@ -370,6 +370,18 @@ def list_iterations(
     return [IterationResponse.model_validate(i) for i in iters]
 
 
+@router.get(
+    "/{api_def_id}/ocr-optimizer/runs/{run_id}/field-accuracy",
+    summary="字段级准确率收敛时间线（每轮 × 每字段）",
+)
+def get_field_accuracy(
+    api_def_id: uuid.UUID,
+    run_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    return persistence.field_accuracy_timeline(db, run_id)
+
+
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 def _version_to_summary(v: OcrPromptVersion) -> OcrPromptVersionSummary:
