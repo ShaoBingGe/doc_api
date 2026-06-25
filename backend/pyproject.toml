@@ -53,3 +53,6 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "live_ocr: touches the real VLM (token cost) — excluded from default CI, run manually/nightly",
+]
