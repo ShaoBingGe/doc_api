@@ -205,6 +205,10 @@ interface WorkspaceStore {
    * Used to render "本样本未识别字段" placeholder rows.
    */
   requiredFields: string[]
+  /** Country-locked (regulatory, non-modifiable) field names. The UI must
+   * disable add/delete/rename/retype for these — their recognition rule is
+   * governed by the country template's Part 1. Populated by loadRequiredFields. */
+  lockedFields: string[]
   loadRequiredFields: () => Promise<void>
 
   setStep: (step: WorkspaceStep) => void
@@ -423,6 +427,7 @@ const initialState = {
   pendingEdits: null as WorkspaceStore['pendingEdits'],
   // Phase 13 — canonical field set (modules ∪ added − deleted, renames applied)
   requiredFields: [] as string[],
+  lockedFields: [] as string[],
   customizeSubmitting: false,
   // Per-annotation pan offset (extra translate on top of the focus zoom).
   // Updated while the user pans the document with the hand tool, replayed
@@ -1281,7 +1286,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         `/api/v1/api-definitions/${id}/required-fields`,
       )
       const fields = (res.data?.fields || []) as string[]
-      set({ requiredFields: fields })
+      const locked = (res.data?.locked_fields || []) as string[]
+      set({ requiredFields: fields, lockedFields: locked })
     } catch {
       // non-fatal
     }

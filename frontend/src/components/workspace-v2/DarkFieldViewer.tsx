@@ -17,6 +17,7 @@ import {
   Sparkles,
   Table as TableIcon,
   GitBranch,
+  Lock,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useWorkspaceStore, type Annotation, type CustomizeJobStatus, type FieldEditDraft, type ProcessingResult } from '../../stores/workspace-store'
@@ -93,9 +94,13 @@ function groupAnnotations(
 function TypeSelector({
   fieldType,
   onChange,
+  locked = false,
 }: {
   fieldType: string
   onChange: (t: string) => void
+  /** Country-locked field — type is governed by the country spec; show a
+   *  static, non-editable chip with a lock icon. */
+  locked?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -115,6 +120,18 @@ function TypeSelector({
     : fieldType === 'boolean' ? 'bool'
     : fieldType === 'array' ? 'array'
     : 'string'
+
+  if (locked) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-white/5 text-gray-500 cursor-not-allowed"
+        title="国家锁定字段：类型由国家规范管控，不可修改"
+      >
+        <Lock className="w-2.5 h-2.5" />
+        {display}
+      </span>
+    )
+  }
 
   return (
     <div ref={ref} className="relative">
@@ -163,11 +180,14 @@ function FieldRow({
   onConfirmConfidence,
   onStartDrawing,
   isDrawingThis,
+  locked = false,
 }: {
   annotation: Annotation
   result?: ProcessingResult
   isHovered: boolean
   isSelected: boolean
+  /** Country-locked field (regulatory): no rename / retype / delete / edit. */
+  locked?: boolean
   /** True when this field has a pending customer edit not yet submitted. */
   hasDirtyDraft: boolean
   /** design v8 — true when this field's value was modified on a DIFFERENT
@@ -214,16 +234,25 @@ function FieldRow({
       onClick={() => onSelect(isSelected ? null : annotation.id)}
       onDoubleClick={(e) => {
         e.stopPropagation()
+        if (locked) return  // 国家锁定字段：禁止进入编辑面板（改名/改类型/删除）
         onStartEdit(annotation.id)
       }}
       onMouseEnter={() => onHover(annotation.id)}
       onMouseLeave={() => onHover(null)}
-      title={hasDirtyDraft ? '已有待提交修改，双击查看' : '点击聚焦，双击进入字段编辑面板'}
+      title={locked
+        ? '国家锁定字段：识别规则由国家规范（Part 1）管控，不可增删改'
+        : hasDirtyDraft ? '已有待提交修改，双击查看' : '点击聚焦，双击进入字段编辑面板'}
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
         {/* Label + (optional rename history subtitle) */}
         <div className="flex flex-col w-28 flex-shrink-0 min-w-0">
-          <span className="text-gray-400 text-sm truncate">
+          <span className="text-gray-400 text-sm truncate flex items-center gap-1">
+            {locked && (
+              <Lock
+                className="w-3 h-3 text-amber-400/80 flex-shrink-0"
+                aria-label="国家锁定字段"
+              />
+            )}
             {annotation.label}
           </span>
           {isRenamedFrom && (
@@ -278,10 +307,11 @@ function FieldRow({
       </div>
 
       <div className="flex items-center gap-2 flex-shrink-0">
-        {/* Type selector */}
+        {/* Type selector (static + locked for country-governed fields) */}
         <TypeSelector
           fieldType={annotation.fieldType}
           onChange={(t) => onSaveType(annotation.id, t)}
+          locked={locked}
         />
 
         {/* Confidence bar + confirm button */}
@@ -321,14 +351,16 @@ function FieldRow({
           )}
         </div>
 
-        {/* Delete button (visible on hover) */}
-        <button
-          onClick={() => onDeleteField(annotation.id)}
-          className="opacity-0 group-hover:opacity-100 p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-all"
-          title="删除此字段（所有样本 + 优化器同步生效）"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        {/* Delete button (visible on hover; hidden for country-locked fields) */}
+        {!locked && (
+          <button
+            onClick={() => onDeleteField(annotation.id)}
+            className="opacity-0 group-hover:opacity-100 p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-all"
+            title="删除此字段（所有样本 + 优化器同步生效）"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
 
         {/* Draw bbox button (low-confidence only, visible on hover) */}
         {showDrawIcon && (
@@ -1650,8 +1682,23 @@ function FieldsView() {
     commitCurrentDraft,  // Phase 10
     commitFieldDeletion,  // Phase 11c
     requiredFields,  // Phase 13 — canonical field set
+    lockedFields,  // country-locked (regulatory) field names — UI disables edits
     apiDefinitionId,  // Phase 25 — needed for in-row cascade delete
   } = useWorkspaceStore()
+
+  // Country-locked lookup: a field is locked if its name (or its top-level
+  // token, for nested leaves) is in lockedFields. Used to disable
+  // rename/retype/delete/add in the field panel.
+  const lockedSet = useMemo(() => new Set(lockedFields || []), [lockedFields])
+  const isFieldLocked = useCallback(
+    (name: string | undefined | null): boolean => {
+      if (!name) return false
+      if (lockedSet.has(name)) return true
+      const top = name.split(/[.[]/)[0]
+      return lockedSet.has(top)
+    },
+    [lockedSet],
+  )
 
   // design v8 — derive "edited on OTHER files" set and the list of added
   // fields from OTHER files not yet present locally. See pending_edits_service.py.
@@ -2034,6 +2081,7 @@ function FieldsView() {
                   <FieldRow
                     key={ann.id}
                     annotation={ann}
+                    locked={isFieldLocked(ann.label)}
                     result={resultMap.get(ann.id)}
                     isHovered={hoveredFieldId === ann.id}
                     isSelected={selectedFieldId === ann.id}
