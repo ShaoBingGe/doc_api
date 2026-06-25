@@ -344,6 +344,17 @@ def _run_extraction(
                 structured_data = _pad_with_required_keys(structured_data, required)
             except Exception as _exc:  # noqa: BLE001
                 logger.warning("Failed to reconcile structured_data with required keys: %s", _exc)
+            # Customer per-field overrides (type / strip-chars): apply the
+            # stripping + type coercion deterministically to the extracted
+            # values, so the override "takes effect" on the result regardless
+            # of what the VLM emitted (mirrors the prompt-side enforcement).
+            try:
+                from app.ocr_optimizer.service import field_constraints
+                _constraints = field_constraints.load(db, doc.api_definition_id)
+                if _constraints:
+                    structured_data = _apply_field_constraints(structured_data, _constraints)
+            except Exception as _exc:  # noqa: BLE001
+                logger.warning("Failed to apply field constraints to structured_data: %s", _exc)
         inferred_schema = _infer_schema(raw_structured)
 
         # 字段焦点定位（第一步）：从原生 PDF 文字层拿词坐标，把抽取出的值
@@ -670,6 +681,40 @@ def _project_to_field_set(
         return [_project_record(r) if isinstance(r, dict) else r for r in structured_data]
     if isinstance(structured_data, dict):
         return _project_record(structured_data)
+    return structured_data
+
+
+def _apply_field_constraints(
+    structured_data: list[dict] | dict, constraints: dict[str, dict],
+) -> list[dict] | dict:
+    """Apply customer per-field type/strip overrides to extracted values.
+
+    Operates on both shapes:
+      - leaf-list [{keyName, value, …}] → coerce records whose top-level token
+        is a constrained field;
+      - record-dict {field: value} → coerce constrained keys.
+    """
+    if not constraints:
+        return structured_data
+    from app.ocr_optimizer.service import field_constraints as _fc
+
+    def _fix_leaf(rec: dict) -> dict:
+        c = constraints.get(_field_top_level(rec.get("keyName", "")))
+        if c is None:
+            return rec
+        out = dict(rec)
+        out["value"] = _fc.normalize_value(rec.get("value"), c)
+        return out
+
+    if isinstance(structured_data, list):
+        if structured_data and isinstance(structured_data[0], dict) and "keyName" in structured_data[0]:
+            return [_fix_leaf(r) if isinstance(r, dict) else r for r in structured_data]
+        return [
+            _fc.normalize_record_fields(r, constraints) if isinstance(r, dict) else r
+            for r in structured_data
+        ]
+    if isinstance(structured_data, dict):
+        return _fc.normalize_record_fields(structured_data, constraints)
     return structured_data
 
 

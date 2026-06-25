@@ -55,6 +55,11 @@ def _empty() -> dict[str, Any]:
         "renames": {},
         "modifications": {},
         "deleted_fields": [],
+        # field_constraints: explicit, sticky per-field type/format overrides
+        # ({field: {type, strip_chars, strip_non_numeric, locked, note}}).
+        # Enforced by ocr_optimizer.service.field_constraints — survives every
+        # optimization round and overrides the country template's Part 1.
+        "field_constraints": {},
     }
 
 
@@ -70,6 +75,10 @@ def _normalize(overlay: dict | None) -> dict[str, Any]:
         if isinstance(v, dict)
     }
     out["deleted_fields"] = list(overlay.get("deleted_fields") or [])
+    out["field_constraints"] = {
+        str(k): dict(v) for k, v in (overlay.get("field_constraints") or {}).items()
+        if isinstance(v, dict)
+    }
     return out
 
 
@@ -131,6 +140,12 @@ def record_rename(
     else:
         renames[collapsed_old] = new_name
 
+    # A field constraint follows its field's name so the override keeps
+    # targeting the right leaf after the rename cascades into modules.
+    fc = overlay["field_constraints"]
+    if old_name in fc and old_name != new_name:
+        fc[new_name] = fc.pop(old_name)
+
     _save_overlay(db, api_def, overlay)
     db.commit()
     logger.info(
@@ -169,6 +184,57 @@ def record_added_field(
     _save_overlay(db, api_def, overlay)
     db.commit()
     logger.info("Recorded added field on ApiDef %s: %r", api_def_id, field_name)
+    return overlay
+
+
+def record_field_constraint(
+    db: Session,
+    api_def_id: uuid.UUID,
+    field_name: str,
+    *,
+    field_type: str | None = None,
+    strip_chars: list[str] | None = None,
+    strip_non_numeric: bool | None = None,
+    locked: bool = True,
+    note: str | None = None,
+) -> dict[str, Any]:
+    """Register / update an explicit per-field type+format override.
+
+    This is the customer-override the platform must NEVER overrule with its
+    general knowledge (country Part 1, field description, reflection). It is
+    enforced deterministically by ocr_optimizer.service.field_constraints at
+    every version-composition point + on the extracted value.
+
+    Passing field_type=None AND no strip behaviour REMOVES the constraint.
+    """
+    api_def = db.get(ApiDefinition, api_def_id)
+    if not api_def:
+        raise NotFoundError(f"ApiDefinition {api_def_id} not found")
+
+    overlay = _normalize(api_def.pending_edits)
+    fc = overlay["field_constraints"]
+
+    has_strip = bool(strip_chars) or bool(strip_non_numeric)
+    if not field_type and not has_strip:
+        fc.pop(field_name, None)  # unset
+    else:
+        entry: dict[str, Any] = {"locked": bool(locked)}
+        if field_type:
+            entry["type"] = field_type
+        if strip_chars is not None:
+            entry["strip_chars"] = list(strip_chars)
+        if strip_non_numeric is not None:
+            entry["strip_non_numeric"] = bool(strip_non_numeric)
+        if note:
+            entry["note"] = note
+        fc[field_name] = entry
+
+    _save_overlay(db, api_def, overlay)
+    db.commit()
+    logger.info(
+        "Recorded field constraint on ApiDef %s: %r -> %s",
+        api_def_id, field_name, fc.get(field_name, "(removed)"),
+    )
     return overlay
 
 
@@ -237,6 +303,9 @@ def record_deleted_field(
         overlay["modifications"][doc_key].pop(field_name, None)
         if not overlay["modifications"][doc_key]:
             del overlay["modifications"][doc_key]
+
+    # Strip any field constraint (a deleted field has no slot to enforce on)
+    overlay["field_constraints"].pop(field_name, None)
 
     _save_overlay(db, api_def, overlay)
 

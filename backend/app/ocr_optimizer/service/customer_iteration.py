@@ -49,7 +49,7 @@ from ..models import (
     VersionOrigin,
 )
 from ..reflection import reflect_on_diffs
-from . import composer, persistence, run_orchestrator
+from . import composer, field_constraints, persistence, run_orchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,53 @@ logger = logging.getLogger(__name__)
 MIN_SAMPLES_FOR_ITERATION = 3
 MAX_SAMPLES_HINT = 10  # informational only; messaging caps the suggestion at 9 new uploads
 STALE_OPTIMIZING_MIN = 10  # minutes before an "optimizing" job is considered stuck
+
+# Confidence tiers by # of confirmed (human-reviewed GT) samples. The iteration
+# can START at MIN_SAMPLES_FOR_ITERATION, but 3 samples carry weak statistical
+# weight — a learned rule easily overfits those few invoices. Surface this so
+# the customer knows whether to trust convergence or upload more.
+LOW_CONFIDENCE_SAMPLES = 5    # < this (but >= MIN) → low confidence
+HIGH_CONFIDENCE_SAMPLES = 10  # >= this → high confidence
+
+
+def sample_confidence(confirmed: int) -> dict:
+    """Map a confirmed-sample count to an iteration-confidence descriptor.
+
+    Returns {level, label, can_iterate, message, confirmed, min_required,
+    recommended} — consumed by the samples-review endpoint and the job dict so
+    the UI can warn "3 个样本可启动但易过拟合，建议补到 ≥5".
+    """
+    confirmed = max(0, int(confirmed))
+    if confirmed < MIN_SAMPLES_FOR_ITERATION:
+        need = MIN_SAMPLES_FOR_ITERATION - confirmed
+        return {
+            "level": "insufficient", "label": "样本不足", "can_iterate": False,
+            "message": f"还需 {need} 个「已审视」样本才能启动迭代"
+                       f"（当前 {confirmed}/{MIN_SAMPLES_FOR_ITERATION}）。",
+            "confirmed": confirmed, "min_required": MIN_SAMPLES_FOR_ITERATION,
+            "recommended": LOW_CONFIDENCE_SAMPLES,
+        }
+    if confirmed < LOW_CONFIDENCE_SAMPLES:
+        return {
+            "level": "low", "label": "低置信", "can_iterate": True,
+            "message": f"样本偏少（{confirmed} 个），识别规则可能过拟合到当前样本；"
+                       f"建议补到 ≥{LOW_CONFIDENCE_SAMPLES} 个以提升稳健性。",
+            "confirmed": confirmed, "min_required": MIN_SAMPLES_FOR_ITERATION,
+            "recommended": LOW_CONFIDENCE_SAMPLES,
+        }
+    if confirmed < HIGH_CONFIDENCE_SAMPLES:
+        return {
+            "level": "medium", "label": "中置信", "can_iterate": True,
+            "message": f"样本数适中（{confirmed} 个）。补到 ≥{HIGH_CONFIDENCE_SAMPLES} 个可进一步提升泛化置信。",
+            "confirmed": confirmed, "min_required": MIN_SAMPLES_FOR_ITERATION,
+            "recommended": HIGH_CONFIDENCE_SAMPLES,
+        }
+    return {
+        "level": "high", "label": "高置信", "can_iterate": True,
+        "message": f"样本充足（{confirmed} 个），规则泛化置信度高。",
+        "confirmed": confirmed, "min_required": MIN_SAMPLES_FOR_ITERATION,
+        "recommended": HIGH_CONFIDENCE_SAMPLES,
+    }
 
 # fork 阶段 reconciler / add-field 扩展的 LLM 并发度（纯文本长 prompt 调用）。
 _FORK_LLM_CONCURRENCY = 6
@@ -92,7 +139,14 @@ def get_job_dict(db: Session, job_id: uuid.UUID) -> dict | None:
     job = db.get(CustomizeJob, job_id)
     if not job:
         return None
-    return _job_to_dict(job)
+    out = _job_to_dict(job)
+    # Attach sample-confidence (computed on the source ApiDef's confirmed count)
+    # so the UI can warn about low-sample overfitting alongside job progress.
+    count_id = job.source_api_definition_id or job.new_api_definition_id
+    if count_id is not None:
+        confirmed, _total = count_confirmed_samples(db, count_id)
+        out["sample_confidence"] = sample_confidence(confirmed)
+    return out
 
 
 def _update_job(db: Session, job: CustomizeJob, **kwargs) -> None:
@@ -1928,10 +1982,15 @@ def _fork_api_definition(
                 new_modules.append(mod)
 
     try:
+        # Carry customer per-field overrides into the forked (manual_edit) base
+        # so every downstream round inherits them.
+        _cg = field_constraints.enforce(
+            db, new_version.api_definition_id, new_modules, new_version.country_global_text,
+        )
         new_version.composed_schema = composer.assemble_schema(new_modules)
         new_version.composed_prompt = composer.assemble_prompt(
             new_modules,
-            country_global=new_version.country_global_text,
+            country_global=_cg,
         )
     except ValueError as exc:
         raise ValidationError(f"Compose failed for forked version: {exc}") from exc

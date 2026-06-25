@@ -49,6 +49,7 @@ from ..models import (
 from . import (
     composer,
     evaluator,
+    field_constraints,
     ground_truth,
     meta_optimizer,
     module_optimizer,
@@ -355,10 +356,15 @@ def manual_patch(
         )
 
     try:
+        # Customer per-field overrides (type / strip) win over everything —
+        # re-assert AFTER the patch so Part 1 / reflection can't revert them.
+        _cg = field_constraints.enforce(
+            db, api_definition_id, new_modules, new_version.country_global_text,
+        )
         new_version.composed_schema = composer.assemble_schema(new_modules)
         new_version.composed_prompt = composer.assemble_prompt(
             new_modules,
-            country_global=new_version.country_global_text,
+            country_global=_cg,
         )
     except ValueError as exc:
         raise ValidationError(f"Compose failed for manual patch: {exc}") from exc
@@ -989,10 +995,16 @@ def _run_one_round(
     )
 
     try:
+        # Re-assert customer per-field overrides AFTER the round optimizer has
+        # rewritten the modules — this is what stops a 3-round reflection from
+        # reverting an explicit type/strip back to the country default.
+        _cg = field_constraints.enforce(
+            db, run.api_definition_id, new_modules, next_version.country_global_text,
+        )
         next_version.composed_schema = composer.assemble_schema(new_modules)
         next_version.composed_prompt = composer.assemble_prompt(
             new_modules,
-            country_global=next_version.country_global_text,
+            country_global=_cg,
         )
     except ValueError as exc:
         logger.warning("Compose failed for round %d, reusing current version: %s",

@@ -230,6 +230,24 @@ def commit_draft_to_overlay(
         )
         out["deleted_annotation_rows"] = n
 
+    # Case 5: explicit per-field type/format override (customer override).
+    # Persisted sticky and enforced through every optimization round +
+    # overriding the country template's Part 1. Shape:
+    #   {"field_constraint": {"field_name": "invoiceNumber", "type": "number",
+    #     "strip_chars": [" ","-","_","*"], "strip_non_numeric": true,
+    #     "locked": true, "note": "..."}}
+    fc = body.get("field_constraint") or {}
+    if fc.get("field_name"):
+        pending_edits_service.record_field_constraint(
+            db, api_def_id,
+            field_name=str(fc["field_name"]),
+            field_type=fc.get("type"),
+            strip_chars=fc.get("strip_chars"),
+            strip_non_numeric=fc.get("strip_non_numeric"),
+            locked=bool(fc.get("locked", True)),
+            note=fc.get("note"),
+        )
+
     return pending_edits_service.get_overlay(db, api_def_id)
 
 
@@ -402,12 +420,16 @@ def list_samples_review_status(
         }
         for sid in ids
     ]
+    from app.ocr_optimizer.service import gt_quality as gtq
+
     confirmed, total = ci.count_confirmed_samples(db, api_def_id)
     return {
         "samples": per_doc,
         "confirmed_count": confirmed,
         "total_count": total,
         "required_for_iteration": ci.MIN_SAMPLES_FOR_ITERATION,
+        "confidence": ci.sample_confidence(confirmed),
+        "gt_quality": gtq.validate_gt_quality(db, api_def_id),
     }
 
 
