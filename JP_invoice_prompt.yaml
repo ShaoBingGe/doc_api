@@ -2,8 +2,7 @@ id: 'JP_1'
 remark: 日本（JP）国家发票模板。Design v7 — Part1 (JP country global) + Part2 (defer to schema descriptions) + Part3 (platform output contract reference only; composer injects from assets/global_output_contract.yaml). 字段骨架沿用平台通用集（下游 composer / 输出契约通用），description 按日本（御請求書）票面本地化；依据 japan-inv/init 8 样本 + 海信日本 schema。
 structure_prompt_version: '6'
 # 国家锁定字段（国家规范·不可修改）：识别规则由 Part 1 严格管控，排除出 Part 2
-# 反思/优化范围，客户在自定义面板中不可增删改/改类型。机制只对模板中“存在”的
-# 字段生效——当前 JP 精简版仅含 invoiceNumber，其余 3 个在重新加回时自动锁定。
+# 反思/优化范围，客户在自定义面板中不可增删改/改类型。四个字段均已在 schema 中。
 locked_fields:
   - invoiceNumber                    # 发票号码
   - invoiceDate                      # 开票日期
@@ -127,6 +126,10 @@ prompt_template:
                 请求书番号/单据编号。关键词：「請求書番号」「ご請求番号」「請求No」「伝票番号」「No.」。
                 典型形态：00025700-00194021、1-2025055195777-IP、2504X6YH0501000010010、45602、EMS-JP-03494-2409~2508。
                 严禁将登録番号(T+13位)、电话、邮编(〒)误取为请求书番号。
+            invoiceDate:
+              type: STRING
+              description: |-
+                开票/请求日期。关键词：「請求日」「発行日」「年月日」。和暦「令和N年」转西暦(2018+N)；日式 YYYY年MM月DD日 / YYYY/MM/DD 统一规整为 YYYY-MM-DD。年份必须 ≥ 2015。
             totalNetAmount:
               type: NUMBER
               description: 税抜合计（不含消費税）。关键词：「小計」「税抜」「税抜金額」。日元整数，去千分位与「円/¥」。
@@ -139,3 +142,11 @@ prompt_template:
             currency:
               type: STRING
               description: 货币代码。默认 JPY（円/¥）；票面明确外币时按票面输出。
+            billFromName:
+              type: STRING
+              description: |-
+                开票方/请求元名称（出具请求书、收款方）。锚点：票面右上、带公司印章、紧邻登録番号 T... 的主体；「発行者」「請求元」。如「日本通運株式会社」「Field Serve Japan」。
+            billFromTaxIdentificationNumber:
+              type: STRING
+              description: |-
+                开票方適格請求書発行事業者登録番号（インボイス登録番号）。格式：字母 T + 13 位数字（如 T2010001091903）。关键词：「登録番号」「適格請求書発行事業者登録番号」。仅取开票方。
