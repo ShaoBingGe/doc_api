@@ -235,6 +235,13 @@ def record_field_constraint(
         "Recorded field constraint on ApiDef %s: %r -> %s",
         api_def_id, field_name, fc.get(field_name, "(removed)"),
     )
+    # Make the override live immediately on the active version (don't wait for
+    # the next optimization round). Best-effort — never block the persist.
+    try:
+        from app.ocr_optimizer.service import field_constraints as _fc
+        _fc.apply_to_active_version(db, api_def_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("apply_to_active_version failed for %s: %s", api_def_id, exc)
     return overlay
 
 

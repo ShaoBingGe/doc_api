@@ -280,6 +280,55 @@ def augment_country_global(country_global: str | None, constraints: dict[str, di
     return (base.rstrip() + "\n" + "\n".join(lines) + "\n") if len(lines) > 3 else base
 
 
+def apply_to_active_version(db: Session, api_def_id: uuid.UUID) -> bool:
+    """Re-enforce constraints on the CURRENT active version in place so an
+    override takes effect immediately (live OCR + UI field-type display),
+    without waiting for the next optimization round.
+
+    Rewrites the active version's module rows (schema_fragment.type +
+    ocr_prompt lock block) and recomposes composed_schema / composed_prompt.
+    country_global_text is left CLEAN (the override section lives only in the
+    composed_prompt, recomputed each time — no cross-call compounding).
+
+    Returns True if a version was updated. Best-effort: callers wrap in
+    try/except so a compose hiccup never blocks persisting the constraint.
+    """
+    from ..models import OcrModule, OcrPromptVersion, PromptVersionStatus
+    from . import composer
+
+    constraints = load(db, api_def_id)
+    v = (
+        db.query(OcrPromptVersion)
+        .filter(
+            OcrPromptVersion.api_definition_id == api_def_id,
+            OcrPromptVersion.status == PromptVersionStatus.active.value,
+        )
+        .first()
+    )
+    if v is None:
+        return False
+    mods = (
+        db.query(OcrModule)
+        .filter(OcrModule.prompt_version_id == v.id)
+        .order_by(OcrModule.order_index)
+        .all()
+    )
+    if not mods:
+        return False
+    # apply_to_modules mutates the ORM objects in place (schema_fragment is
+    # deepcopied inside, ocr_prompt lock is idempotent) → persisted on commit.
+    apply_to_modules(mods, constraints)
+    cg = augment_country_global(v.country_global_text, constraints)
+    try:
+        v.composed_schema = composer.assemble_schema(mods)
+        v.composed_prompt = composer.assemble_prompt(mods, country_global=cg)
+    except ValueError:
+        return False
+    db.commit()
+    logger.info("field_constraints: re-applied to active version of ApiDef %s", api_def_id)
+    return True
+
+
 def enforce(
     db: Session,
     api_def_id: uuid.UUID,
