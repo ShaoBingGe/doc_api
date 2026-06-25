@@ -82,6 +82,23 @@ def _normalize(overlay: dict | None) -> dict[str, Any]:
     return out
 
 
+# ── Country-lock guard ────────────────────────────────────────────────────────
+
+
+def _locked_set(db: Session, api_def_id: uuid.UUID) -> set[str]:
+    """Country-locked (regulatory, non-modifiable) field names for this ApiDef.
+
+    Customer edits — add / rename / delete / type-format override — are REFUSED
+    on these fields (precedence: country-lock > customer-override). Best-effort:
+    returns empty set on any resolution error so normal fields never break.
+    """
+    try:
+        from app.ocr_optimizer.service import field_constraints as _fc
+        return _fc.locked_fields_for_api(db, api_def_id)
+    except Exception:  # noqa: BLE001
+        return set()
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
@@ -121,6 +138,11 @@ def record_rename(
     api_def = db.get(ApiDefinition, api_def_id)
     if not api_def:
         raise NotFoundError(f"ApiDefinition {api_def_id} not found")
+
+    locked = _locked_set(db, api_def_id)
+    if old_name in locked or new_name in locked:
+        logger.warning("Refused rename touching country-locked field: %r→%r", old_name, new_name)
+        return _normalize(api_def.pending_edits)
 
     overlay = _normalize(api_def.pending_edits)
     renames = overlay["renames"]
@@ -169,6 +191,10 @@ def record_added_field(
     if not api_def:
         raise NotFoundError(f"ApiDefinition {api_def_id} not found")
 
+    if field_name in _locked_set(db, api_def_id):
+        logger.warning("Refused add of country-locked field name: %r", field_name)
+        return _normalize(api_def.pending_edits)
+
     overlay = _normalize(api_def.pending_edits)
     existing_names = {f.get("field_name") for f in overlay["added_fields"]}
     if field_name in existing_names:
@@ -210,6 +236,10 @@ def record_field_constraint(
     api_def = db.get(ApiDefinition, api_def_id)
     if not api_def:
         raise NotFoundError(f"ApiDefinition {api_def_id} not found")
+
+    if field_name in _locked_set(db, api_def_id):
+        logger.warning("Refused field-constraint override on country-locked field: %r", field_name)
+        return _normalize(api_def.pending_edits)
 
     overlay = _normalize(api_def.pending_edits)
     fc = overlay["field_constraints"]
@@ -292,6 +322,10 @@ def record_deleted_field(
     api_def = db.get(ApiDefinition, api_def_id)
     if not api_def:
         raise NotFoundError(f"ApiDefinition {api_def_id} not found")
+
+    if field_name in _locked_set(db, api_def_id):
+        logger.warning("Refused delete of country-locked field: %r", field_name)
+        return _normalize(api_def.pending_edits), 0
 
     overlay = _normalize(api_def.pending_edits)
 

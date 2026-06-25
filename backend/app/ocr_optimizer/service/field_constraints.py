@@ -103,19 +103,92 @@ def _norm_one(raw: dict | None) -> dict | None:
 
 
 def load(db: Session, api_def_id: uuid.UUID) -> dict[str, dict]:
-    """Return {field_name: normalized_constraint} for this ApiDef (empty if none)."""
+    """Return {field_name: normalized customer constraint} for this ApiDef.
+
+    Country-locked fields are EXCLUDED here: a customer override never applies
+    to a field the country spec has locked (precedence: country-lock >
+    customer-override). Empty dict if none.
+    """
     try:
         from app.services import pending_edits_service
         overlay = pending_edits_service.get_overlay(db, api_def_id)
     except Exception:  # noqa: BLE001
         return {}
     raw = overlay.get("field_constraints") or {}
+    locked = locked_fields_for_api(db, api_def_id)
     out: dict[str, dict] = {}
     for field, spec in raw.items():
+        if str(field) in locked:
+            continue  # country-lock wins
         norm = _norm_one(spec)
         if norm:
             out[str(field)] = norm
     return out
+
+
+def locked_fields_for_api(db: Session, api_def_id: uuid.UUID) -> set[str]:
+    """Country-locked (regulatory, non-modifiable) field names for this ApiDef,
+    resolved at runtime from the API's source_country template yaml.
+
+    Empty set for non-country APIs. Read-through (no DB column) so a change to
+    the country's `locked_fields` policy applies to every API immediately.
+    """
+    from app.models.api_definition import ApiDefinition
+    from . import template_loader
+    ad = db.get(ApiDefinition, api_def_id)
+    if not ad:
+        return set()
+    country = (ad.config or {}).get("source_country")
+    if not country:
+        return set()
+    return template_loader.locked_fields_for(country)
+
+
+def field_leaf(json_path: str) -> str:
+    """Public leaf-name helper for callers outside this module."""
+    return _leaf(json_path)
+
+
+def pin_locked_modules(
+    db: Session,
+    api_def_id: uuid.UUID,
+    modules: Iterable,
+    locked: set[str] | None = None,
+) -> None:
+    """Pin country-locked modules' recognition spec to the authoritative
+    country-template definition — mutate IN PLACE so whatever a round/reflection
+    produced for a locked field is overwritten back to the country spec.
+
+    This is the deterministic guarantee that locked fields stay "Part 1
+    controlled" no matter what the optimizer did. Pairs with the optimize-loop
+    exclusion (run_orchestrator) which keeps them out of reflection entirely.
+    """
+    if locked is None:
+        locked = locked_fields_for_api(db, api_def_id)
+    if not locked:
+        return
+    from app.models.api_definition import ApiDefinition
+    from . import template_loader
+    ad = db.get(ApiDefinition, api_def_id)
+    country = (ad.config or {}).get("source_country") if ad else None
+    if not country:
+        return
+    try:
+        decomposed = template_loader.decompose_country_template(country)
+    except Exception:  # noqa: BLE001
+        return
+    canon = {_leaf(m.get("json_path", "")): m for m in decomposed.get("modules", [])}
+    for m in modules:
+        f = _leaf(getattr(m, "json_path", "") or "")
+        if f in locked and f in canon:
+            c = canon[f]
+            if c.get("ocr_prompt"):
+                m.ocr_prompt = c["ocr_prompt"]
+            frag = c.get("schema_fragment")
+            if isinstance(frag, dict):
+                m.schema_fragment = copy.deepcopy(frag)
+            if c.get("description"):
+                m.description = c["description"]
 
 
 # ── Value-level normalization (the "stripping must take effect" guarantee) ────
@@ -315,6 +388,13 @@ def apply_to_active_version(db: Session, api_def_id: uuid.UUID) -> bool:
     )
     if not mods:
         return False
+    # Precedence order, same as enforce(): pin country-locked fields first
+    # (this also RECLAIMS a field that just became locked — any stale customer
+    # override on it is overwritten back to the country spec), then apply the
+    # remaining customer overrides (load() already excludes locked fields).
+    locked = locked_fields_for_api(db, api_def_id)
+    if locked:
+        pin_locked_modules(db, api_def_id, mods, locked)
     # apply_to_modules mutates the ORM objects in place (schema_fragment is
     # deepcopied inside, ocr_prompt lock is idempotent) → persisted on commit.
     apply_to_modules(mods, constraints)
@@ -338,15 +418,24 @@ def enforce(
     """Convenience for composition sites: load constraints, mutate modules
     in place, and return the augmented country_global to pass to the composer.
 
-    No-op (returns country_global unchanged) when there are no constraints.
+    Applies BOTH governance tiers in precedence order:
+      1. country-lock  — pin locked modules to the country spec (immutable);
+      2. customer-override — apply per-field type/strip (locked fields already
+         excluded by load()).
+    No-op (returns country_global unchanged) when neither applies.
     """
-    constraints = load(db, api_def_id)
-    if not constraints:
+    constraints = load(db, api_def_id)          # excludes locked fields
+    locked = locked_fields_for_api(db, api_def_id)
+    if not constraints and not locked:
         return country_global or ""
     mod_list = list(modules)
-    apply_to_modules(mod_list, constraints)
+    if locked:
+        pin_locked_modules(db, api_def_id, mod_list, locked)
+    if constraints:
+        apply_to_modules(mod_list, constraints)
     logger.info(
-        "field_constraints: enforced %d locked field(s) on ApiDef %s: %s",
-        len(constraints), api_def_id, sorted(constraints.keys()),
+        "field_constraints: ApiDef %s — pinned %d locked %s, enforced %d override %s",
+        api_def_id, len(locked), sorted(locked),
+        len(constraints), sorted(constraints.keys()),
     )
     return augment_country_global(country_global, constraints)

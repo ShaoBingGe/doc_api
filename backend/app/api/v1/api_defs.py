@@ -273,8 +273,15 @@ def get_required_fields(
     svc.get_api_definition(db, api_def_id, user=user)  # 404 / access guard
     overlay = pending_edits_service.get_overlay(db, api_def_id)
     fields = pending_edits_service.compute_required_field_set(db, api_def_id)
+    # Country-locked fields (regulatory): the UI must disable add/delete/rename/
+    # retype for these. Also surface the active customer overrides so the panel
+    # can badge them.
+    from app.ocr_optimizer.service import field_constraints
+    locked = sorted(field_constraints.locked_fields_for_api(db, api_def_id))
     return {
         "fields": fields,
+        "locked_fields": locked,
+        "field_constraints": overlay.get("field_constraints") or {},
         "from_added": len(overlay.get("added_fields") or []),
         "deleted_count": len(overlay.get("deleted_fields") or []),
         "renamed_count": len(overlay.get("renames") or {}),

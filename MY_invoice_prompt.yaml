@@ -1,6 +1,13 @@
 id: '7_8'
 remark: gemini json schema, anyof. Design v7 — Part1 (MY country global) + Part2 (defer to schema descriptions) + Part3 (platform output contract reference only; composer injects from assets/global_output_contract.yaml).
 structure_prompt_version: '6'
+# 国家锁定字段（国家规范·不可修改）：识别规则由 Part 1 严格管控，排除出 Part 2
+# 反思/优化范围，客户在自定义面板中不可增删改/改类型。
+locked_fields:
+  - invoiceNumber                    # 发票号码
+  - invoiceDate                      # 开票日期
+  - billFromName                     # 开票方名称
+  - billFromTaxIdentificationNumber  # 开票方税号
 prompt_template:
   prompt_format: |-
     # 任务

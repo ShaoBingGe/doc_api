@@ -70,6 +70,24 @@ def list_available_countries() -> list[dict[str, Any]]:
     return [{"country": c, "available": c in found} for c in chips]
 
 
+def locked_fields_for(country: str) -> set[str]:
+    """Return the set of country-regulated, NON-modifiable field names declared
+    in `<COUNTRY>_invoice_prompt.yaml` under the top-level `locked_fields:` list.
+
+    Locked fields are governed by the country spec (Part 1): their recognition
+    rule is pinned, they are excluded from Part-2 reflection/optimization, and
+    the customer cannot add/delete/rename/retype them. Empty set when the yaml
+    is missing or declares none. Read at runtime (no DB column) so a change to
+    the country policy applies to every API of that country immediately.
+    """
+    try:
+        data = load_country_template(country)
+    except (FileNotFoundError, Exception):  # noqa: BLE001 — governance read is best-effort
+        return set()
+    raw = data.get("locked_fields") or []
+    return {str(x) for x in raw if x}
+
+
 def load_country_template(country: str) -> dict[str, Any]:
     """Load `<COUNTRY>_invoice_prompt.yaml`, return parsed dict.
 
@@ -151,6 +169,16 @@ def decompose_country_template(country: str) -> dict[str, Any]:
         modules.append(arr_mod)
         order_index += 1
 
+    # Mark country-locked modules so downstream (reflection-exclude, override-
+    # refuse, UI-lock) can identify them. Locked-ness is keyed by the schema
+    # field name (json_path leaf), matching `locked_fields` in the yaml.
+    locked = {str(x) for x in (data.get("locked_fields") or []) if x}
+    if locked:
+        for mod in modules:
+            leaf = (mod.get("json_path") or "").split(".")[-1]
+            leaf = leaf.replace("[*]", "").replace("[", "").replace("]", "").strip()
+            mod["locked"] = leaf in locked
+
     return {
         "country": country.upper(),
         "yaml_id": data.get("id"),
@@ -158,6 +186,7 @@ def decompose_country_template(country: str) -> dict[str, Any]:
         "json_schema": raw_schema,  # store original (with anyOf intact)
         "country_global_text": country_global_text,
         "modules": modules,
+        "locked_fields": sorted(locked),
     }
 
 

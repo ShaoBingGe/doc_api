@@ -1,6 +1,14 @@
 id: 'JP_1'
 remark: 日本（JP）国家发票模板。Design v7 — Part1 (JP country global) + Part2 (defer to schema descriptions) + Part3 (platform output contract reference only; composer injects from assets/global_output_contract.yaml). 字段骨架沿用平台通用集（下游 composer / 输出契约通用），description 按日本（御請求書）票面本地化；依据 japan-inv/init 8 样本 + 海信日本 schema。
 structure_prompt_version: '6'
+# 国家锁定字段（国家规范·不可修改）：识别规则由 Part 1 严格管控，排除出 Part 2
+# 反思/优化范围，客户在自定义面板中不可增删改/改类型。机制只对模板中“存在”的
+# 字段生效——当前 JP 精简版仅含 invoiceNumber，其余 3 个在重新加回时自动锁定。
+locked_fields:
+  - invoiceNumber                    # 发票号码
+  - invoiceDate                      # 开票日期
+  - billFromName                     # 开票方名称
+  - billFromTaxIdentificationNumber  # 开票方税号（登録番号 T+13）
 prompt_template:
   prompt_format: |-
     # 任务

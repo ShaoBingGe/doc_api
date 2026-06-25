@@ -814,8 +814,14 @@ def _run_one_round(
     provider_model = _split_provider(run.llm_provider)[1]
     updates: dict[str, dict] = {}
 
+    # Country-locked fields are EXCLUDED from optimization: they're still
+    # evaluated (measured) above, but their recognition spec is governed by
+    # Part 1 and must not enter the Part-2 modifiable/reflection scope. The
+    # composition step additionally PINS them back to the country spec.
+    _locked = field_constraints.locked_fields_for_api(db, run.api_definition_id)
     targets = [(mod, it) for mod, it in zip(modules, iterations)
-               if it.aggregate_accuracy < 1.0]
+               if it.aggregate_accuracy < 1.0
+               and field_constraints.field_leaf(mod.json_path) not in _locked]
     # history 含 DB 查询 → 主线程预取
     histories: dict[str, list] = {}
     for mod, _it in targets:
@@ -937,8 +943,13 @@ def _run_one_round(
         it.module_key for it in iterations
         if (it.aggregate_accuracy or 0) >= 0.5
     }
-    blocked_removes = requested_removes & well_performing
-    safe_removes = requested_removes - well_performing
+    # Country-locked modules must never be removed by meta either.
+    _locked_keys = {
+        m.module_key for m in modules
+        if field_constraints.field_leaf(m.json_path) in _locked
+    }
+    blocked_removes = requested_removes & (well_performing | _locked_keys)
+    safe_removes = requested_removes - well_performing - _locked_keys
     if blocked_removes:
         logger.info(
             "round %d: meta wanted to remove %d well-performing module(s) — blocked: %s",
@@ -957,6 +968,10 @@ def _run_one_round(
         safe_removes = set()
         keep_keys = all_keys
     renames = {r["old"]: r["new"] for r in meta.get("rename", []) if isinstance(r, dict) and "old" in r and "new" in r}
+    # Never let meta rename a country-locked module away from its pinned key.
+    for _k in list(renames):
+        if _k in _locked_keys:
+            del renames[_k]
 
     # Enforce hard module limit (silently truncate adds)
     projected_count = len(keep_keys) + len(add_specs)
