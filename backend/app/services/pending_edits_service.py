@@ -239,7 +239,14 @@ def record_field_constraint(
 
     if field_name in _locked_set(db, api_def_id):
         logger.warning("Refused field-constraint override on country-locked field: %r", field_name)
-        return _normalize(api_def.pending_edits)
+        # Also drop any stale override left over from before the field was
+        # locked, so it can't silently reactivate if the field is ever unlocked.
+        ov = _normalize(api_def.pending_edits)
+        if field_name in ov["field_constraints"]:
+            ov["field_constraints"].pop(field_name, None)
+            _save_overlay(db, api_def, ov)
+            db.commit()
+        return ov
 
     overlay = _normalize(api_def.pending_edits)
     fc = overlay["field_constraints"]
