@@ -160,7 +160,7 @@ def test_clear_overlay(db_session):
     overlay = pending_edits_service.get_overlay(db_session, api_def.id)
     assert overlay == {
         "added_fields": [], "renames": {}, "modifications": {},
-        "deleted_fields": [],
+        "deleted_fields": [], "field_constraints": {},
     }
 
 
