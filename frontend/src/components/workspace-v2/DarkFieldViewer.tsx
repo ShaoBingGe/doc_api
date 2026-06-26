@@ -1215,7 +1215,9 @@ function WaitingForSamplesBanner({
             <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0" />
             <span className="text-sm text-amber-200 font-medium">
               {remaining > 0
-                ? `还需 ${remaining} 个已审视样本即可启动反思 + 优化`
+                ? (required > 3
+                    ? `还需 ${remaining} 个多样化样本（共 ${required}：3 锚点 + ${required - 3} 噪声）即可启动迭代`
+                    : `还需 ${remaining} 个已审视样本即可启动反思 + 优化`)
                 : '样本已就绪，反思 + 3 轮优化即将自动启动'}
             </span>
           </div>
@@ -1240,10 +1242,20 @@ function WaitingForSamplesBanner({
           ))}
         </div>
         <div className="text-[11px] text-amber-100/60 leading-relaxed">
-          请在本工作区上传至少 {required} 个样本并把每个文档标记为"已审视"。
-          全部已审视后，反思 agent 和 3 轮迭代优化会自动启动，新版本会**直接激活在本工作区**——
-          URL 不会切换，刷新即看到优化后的字段名和识别结果。
-          下方字段列表中的"已重命名 / 已新增 / 已删除"标识保留为本次编辑的历史记录。
+          {required > 3 ? (
+            <>
+              启动迭代需要 <b>{required} 个</b>已审视样本：<b>3 个锚点</b>（你精选的代表样本）
+              + <b>{required - 3} 个多样化「噪声」样本</b>（不同开票方/版式/税率/扫描质量，越随机越好）。
+              这些噪声样本作为<b>留出验证集</b>，让优化结果能泛化、不过拟合你那 3 张。
+              上传后逐一标记"已审视"即可；凑满 {required} 个，反思 + 3 轮优化自动启动并直接激活在本工作区。
+            </>
+          ) : (
+            <>
+              请在本工作区上传至少 {required} 个样本并把每个文档标记为"已审视"。
+              全部已审视后，反思 agent 和 3 轮迭代优化会自动启动，新版本会直接激活在本工作区——
+              URL 不会切换，刷新即看到优化后的字段名和识别结果。
+            </>
+          )}
         </div>
         <div className="flex gap-2">
           {remaining > 0 ? (

@@ -86,8 +86,11 @@ export default function WorkspaceHeader({
     // Gate 1: confirmed-sample count (not raw)
     if (!hasEnoughSamples) {
       toast.error(
-        `已审视样本不足（${confirmedCount} / ${requiredCount}）—— `
-        + `打开每个样本检查 OCR 结果，点工具栏"待审视"切到"已审视"`,
+        requiredCount > MIN_SAMPLES
+          ? `样本不足（${confirmedCount} / ${requiredCount}）—— 迭代需 3 锚点 + ${requiredCount - MIN_SAMPLES} 个多样化噪声样本。`
+            + `请再上传并审视 ${requiredCount - confirmedCount} 个多样化样本（留出验证用）。`
+          : `已审视样本不足（${confirmedCount} / ${requiredCount}）—— `
+            + `打开每个样本检查 OCR 结果，点工具栏"待审视"切到"已审视"`,
       )
       return
     }

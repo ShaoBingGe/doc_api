@@ -430,11 +430,22 @@ def list_samples_review_status(
     from app.ocr_optimizer.service import gt_quality as gtq
 
     confirmed, total = ci.count_confirmed_samples(db, api_def_id)
+    # Noise-sample gate (ADR-001): when active, iteration requires 3 anchors +
+    # N noise = 12 confirmed samples, so the held-out validation split is
+    # meaningful. The frontend uses required_for_iteration to gate "开始优化"
+    # and to show the "再传 N 个多样化样本" progress.
+    from app.core.config import get_settings
+    from app.ocr_optimizer.skilltrain import noise_gate
+    _noise_on = bool(getattr(get_settings(), "SKILL_NOISE_GATE", False))
+    _required = noise_gate.required_total() if _noise_on else ci.MIN_SAMPLES_FOR_ITERATION
     return {
         "samples": per_doc,
         "confirmed_count": confirmed,
         "total_count": total,
-        "required_for_iteration": ci.MIN_SAMPLES_FOR_ITERATION,
+        "required_for_iteration": _required,
+        "noise_gate_active": _noise_on,
+        "anchors": noise_gate.ANCHORS_DEFAULT,
+        "noise_target": noise_gate.NOISE_DEFAULT,
         "confidence": ci.sample_confidence(confirmed),
         "gt_quality": gtq.validate_gt_quality(db, api_def_id),
     }
