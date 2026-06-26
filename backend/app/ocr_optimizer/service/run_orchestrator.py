@@ -804,11 +804,13 @@ def _run_one_round(
     # samples), so a round's improvement must GENERALIZE — the existing monotonic
     # `_best_evaluated_version` then picks the best-on-val version (zero extra OCR).
     _target_acc = {it.module_key: (it.aggregate_accuracy or 0.0) for it in iterations}
+    _train_set = {str(s) for s in sample_ids}  # all samples unless held-out splits
     from app.core.config import get_settings as _get_settings
     _s = _get_settings()
     if getattr(_s, "SKILL_HELDOUT_GATE", False) and len(sample_ids) >= 8 and iterations:
         from app.ocr_optimizer.skilltrain import heldout
         _val_set = {str(v) for v in heldout.val_ids(sample_ids, frac=_s.SKILL_HELDOUT_VAL_FRAC)}
+        _train_set = {str(s) for s in sample_ids} - _val_set
         _overall_val, _target_acc = heldout.split_accuracy(iterations, _val_set)
         rnd.overall_accuracy = _overall_val  # version selection on held-out val
         logger.info(
@@ -857,6 +859,21 @@ def _run_one_round(
     targets = [(mod, it) for mod, it in zip(modules, iterations)
                if _target_acc.get(it.module_key, it.aggregate_accuracy or 0.0) < 1.0
                and field_constraints.field_leaf(mod.json_path) not in _locked]
+
+    # Edit discipline (ADR-001 P1, flag-gated): only optimize modules whose error
+    # is SYSTEMATIC (defect, not a one-off lapse), and clip to the top-L by
+    # severity (learning-rate) so a round makes a bounded step. Default OFF →
+    # targets unchanged.
+    if getattr(_s, "SKILL_EDIT_DISCIPLINE", False) and iterations:
+        from app.ocr_optimizer.skilltrain import targeting
+        _keep = targeting.disciplined_targets(iterations, _target_acc, train_ids=_train_set)
+        _before = len(targets)
+        targets = [(m, it) for m, it in targets if it.module_key in _keep]
+        if len(targets) != _before:
+            logger.info(
+                "round %d: edit-discipline narrowed targets %d→%d (defect+clip)",
+                round_num, _before, len(targets),
+            )
     # history 含 DB 查询 → 主线程预取
     histories: dict[str, list] = {}
     for mod, _it in targets:
