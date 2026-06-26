@@ -157,14 +157,5 @@ def test_SKT_N01_noise_sample_threshold():
     assert noise_gate.shortfall(12) == 0
 
 
-# ── Integration cases — pending P1 wiring into run_orchestrator ───────────────
-
-@pytest.mark.skip(reason="P1 integration: typed edits inside optimize_module")
-def test_SKT_C02_typed_bounded_edit_no_full_rewrite():
-    """optimize_module emits typed FieldEdit (not whole-prompt rewrite); diff
-    line-count ≤ threshold."""
-
-
-@pytest.mark.skip(reason="P1 integration: minibatch reflect LLM dispatcher")
-def test_SKT_M01_minibatch_grouped_reflection():
-    """5 same-field diffs reflected in ONE grouped LLM call (not 5)."""
+# SKT_C02 (typed bounded edit, no full rewrite) and SKT_M01 (minibatch grouped
+# reflection) are now implemented at the loop level in test_driver.py.
