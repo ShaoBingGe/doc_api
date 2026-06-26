@@ -653,6 +653,33 @@ def _prev_round_module_acc(
     return {it.module_key: (it.aggregate_accuracy or 0.0) for it in its}
 
 
+def _field_trajectories(db: Session, run_id) -> dict[str, list[float]]:
+    """Per-field accuracy trajectory across this run's rounds (chronological),
+    for P3 slow-update guardians. Pure read of persisted iterations."""
+    from collections import defaultdict
+
+    from app.ocr_optimizer.models import OcrModuleIteration, OcrOptimizationRound
+
+    rows = (
+        db.query(
+            OcrOptimizationRound.round_num,
+            OcrModuleIteration.module_key,
+            OcrModuleIteration.aggregate_accuracy,
+        )
+        .join(OcrModuleIteration, OcrModuleIteration.round_id == OcrOptimizationRound.id)
+        .filter(
+            OcrOptimizationRound.run_id == run_id,
+            OcrModuleIteration.aggregate_accuracy.isnot(None),
+        )
+        .order_by(OcrOptimizationRound.round_num)
+        .all()
+    )
+    traj: dict[str, list[float]] = defaultdict(list)
+    for _rnum, mk, acc in rows:
+        traj[mk].append(float(acc))
+    return dict(traj)
+
+
 def _run_one_round(
     db: Session,
     *,
@@ -1073,11 +1100,24 @@ def _run_one_round(
         )
         from app.ocr_optimizer.service import skill_render
         _sk = skill_render.resolve(db, run.api_definition_id, new_modules)
+        # P3 slow-update: a version-level PROTECTED guardian block derived
+        # deterministically from each field's cross-round accuracy trajectory.
+        # Flag-gated; not stored in any module body → step edits can't touch it.
+        _guardian = None
+        if getattr(_s, "SKILL_SLOW_UPDATE", False):
+            from app.ocr_optimizer.skilltrain import slow_update as _su
+            _guardian = (
+                _su.render_guardian_block(
+                    _su.compute_guardians(_field_trajectories(db, run.id))
+                )
+                or None
+            )
         next_version.composed_schema = composer.assemble_schema(new_modules)
         next_version.composed_prompt = composer.assemble_prompt(
             new_modules,
             country_global=_cg,
             skill_content=_sk,
+            guardian_block=_guardian,
         )
     except ValueError as exc:
         logger.warning("Compose failed for round %d, reusing current version: %s",

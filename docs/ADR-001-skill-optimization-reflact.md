@@ -193,9 +193,14 @@ A 的全部 + 激活 `OcrSkill` 为 `(国家,字段)` 可训练技能（全局�
 - [ ] 接活 501 端点：列出/绑定/编辑技能 + `OcrModule.skill_ids` 真正生效。
 - [ ] P1 的 edit 改为作用在「私有技能」上；私有技能成为可训练产物。
 
-### P3 — Slow / Meta epoch 更新（~1 周）　⏳ 延后
-- [ ] `slow_update`：迭代收尾比较相邻版本同样本表现，写守护段（step 级不可改）。
-- [ ] `meta_skill`：优化器侧元记忆（怎么提/合/排 edit），跨轮复用、不入技能正文。
+### P3 — Slow / Meta epoch 更新（~1 周）　🔶 slow_update 已接线（flag-gated, 默认 OFF）；meta_skill 机制就绪未接线
+- [x] **`slow_update`**（`skilltrain/slow_update.py`，flag `SKILL_SLOW_UPDATE`）：按每字段跨轮准确率轨迹
+  确定性产出守护段（pin 稳定达标字段 / caution 波动字段），compose 时作**受保护段**拼入（不存进任何
+  `OcrModule.ocr_prompt` → step 编辑碰不到）。接 `_run_one_round` compose seam；默认 OFF→composer 字节不变。
+  纯函数 8 单测 + composer 接线 2 测；生产部署 OFF。
+- [~] **`meta_skill`**（`skilltrain/meta_skill.py`，flag `SKILL_META_MEMORY`）：纯机制已建+测（按 op 聚合
+  接受/拒绝率 → 渲染优化器提案偏好提示）。**暂未接线**：当前优化器是 module-verdict 粒度、非 typed-FieldEdit op，
+  与 meta 的 op 模型阻抗不匹配；接线需优化器先产出 typed edits（避免明夜在生产优化器核心做深改）。4 单测。
 
 ### P4 — 迭代→技能晋升（固化进全局库）　✅ 已实现（①采收 →②候选 →③起草/晋升 →④挂载 全链路）
 **晋升门槛（2026-06-26 拍板，含越级细则）：管理员确认是唯一硬门；跨租户覆盖 > 5 作「自动推荐」

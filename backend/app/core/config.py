@@ -88,6 +88,15 @@ class Settings(BaseSettings):
     # Render attached OcrSkill content into composed prompts (P2). Default OFF →
     # skills are stored/managed but not injected (composer unchanged).
     SKILL_LIBRARY_RENDER: bool = False
+    # P3 slow-update: at compose time, render a version-level PROTECTED guardian
+    # block (deterministic, from each field's cross-round accuracy trajectory) so
+    # stable fields are pinned and volatile ones flagged. Not stored in any
+    # module body → step edits can't touch it. Default OFF → composer unchanged.
+    SKILL_SLOW_UPDATE: bool = False
+    # P3 meta-memory: accumulate accepted/rejected edit-op stats into run.metrics
+    # and (when ON) surface a proposal-bias hint to the optimizer. Default OFF →
+    # stats are still recorded (cheap, additive) but no optimizer behavior change.
+    SKILL_META_MEMORY: bool = False
 
     # ── Security ──────────────────────────────────────────────────────────
     SECRET_KEY: str = "CHANGE-ME-IN-PRODUCTION-32-bytes!!"

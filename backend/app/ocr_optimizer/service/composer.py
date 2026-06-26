@@ -80,6 +80,7 @@ def assemble_prompt(
     *,
     country_global: str | None,
     skill_content: dict[str, str] | None = None,
+    guardian_block: str | None = None,
 ) -> str:
     """
     Concatenate global frame + country-wide rules + each module's ocr_prompt
@@ -89,6 +90,11 @@ def assemble_prompt(
     When provided, the attached skills' content is appended under each module's
     body as a "# 技能库补充" block. Default None → unchanged (skill rendering is
     flag-gated upstream by the caller).
+
+    `guardian_block` (ADR-001 P3 slow-update, optional): a version-level
+    protected guidance section rendered just before the module instructions.
+    It is NOT stored in any `OcrModule.ocr_prompt`, so per-round step edits never
+    touch it (it is "protected"). Default None → unchanged (flag-gated upstream).
 
     `modules` should already be sorted by order_index (the caller's
     responsibility, or rely on the relationship's order_by).
@@ -169,6 +175,11 @@ def assemble_prompt(
         + GLOBAL_OUTPUT_CONTRACT_DETAILS
         + "\n"
         + modules_header
+        + (
+            f"{guardian_block.strip()}\n\n"
+            if guardian_block and guardian_block.strip()
+            else ""
+        )
         + "\n".join(body_parts)
         + GLOBAL_SELF_CHECK
     )
