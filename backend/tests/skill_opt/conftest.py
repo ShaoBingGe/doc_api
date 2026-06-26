@@ -60,9 +60,25 @@ def japan_inv(japan_inv_root):
 
 @pytest.fixture
 def synthetic_rollouts():
-    """Build OcrModuleIteration.per_sample_results with controllable scores —
-    the core of every token-free L1 test. Pending P0' types (RolloutScore)."""
-    pytest.skip("P0' pending: synthetic rollout factory not implemented")
+    """Factory: make(spec) -> list[RolloutScore], the core of every token-free
+    L1 test. spec = {sample_id: {field: (hard, soft?, error?)}}; soft defaults
+    to 1.0/0.0 from hard, error defaults to '<field>_err' when wrong."""
+    from app.ocr_optimizer.skilltrain.types import FieldResult, RolloutScore
+
+    def make(spec: dict):
+        out = []
+        for sid, fields in spec.items():
+            frs = {}
+            for f, v in fields.items():
+                v = v if isinstance(v, (tuple, list)) else (v,)
+                hard = bool(v[0])
+                soft = float(v[1]) if len(v) > 1 else (1.0 if hard else 0.0)
+                err = v[2] if len(v) > 2 else ("" if hard else f"{f}_err")
+                frs[f] = FieldResult(field=f, hard=hard, soft=soft, error=err)
+            out.append(RolloutScore(sample_id=sid, fields=frs))
+        return out
+
+    return make
 
 
 @pytest.fixture
