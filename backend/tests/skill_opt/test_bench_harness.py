@@ -108,3 +108,20 @@ def test_SKT_H06_ocr_cache_hit(bench, mock_processor):
     cached2 = bench.CachingPredictor(predict, skill_version="v2")
     cached2(pdf)
     assert predict.state["calls"] == 2
+
+
+# ── H07 — real-predictor entity parsing (pure, no OCR) ───────────────────────
+
+def test_SKT_H07_parse_entity(bench):
+    """_parse_entity handles top-level ARRAY, ```json fence, and {entities:[]}."""
+    array = '[{"docType": "invoice", "currency": "JPY"}, {"docType": "receipt"}]'
+    assert bench._parse_entity(array)["docType"] == "invoice"
+
+    fenced = '```json\n[{"invoiceNumber": "A1"}]\n```'
+    assert bench._parse_entity(fenced)["invoiceNumber"] == "A1"
+
+    wrapped = '{"entities": [{"totalAmount": 100}]}'
+    assert bench._parse_entity(wrapped)["totalAmount"] == 100
+
+    assert bench._parse_entity("not json at all") == {}
+    assert bench._parse_entity("[]") == {}

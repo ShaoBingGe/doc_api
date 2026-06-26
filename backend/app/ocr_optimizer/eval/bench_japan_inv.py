@@ -159,6 +159,69 @@ def run_bench(
     }
 
 
+# ── Real-OCR predictor (mirrors the product's v1 country-template extraction) ─
+#
+# Token-COSTING: only the manual baseline/validation runner calls this; L0/L1
+# tests never do. Building it is free; running predict() issues one VLM call.
+
+def _parse_entity(raw_text: str) -> dict:
+    """Parse a processor's raw text into a single invoice entity dict.
+
+    Handles: a top-level JSON ARRAY (the country schema shape → first element),
+    a ```json fenced block, or a {"entities": [...]} wrapper. Pure / token-free.
+    """
+    import json
+
+    from app.processors.base import extract_json
+
+    try:
+        parsed = json.loads(raw_text)
+    except (json.JSONDecodeError, TypeError):
+        blocks = extract_json(raw_text or "")
+        try:
+            parsed = json.loads(blocks[0]) if blocks else {}
+        except (json.JSONDecodeError, IndexError):
+            parsed = {}
+    if isinstance(parsed, list):
+        return parsed[0] if parsed and isinstance(parsed[0], dict) else {}
+    if isinstance(parsed, dict):
+        ents = parsed.get("entities")
+        if isinstance(ents, list):
+            return ents[0] if ents and isinstance(ents[0], dict) else {}
+        return parsed
+    return {}
+
+
+def build_country_prompt(country: str = "JP") -> tuple[str, dict]:
+    """Build the v1-style composed prompt + schema for a country (same shape
+    preset_init uses for a fresh API). Returns (prompt, json_schema)."""
+    from app.ocr_optimizer.service import template_loader
+    from app.ocr_optimizer.service.composer import GLOBAL_OUTPUT_CONTRACT_DETAILS
+
+    d = template_loader.decompose_country_template(country)
+    prompt = d["prompt_format"].rstrip() + "\n\n" + GLOBAL_OUTPUT_CONTRACT_DETAILS + "\n"
+    return prompt, d["json_schema"]
+
+
+def real_predictor(country: str = "JP", processor_type: str = "qwen") -> PredictFn:
+    """A predict_fn that runs the real country-template extraction on a PDF.
+
+    Used ONLY by the manual baseline/validation runner (issues real VLM calls).
+    Mirrors production v1 extraction so the bench measures actual product
+    capability.
+    """
+    from app.processors.factory import ProcessorFactory
+
+    prompt, schema = build_country_prompt(country)
+    proc = ProcessorFactory.create(processor_type)
+
+    def predict(pdf_path: Path) -> dict:
+        raw = proc.process_document(str(pdf_path), prompt, {"schema": schema})
+        return _parse_entity(raw)
+
+    return predict
+
+
 # ── OCR result cache (skip re-OCR of an unchanged (sample, skill) pair) ────────
 
 class CachingPredictor:
