@@ -50,6 +50,27 @@ Pair = tuple[Path, dict]
 PredictFn = Callable[[Path], dict]
 
 
+def country_scalar_fields(country: str = "JP") -> list[str]:
+    """The scalar fields the country TEMPLATE actually defines — the fair basis
+    for measuring product capability (scoring fields the template never asks for
+    artificially deflates accuracy). Derived from the template decomposition;
+    arrays/objects (page, line items, tax summary) excluded.
+    """
+    from app.ocr_optimizer.service import template_loader
+
+    d = template_loader.decompose_country_template(country)
+    out: list[str] = []
+    for m in d.get("modules", []):
+        frag = m.get("schema_fragment") or {}
+        if (frag.get("type") or "STRING").upper() in {"ARRAY", "OBJECT"}:
+            continue
+        leaf = (m.get("json_path") or "").split(".")[-1]
+        leaf = leaf.replace("[*]", "").replace("[", "").replace("]", "").strip()
+        if leaf and leaf not in {"$", "page"}:
+            out.append(leaf)
+    return out
+
+
 # ── Corpus loading ────────────────────────────────────────────────────────────
 
 def available() -> bool:

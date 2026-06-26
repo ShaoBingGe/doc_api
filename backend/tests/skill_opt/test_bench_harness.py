@@ -125,3 +125,17 @@ def test_SKT_H07_parse_entity(bench):
 
     assert bench._parse_entity("not json at all") == {}
     assert bench._parse_entity("[]") == {}
+
+
+# ── H08 — fair scoring field set derived from the template (no corpus) ────────
+
+def test_SKT_H08_country_scalar_fields_from_template(bench):
+    """The scored field set is derived from the JP template's actual scalar
+    fields (so we don't score fields the template never asks for). Must include
+    invoiceType + the 4 locked fields, and exclude page/arrays."""
+    fields = bench.country_scalar_fields("JP")
+    for must in ("docType", "invoiceType", "invoiceNumber", "invoiceDate",
+                 "billFromName", "billFromTaxIdentificationNumber", "currency"):
+        assert must in fields, f"{must} missing from template scalar fields"
+    assert "page" not in fields                      # array/structural excluded
+    assert "detailOfGoodsOrServices" not in fields   # array excluded
