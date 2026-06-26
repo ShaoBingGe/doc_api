@@ -68,6 +68,16 @@ class Settings(BaseSettings):
     # Example: "gemini|gemini-2.5-flash;openai|gpt-4o-mini;mock|"
     LLM_FALLBACK_CHAIN: str = ""
 
+    # ── Skill optimization (ADR-001) ─────────────────────────────────────────
+    # Held-out validation gate for iteration rounds: optimize on a TRAIN split,
+    # score/select versions on a held-out VAL split (the noise samples) so a
+    # round's "improvement" must generalize, not overfit the same samples.
+    # Default OFF — when off, run_orchestrator behaves byte-identically.
+    SKILL_HELDOUT_GATE: bool = False
+    # Fraction of samples reserved as the held-out val split (the trailing
+    # samples — anchors stay in train). Min 1 val sample.
+    SKILL_HELDOUT_VAL_FRAC: float = 0.25
+
     # ── Security ──────────────────────────────────────────────────────────
     SECRET_KEY: str = "CHANGE-ME-IN-PRODUCTION-32-bytes!!"
     API_KEY_PREFIX: str = "sk-"

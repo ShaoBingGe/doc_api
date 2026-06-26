@@ -783,6 +783,25 @@ def _run_one_round(
     )
     rnd.per_sample_accuracy = per_sample_accuracy
 
+    # ── Held-out validation gate (ADR-001 P1, flag-gated) ────────────────
+    # Default OFF → `_target_acc` is the all-sample aggregate and overall_accuracy
+    # is unchanged → byte-identical behavior. When ON, optimize on a TRAIN split
+    # but score/select versions on a held-out VAL split (the trailing noise
+    # samples), so a round's improvement must GENERALIZE — the existing monotonic
+    # `_best_evaluated_version` then picks the best-on-val version (zero extra OCR).
+    _target_acc = {it.module_key: (it.aggregate_accuracy or 0.0) for it in iterations}
+    from app.core.config import get_settings as _get_settings
+    _s = _get_settings()
+    if getattr(_s, "SKILL_HELDOUT_GATE", False) and len(sample_ids) >= 4 and iterations:
+        from app.ocr_optimizer.skilltrain import heldout
+        _val_set = {str(v) for v in heldout.val_ids(sample_ids, frac=_s.SKILL_HELDOUT_VAL_FRAC)}
+        _overall_val, _target_acc = heldout.split_accuracy(iterations, _val_set)
+        rnd.overall_accuracy = _overall_val  # version selection on held-out val
+        logger.info(
+            "round %d: held-out gate ON — val_acc=%.4f (%d val / %d train)",
+            round_num, _overall_val, len(_val_set), len(sample_ids) - len(_val_set),
+        )
+
     # ── Round-start early stop (design v4) ───────────────────────────────
     # If the OCR+eval at the start of this round already matches GT on
     # EVERY field across EVERY sample, the previous prompt is already
@@ -819,8 +838,10 @@ def _run_one_round(
     # Part 1 and must not enter the Part-2 modifiable/reflection scope. The
     # composition step additionally PINS them back to the country spec.
     _locked = field_constraints.locked_fields_for_api(db, run.api_definition_id)
+    # Optimize modules under target on the TRAIN split (`_target_acc`); with the
+    # held-out gate OFF this equals the all-sample aggregate (unchanged behavior).
     targets = [(mod, it) for mod, it in zip(modules, iterations)
-               if it.aggregate_accuracy < 1.0
+               if _target_acc.get(it.module_key, it.aggregate_accuracy or 0.0) < 1.0
                and field_constraints.field_leaf(mod.json_path) not in _locked]
     # history 含 DB 查询 → 主线程预取
     histories: dict[str, list] = {}
