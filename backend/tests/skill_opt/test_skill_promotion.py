@@ -5,6 +5,8 @@
 """
 from app.ocr_optimizer.service.skill_promotion import (
     QUALIFY_MIN_TENANTS,
+    build_draft_prompt,
+    draft_skill,
     extract_candidates_from_rows,
 )
 
@@ -87,3 +89,41 @@ def test_sorted_by_occurrence_desc():
 
 def test_empty_input_returns_empty():
     assert extract_candidates_from_rows([]) == []
+
+
+# ── 步骤③ 起草（draft）─────────────────────────────────────────────────────
+
+
+def test_build_draft_prompt_is_deterministic_and_includes_context():
+    system, user = build_draft_prompt("JP", "currency", ["需要 ISO 4217 校验", "需要货币锚定"])
+    assert "JSON" in system and "name" in system and "content" in system
+    assert "JP" in user and "currency" in user
+    assert "ISO 4217" in user and "货币锚定" in user
+
+
+def test_build_draft_prompt_handles_no_feedback():
+    _, user = build_draft_prompt("MY", "total_amount", [])
+    assert "无具体反馈" in user  # 兜底文案，不崩
+
+
+def test_draft_skill_normalizes_llm_output(monkeypatch):
+    import app.ocr_optimizer.service.llm_call as llm
+
+    monkeypatch.setattr(
+        llm,
+        "llm_text_completion",
+        lambda **kw: {"name": "  日元金额取整  ", "content": " 去千分位 ", "description": ""},
+    )
+    out = draft_skill("JP", "total_amount", ["..."])
+    assert out["name"] == "日元金额取整"  # 已 strip
+    assert out["content"] == "去千分位"
+    assert out["description"] == "P4 晋升自 JP/total_amount"  # 空→兜底
+
+
+def test_draft_skill_defaults_when_llm_returns_garbage(monkeypatch):
+    import app.ocr_optimizer.service.llm_call as llm
+
+    monkeypatch.setattr(llm, "llm_text_completion", lambda **kw: "not a dict")
+    out = draft_skill("JP", "currency", [])
+    assert out["name"] == "currency 识别技能"  # 兜底名
+    assert out["content"] == ""

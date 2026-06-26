@@ -160,3 +160,65 @@ def find_promotion_candidates(
         rows.append((src, tenant_id, api_id, module_key, feedback))
 
     return extract_candidates_from_rows(rows)
+
+
+# ── 步骤③：LLM 起草晋升技能正文（管理员编辑确认后才写库） ──────────────────
+
+
+def build_draft_prompt(
+    country: str, field: str, sample_feedback: Iterable[str]
+) -> tuple[str, str]:
+    """确定性 prompt 构造（可单测，不调 LLM）。返回 (system, user)。"""
+    asks = "\n".join(f"  - {s}" for s in (sample_feedback or []) if str(s).strip())
+    if not asks:
+        asks = "  （无具体反馈，按该字段通用经验起草）"
+    system = (
+        "你是票据识别「技能库」的策展助手。把『某字段在多轮迭代中反复需要的能力』提炼成"
+        "一条可复用的识别规则技能，供管理员审阅后纳入全局技能库。只输出 JSON，"
+        "键为 name / content / description：\n"
+        "- name：简短中文技能名（如『日元金额取整』『发票号去特殊符』）。\n"
+        "- content：可直接附加到该字段提示词的规则正文，具体、可执行；与国家相关时注明国别。\n"
+        "- description：一句话说明该技能解决什么。\n"
+        "忠于下方反思反馈的意图，不要编造字段不需要的能力。"
+    )
+    user = (
+        f"国家：{country}\n字段：{field}\n\n"
+        f"反思在多轮迭代中对该字段反复提出的能力诉求：\n{asks}\n\n"
+        "请据此起草一条可复用技能（输出 JSON）。"
+    )
+    return system, user
+
+
+def draft_skill(
+    country: str,
+    field: str,
+    sample_feedback: Iterable[str],
+    *,
+    processor_spec: str = "qwen",
+    model_name: Optional[str] = None,
+) -> dict:
+    """用境内合规文本模型（qwen-plus）起草一条技能草稿。**不写库**。
+
+    返回 `{name, content, description}`，对模型输出做防御性兜底。
+    """
+    from app.core.config import get_settings
+
+    from .llm_call import llm_text_completion
+
+    system, user = build_draft_prompt(country, field, sample_feedback)
+    model = model_name or getattr(get_settings(), "QWEN_TEXT_MODEL", None)
+    raw = llm_text_completion(
+        processor_spec=processor_spec,
+        model_name=model,
+        system_instruction=system,
+        user_prompt=user,
+        as_json=True,
+    )
+    data = raw if isinstance(raw, dict) else {}
+    return {
+        "name": (str(data.get("name") or f"{field} 识别技能")).strip(),
+        "content": (str(data.get("content") or "")).strip(),
+        "description": (
+            str(data.get("description") or f"P4 晋升自 {country}/{field}")
+        ).strip(),
+    }

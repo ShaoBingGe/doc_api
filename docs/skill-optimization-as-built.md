@@ -178,7 +178,9 @@ frontend/src/lib/api-client.ts     # OcrSkill 类型 + fetch/create/delete/attac
   把反思 `skill_feedback` 按 `(国家,字段)` 聚成候选 + 跨租户计数；`GET /api/v1/platform/skill-promotion/candidates`
   （平台 admin 门）暴露之，生产端到端冒烟通过、无 token→401。门槛 = **管理员确认（唯一硬门）+ 跨租户>5
   作自动推荐信号**（管理员可越级晋升低于阈值者；golden_set 不回归作参考、不硬卡）。生产 11 候选 / 0 推荐
-  （仅 1 租户）。步骤②前端 + ③④（确认写库/挂载）待做；技能正文来源（手写 vs LLM 起草）待定。当前全局技能库仍为空。
+  （仅 1 租户）。**步骤③后端已落地**：`draft`（qwen-plus 起草、不写库）+ `promote`（管理员确认→
+  `create_skill(NULL)` 写全局库），draft 生产冒烟通过。技能正文来源拍板 = **LLM 起草 + 管理员编辑确认**。
+  前端（候选视图 + 起草/晋升 UI）+ 步骤④ attach 待做。当前全局技能库仍为空（promote 未在线上触发）。
 - **P3** Slow/Meta epoch 更新（`slow_update` 受保护守护段 + `meta_skill` 元记忆）⏳。
 - **P5** 更深的技能 UX（val 分曲线、被拒 edit 展示、晋级状态、管理员全局库视图）⏳。
 

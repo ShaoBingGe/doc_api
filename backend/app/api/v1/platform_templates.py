@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_db, require_roles
@@ -52,6 +53,57 @@ def list_skill_promotion_candidates(
         "total": len(cands),
         "recommended": sum(1 for c in cands if c.recommended),
         "candidates": [c.to_dict() for c in cands],
+    }
+
+
+class _DraftReq(BaseModel):
+    country: str
+    field: str
+    sample_feedback: list[str] = []
+
+
+class _PromoteReq(BaseModel):
+    country: str
+    field: str
+    name: str
+    content: str
+    description: str | None = None
+
+
+@router.post("/skill-promotion/draft", summary="LLM 起草晋升技能正文（不写库）")
+def draft_promotion_skill(body: _DraftReq) -> dict:
+    """步骤③-起草：用境内合规文本模型从「字段 + 反思原文」起草一条技能草稿，**不写库**。
+    管理员在前端编辑后再调 /promote 确认入库。"""
+    from app.ocr_optimizer.service import skill_promotion
+
+    return skill_promotion.draft_skill(body.country, body.field, body.sample_feedback)
+
+
+@router.post("/skill-promotion/promote", summary="管理员确认晋升 → 写入全局技能库")
+def promote_skill(
+    body: _PromoteReq,
+    db: Session = Depends(get_db),
+    user=Depends(require_roles(UserRole.super_admin, UserRole.system_admin)),
+) -> dict:
+    """步骤③-确认：管理员编辑确认后写入**全局** `OcrSkill`（api_definition_id=NULL）。
+    优化器被硬禁写技能，本写入由管理员显式发起。写后需 attach 到 module 才生效（步骤④）。"""
+    from app.ocr_optimizer.service import skill_service
+
+    sk = skill_service.create_skill(
+        db,
+        name=body.name,
+        content=body.content,
+        description=body.description or f"P4 晋升自 {body.country}/{body.field}",
+        api_def_id=None,
+        created_by=getattr(user, "id", None),
+    )
+    return {
+        "id": str(sk.id),
+        "name": sk.name,
+        "scope": "global",
+        "status": sk.status,
+        "country": body.country,
+        "field": body.field,
     }
 
 
