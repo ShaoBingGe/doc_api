@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     # Fraction of samples reserved as the held-out val split (the trailing
     # samples — anchors stay in train). Min 1 val sample.
     SKILL_HELDOUT_VAL_FRAC: float = 0.25
+    # Pre-iteration noise-sample gate: when ON, starting an iteration requires
+    # 3 anchors + N noise = 12 confirmed samples (so the held-out val split is
+    # meaningful). Default OFF → existing MIN_SAMPLES (3) behavior unchanged.
+    SKILL_NOISE_GATE: bool = False
 
     # ── Security ──────────────────────────────────────────────────────────
     SECRET_KEY: str = "CHANGE-ME-IN-PRODUCTION-32-bytes!!"

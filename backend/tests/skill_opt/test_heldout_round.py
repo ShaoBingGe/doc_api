@@ -90,23 +90,24 @@ def _patch_ocr(monkeypatch, sample_ids, gts, n_correct):
 
 
 def test_heldout_gate_round_scores_on_val(db_session, mock_env, monkeypatch):
-    """Flag ON: trailing 2 of 5 samples (val) are wrong → overall_accuracy is the
-    VAL score (0.0), NOT the all-sample 0.6. Flag OFF: it's the all-sample 0.6."""
+    """Flag ON: trailing 3 of 8 samples (val) are wrong → overall_accuracy is the
+    VAL score (0.0), NOT the all-sample 0.625. Flag OFF: it's the all-sample 0.625.
+    (8 samples ≥ the held-out engagement floor.)"""
     from app.ocr_optimizer.service.run_orchestrator import _run_one_round
 
-    api, ver, run, sample_ids, gts = _seed(db_session, n=5)
-    _patch_ocr(monkeypatch, sample_ids, gts, n_correct=3)  # 3 train ok, 2 val wrong
+    api, ver, run, sample_ids, gts = _seed(db_session, n=8)
+    _patch_ocr(monkeypatch, sample_ids, gts, n_correct=5)  # 5 train ok, 3 val wrong
 
-    # Flag OFF → all-sample accuracy = 3/5 = 0.6
+    # Flag OFF → all-sample accuracy = 5/8 = 0.625
     monkeypatch.setattr(mock_env, "SKILL_HELDOUT_GATE", False, raising=False)
     rnd_off = _run_one_round(
         db_session, run=run, round_num=1, api_def=api, current_version=ver,
         sample_ids=sample_ids, ground_truths=gts,
         metrics={"total_ocr_calls": 0, "total_llm_calls": 0}, enable_meta=False,
     )
-    assert abs(rnd_off.overall_accuracy - 0.6) < 1e-6
+    assert abs(rnd_off.overall_accuracy - 0.625) < 1e-6
 
-    # Flag ON → held-out val accuracy (the 2 trailing wrong) = 0.0
+    # Flag ON → held-out val accuracy (the 3 trailing wrong) = 0.0
     monkeypatch.setattr(mock_env, "SKILL_HELDOUT_GATE", True, raising=False)
     rnd_on = _run_one_round(
         db_session, run=run, round_num=2, api_def=api, current_version=ver,
@@ -114,3 +115,21 @@ def test_heldout_gate_round_scores_on_val(db_session, mock_env, monkeypatch):
         metrics={"total_ocr_calls": 0, "total_llm_calls": 0}, enable_meta=False,
     )
     assert abs(rnd_on.overall_accuracy - 0.0) < 1e-6
+
+
+def test_noise_gate_blocks_below_threshold(db_session, mock_env, monkeypatch):
+    """SKILL_NOISE_GATE on → iteration entry requires 12 confirmed samples; 5 is
+    blocked with a clear shortfall message; 12 passes."""
+    from app.ocr_optimizer.service.run_orchestrator import _resolve_run_inputs
+    from app.core.exceptions import ValidationError
+
+    monkeypatch.setattr(mock_env, "SKILL_NOISE_GATE", True, raising=False)
+
+    api, _v, _r, sids5, _g = _seed(db_session, n=5)
+    with pytest.raises(ValidationError) as exc:
+        _resolve_run_inputs(db_session, api.id, sids5)
+    assert "12" in str(exc.value) and "7" in str(exc.value)  # need 12, short 7
+
+    api2, _v2, _r2, sids12, _g2 = _seed(db_session, n=12)
+    _api, confirmed, _gts = _resolve_run_inputs(db_session, api2.id, sids12)
+    assert len(confirmed) == 12  # ready → passes

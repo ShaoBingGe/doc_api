@@ -502,6 +502,20 @@ def _resolve_run_inputs(
             f"（当前共 {len(raw_sample_ids)} 个样本，仅 {len(confirmed_ids)} 个已审视）"
         )
 
+    # Noise-sample gate (ADR-001, flag-gated): require 3 anchors + N noise so the
+    # held-out val split is meaningful. Default OFF → only MIN_SAMPLES applies.
+    from app.core.config import get_settings as _get_settings
+    if getattr(_get_settings(), "SKILL_NOISE_GATE", False):
+        from app.ocr_optimizer.skilltrain import noise_gate
+        if not noise_gate.is_ready(len(confirmed_ids)):
+            need = noise_gate.shortfall(len(confirmed_ids))
+            raise ValidationError(
+                f"启动迭代需要至少 {noise_gate.required_total()} 个已审视样本"
+                f"（3 锚点 + {noise_gate.NOISE_DEFAULT} 个多样化噪声样本），当前 "
+                f"{len(confirmed_ids)} 个，还差 {need} 个。请再上传并审视 {need} 个"
+                f"多样化样本后重试——这样留出验证才有足够样本，迭代结果才能泛化。"
+            )
+
     return api_def, confirmed_ids, ground_truths
 
 
@@ -792,7 +806,7 @@ def _run_one_round(
     _target_acc = {it.module_key: (it.aggregate_accuracy or 0.0) for it in iterations}
     from app.core.config import get_settings as _get_settings
     _s = _get_settings()
-    if getattr(_s, "SKILL_HELDOUT_GATE", False) and len(sample_ids) >= 4 and iterations:
+    if getattr(_s, "SKILL_HELDOUT_GATE", False) and len(sample_ids) >= 8 and iterations:
         from app.ocr_optimizer.skilltrain import heldout
         _val_set = {str(v) for v in heldout.val_ids(sample_ids, frac=_s.SKILL_HELDOUT_VAL_FRAC)}
         _overall_val, _target_acc = heldout.split_accuracy(iterations, _val_set)
