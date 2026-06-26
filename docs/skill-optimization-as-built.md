@@ -180,7 +180,9 @@ frontend/src/lib/api-client.ts     # OcrSkill 类型 + fetch/create/delete/attac
   作自动推荐信号**（管理员可越级晋升低于阈值者；golden_set 不回归作参考、不硬卡）。生产 11 候选 / 0 推荐
   （仅 1 租户）。**步骤③后端已落地**：`draft`（qwen-plus 起草、不写库）+ `promote`（管理员确认→
   `create_skill(NULL)` 写全局库），draft 生产冒烟通过。技能正文来源拍板 = **LLM 起草 + 管理员编辑确认**。
-  前端（候选视图 + 起草/晋升 UI）+ 步骤④ attach 待做。当前全局技能库仍为空（promote 未在线上触发）。
+  **前端已落地**：admin 控制台「技能晋升」tab（`pages/admin/SkillPromotion.tsx`）——候选列表 + 推荐徽标 +
+  反思原文 + LLM 起草/编辑/晋升弹窗。**唯一剩余 = 步骤④ attach-UI**（把晋升的全局技能挂到字段 module 才渲染；
+  后端基建已就绪，`SkillLibraryModal` 缺 attach-to-field 交互）。当前全局技能库仍为空（promote 未在线上触发）。
 - **P3** Slow/Meta epoch 更新（`slow_update` 受保护守护段 + `meta_skill` 元记忆）⏳。
 - **P5** 更深的技能 UX（val 分曲线、被拒 edit 展示、晋级状态、管理员全局库视图）⏳。
 

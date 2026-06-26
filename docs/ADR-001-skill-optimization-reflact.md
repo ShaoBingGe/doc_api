@@ -209,8 +209,10 @@ A 的全部 + 激活 `OcrSkill` 为 `(国家,字段)` 可训练技能（全局�
   `POST .../skill-promotion/draft`（qwen-plus 境内合规起草 `{name,content,description}`，**不写库**）+
   `POST .../skill-promotion/promote`（管理员确认 → `create_skill(api_def_id=NULL)` 写**全局**库）。
   draft 生产冒烟通过（起草出可用的 currency 技能）；promote 由 `create_skill` 既有测试保证（未污染线上库）。
-- [ ] 步骤②③前端：admin 控制台「技能晋升候选」视图（推荐徽标 + 反思原文 + 起草/编辑/晋升）。
-- [ ] 步骤④ attach：把晋升的全局技能挂到该国各 API 的对应字段 module（基建 `attach_skill_to_module` 已就绪）→ composer 渲染（已上线）。
+- [x] **步骤②③前端**：admin 控制台「技能晋升」tab（`pages/admin/SkillPromotion.tsx`）——国家 chips +
+  候选列表（计数 + 跨租户>5「推荐」徽标 + 展开看反思原文）+「起草并晋升」弹窗（LLM 起草→管理员编辑→写全局库）。已上线。
+- [ ] **步骤④ attach（唯一剩余）**：UI 把晋升的全局技能挂到 API 的对应字段 module → 才会 composer 渲染。
+  后端 `attach_skill_to_module` + 端点已就绪；`SkillLibraryModal` 现仅列/建技能、缺 attach-to-field 交互。
 
 ### P5 — 让「技能」显性（UX，~1 周）　🔶 部分（技能库面板已上线；val 分曲线/被拒 edit/晋级视图待做）
 - [ ] workspace「优化过程」面板增「技能」标签：展示每字段挂的技能、本轮 edit（含被拒+原因）、val 分曲线、晋级状态。
