@@ -139,3 +139,19 @@ def test_SKT_H08_country_scalar_fields_from_template(bench):
         assert must in fields, f"{must} missing from template scalar fields"
     assert "page" not in fields                      # array/structural excluded
     assert "detailOfGoodsOrServices" not in fields   # array excluded
+
+
+# ── H09 — honest scoring set = template ∩ GT-present (no corpus) ──────────────
+
+def test_SKT_H09_fair_fields_intersect_gt(bench):
+    """fair_fields drops template fields the GT has no truth for (invoiceType,
+    absent from 海信 labels) AND keeps the ones GT tracks."""
+    from pathlib import Path
+    # synthetic GT lacking invoiceType (mirrors Japan-inv labels)
+    pairs = [
+        (Path("/x/a.pdf"), {"docType": "invoice", "invoiceNumber": "A1", "currency": "JPY"}),
+        (Path("/x/b.pdf"), {"docType": "receipt", "billFromName": "X社"}),
+    ]
+    ff = bench.fair_fields("JP", pairs)
+    assert "invoiceType" not in ff      # in template, but no GT truth → excluded
+    assert "docType" in ff and "currency" in ff and "billFromName" in ff

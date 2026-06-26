@@ -71,6 +71,26 @@ def country_scalar_fields(country: str = "JP") -> list[str]:
     return out
 
 
+def gt_union_keys(pairs: list["Pair"]) -> set[str]:
+    """Union of all top-level keys present across a split's GT entities."""
+    keys: set[str] = set()
+    for _pdf, gt in pairs:
+        if isinstance(gt, dict):
+            keys |= set(gt.keys())
+    return keys
+
+
+def fair_fields(country: str, pairs: list["Pair"]) -> list[str]:
+    """The HONEST scoring set = template-defined scalar fields ∩ fields the GT
+    actually tracks. Excludes both (a) template fields the GT has no truth for
+    (e.g. invoiceType — present in the template, absent from 海信 labels →
+    would penalize a correct extraction) and (b) GT fields the template never
+    asks for. This is the fair product-capability measure.
+    """
+    gt_keys = gt_union_keys(pairs)
+    return [f for f in country_scalar_fields(country) if f in gt_keys]
+
+
 # ── Corpus loading ────────────────────────────────────────────────────────────
 
 def available() -> bool:

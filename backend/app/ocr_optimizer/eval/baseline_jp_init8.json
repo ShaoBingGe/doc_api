@@ -1,0 +1,33 @@
+{
+  "note": "Skill-optimization Baseline — the number P1 must beat. Product v1 JP country-template extraction (qwen3-vl-plus) on Japan-inv init/8, scored by bench_japan_inv (zero-tolerance evaluator.compare). Field set = fair_fields(JP) = template scalar fields ∩ GT-tracked fields (excludes invoiceType: in template, absent from 海信 labels). Run on server, 8 OCR calls.",
+  "dataset": "Japan-inv/init",
+  "n_samples": 8,
+  "predictor": "real v1 JP template prompt, processor=qwen3-vl-plus",
+  "scorer": "evaluator.compare (zero-tolerance, exact/numeric-tolerant)",
+  "fair_field_accuracy": 0.598,
+  "fields_scored": [
+    "docType", "invoiceNumber", "invoiceDate", "totalNetAmount", "totalAmount",
+    "totalTaxAmount", "currency", "billFromName", "billFromTaxIdentificationNumber"
+  ],
+  "per_field_accuracy": {
+    "currency": 1.00,
+    "docType": 0.88,
+    "totalAmount": 0.88,
+    "invoiceNumber": 0.75,
+    "totalNetAmount": 0.75,
+    "totalTaxAmount": 0.75,
+    "billFromTaxIdentificationNumber": 0.25,
+    "billFromName": 0.12,
+    "invoiceDate": 0.00
+  },
+  "skill_optimization_targets": [
+    "invoiceDate (0/8 — date normalization 令和/年月日→YYYY-MM-DD unreliable)",
+    "billFromName (1/8 — issuer name extraction)",
+    "billFromTaxIdentificationNumber (2/8 — T+13 登録番号 extraction)"
+  ],
+  "excluded_from_scoring": {
+    "invoiceType": "in template but GT has no truth for it",
+    "nameOfInvoice/billToName/dueDate": "in GT but template does not define them",
+    "page/detailOfGoodsOrServices/detailOfTaxSummary": "array/structural"
+  }
+}
