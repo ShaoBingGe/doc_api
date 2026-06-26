@@ -55,8 +55,9 @@ backend/static/uploads/
 label-studio/
 label-studio-ml-backend/
 
-# Test artifacts
-testing/test1_honor.zip
+# Test artifacts / 本地测试样本（含真实发票 PII + 体积大，勿入库；
+# 与 golden_set 同策略：原始扫描不入库，仅保留 README 说明角色）
+testing/
 
 # Golden eval set: keep GT answer key + manifest + exporter in git, but NOT the
 # raw invoice scans (PII + binary + regenerable via build_golden_set.py).
