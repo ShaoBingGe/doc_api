@@ -1,11 +1,14 @@
 import { useEffect, useState, useCallback } from 'react'
-import { X, Plus, Trash2, Globe, Lock, Loader2 } from 'lucide-react'
+import { X, Plus, Trash2, Globe, Lock, Loader2, Link2 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { toast } from '../../lib/toast'
 import {
   fetchOcrSkills,
   createOcrSkill,
   deleteOcrSkill,
+  fetchOcrVersions,
+  fetchOcrVersion,
+  attachOcrSkill,
   type OcrSkill,
 } from '../../lib/api-client'
 
@@ -15,8 +18,11 @@ interface Props {
   onClose: () => void
 }
 
-/** 技能库管理面板（ADR-001 P2）。技能 = 可复用的 prompt 规则片段：
- *  全局（所有 API 共享，需后端启用 SKILL_LIBRARY_RENDER 才注入）/ 私有（仅本 API）。 */
+type ModuleLite = { module_key: string; display_name: string; skill_ids: string[] }
+
+/** 技能库管理面板（ADR-001 P2 + P4 步骤④）。技能 = 可复用的 prompt 规则片段：
+ *  全局（所有 API 共享，需后端启用 SKILL_LIBRARY_RENDER 才注入）/ 私有（仅本 API）。
+ *  「挂到字段」把技能 attach 到当前 active 版本的某 module → composer 渲染时注入该字段提示词。 */
 export default function SkillLibraryModal({ apiDefinitionId, open, onClose }: Props) {
   const [skills, setSkills] = useState<OcrSkill[]>([])
   const [loading, setLoading] = useState(false)
@@ -24,6 +30,8 @@ export default function SkillLibraryModal({ apiDefinitionId, open, onClose }: Pr
   const [name, setName] = useState('')
   const [content, setContent] = useState('')
   const [isGlobal, setIsGlobal] = useState(false)
+  const [versionId, setVersionId] = useState<string | null>(null)
+  const [modules, setModules] = useState<ModuleLite[]>([])
 
   const load = useCallback(async () => {
     if (!apiDefinitionId) return
@@ -38,9 +46,37 @@ export default function SkillLibraryModal({ apiDefinitionId, open, onClose }: Pr
     }
   }, [apiDefinitionId])
 
+  // Load the active version's modules so skills can be attached to a field.
+  const loadVersionModules = useCallback(async () => {
+    if (!apiDefinitionId) return
+    try {
+      const vres = await fetchOcrVersions(apiDefinitionId)
+      const versions = (vres.data || []) as Array<{ id: string; status: string }>
+      const active = versions.find((v) => v.status === 'active') ?? versions[versions.length - 1]
+      if (!active) {
+        setVersionId(null)
+        setModules([])
+        return
+      }
+      setVersionId(active.id)
+      const dres = await fetchOcrVersion(apiDefinitionId, active.id)
+      const mods = ((dres.data as { modules?: ModuleLite[] })?.modules || []).map((m) => ({
+        module_key: m.module_key,
+        display_name: m.display_name,
+        skill_ids: (m.skill_ids || []).map((x) => String(x)),
+      }))
+      setModules(mods)
+    } catch {
+      /* attach UI is optional enhancement — ignore load errors */
+    }
+  }, [apiDefinitionId])
+
   useEffect(() => {
-    if (open) void load()
-  }, [open, load])
+    if (open) {
+      void load()
+      void loadVersionModules()
+    }
+  }, [open, load, loadVersionModules])
 
   const handleCreate = async () => {
     if (!apiDefinitionId || !name.trim() || !content.trim()) return
@@ -69,8 +105,21 @@ export default function SkillLibraryModal({ apiDefinitionId, open, onClose }: Pr
     try {
       await deleteOcrSkill(apiDefinitionId, id)
       await load()
+      await loadVersionModules()
     } catch {
       toast.error('删除失败')
+    }
+  }
+
+  const handleAttach = async (skillId: string, moduleKey: string) => {
+    if (!apiDefinitionId || !versionId || !moduleKey) return
+    try {
+      await attachOcrSkill(apiDefinitionId, versionId, moduleKey, skillId)
+      toast.success('已挂到字段')
+      await loadVersionModules()
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(msg || '挂载失败')
     }
   }
 
@@ -104,36 +153,57 @@ export default function SkillLibraryModal({ apiDefinitionId, open, onClose }: Pr
               暂无技能。技能是可复用的识别规则片段，挂到字段后（需后端启用渲染）注入 prompt。
             </p>
           ) : (
-            skills.map((s) => (
-              <div
-                key={s.id}
-                className="flex items-start gap-2 p-2.5 rounded-lg bg-white/5 border border-white/5"
-              >
-                <span
-                  className={cn(
-                    'mt-0.5 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0',
-                    s.api_definition_id == null
-                      ? 'bg-cyan-500/20 text-cyan-300'
-                      : 'bg-purple-500/20 text-purple-300',
+            skills.map((s) => {
+              const attachedTo = modules.filter((m) => m.skill_ids.includes(s.id))
+              return (
+                <div
+                  key={s.id}
+                  className="p-2.5 rounded-lg bg-white/5 border border-white/5 space-y-2"
+                >
+                  <div className="flex items-start gap-2">
+                    <span
+                      className={cn(
+                        'mt-0.5 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0',
+                        s.api_definition_id == null
+                          ? 'bg-cyan-500/20 text-cyan-300'
+                          : 'bg-purple-500/20 text-purple-300',
+                      )}
+                      title={s.api_definition_id == null ? '全局技能（所有 API 共享）' : '本 API 私有技能'}
+                    >
+                      {s.api_definition_id == null ? <Globe className="w-2.5 h-2.5" /> : <Lock className="w-2.5 h-2.5" />}
+                      {s.api_definition_id == null ? '全局' : '私有'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-gray-200 truncate">{s.name}</div>
+                      <div className="text-xs text-gray-500 whitespace-pre-wrap break-words">{s.content}</div>
+                    </div>
+                    <button
+                      onClick={() => handleDelete(s.id)}
+                      className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-500/10 flex-shrink-0"
+                      title="停用此技能"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Attach-to-field (P4 步骤④) */}
+                  {modules.length > 0 && (
+                    <div className="flex items-center gap-2 pl-1">
+                      <span className="text-[10px] text-gray-500 truncate flex-1" title={attachedTo.map((m) => m.display_name).join('、')}>
+                        {attachedTo.length
+                          ? `已挂：${attachedTo.map((m) => m.display_name).join('、')}`
+                          : '未挂载（挂到字段后才生效）'}
+                      </span>
+                      <AttachControl
+                        modules={modules}
+                        attached={attachedTo.map((m) => m.module_key)}
+                        onAttach={(mk) => handleAttach(s.id, mk)}
+                      />
+                    </div>
                   )}
-                  title={s.api_definition_id == null ? '全局技能（所有 API 共享）' : '本 API 私有技能'}
-                >
-                  {s.api_definition_id == null ? <Globe className="w-2.5 h-2.5" /> : <Lock className="w-2.5 h-2.5" />}
-                  {s.api_definition_id == null ? '全局' : '私有'}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm text-gray-200 truncate">{s.name}</div>
-                  <div className="text-xs text-gray-500 whitespace-pre-wrap break-words">{s.content}</div>
                 </div>
-                <button
-                  onClick={() => handleDelete(s.id)}
-                  className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-500/10 flex-shrink-0"
-                  title="停用此技能"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))
+              )
+            })
           )}
         </div>
 
@@ -173,6 +243,49 @@ export default function SkillLibraryModal({ apiDefinitionId, open, onClose }: Pr
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+/** 把一条技能挂到某字段：下拉选未挂载的字段 + 挂载按钮。 */
+function AttachControl({
+  modules,
+  attached,
+  onAttach,
+}: {
+  modules: ModuleLite[]
+  attached: string[]
+  onAttach: (moduleKey: string) => void
+}) {
+  const [sel, setSel] = useState('')
+  const available = modules.filter((m) => !attached.includes(m.module_key))
+  if (available.length === 0) {
+    return <span className="text-[10px] text-gray-600 flex-shrink-0">已挂全部字段</span>
+  }
+  return (
+    <div className="flex items-center gap-1.5 flex-shrink-0">
+      <select
+        value={sel}
+        onChange={(e) => setSel(e.target.value)}
+        className="bg-[#15151a] border border-white/10 rounded px-1.5 py-1 text-[11px] text-gray-300 outline-none max-w-[150px]"
+      >
+        <option value="">挂到字段…</option>
+        {available.map((m) => (
+          <option key={m.module_key} value={m.module_key}>
+            {m.display_name}
+          </option>
+        ))}
+      </select>
+      <button
+        disabled={!sel}
+        onClick={() => {
+          onAttach(sel)
+          setSel('')
+        }}
+        className="inline-flex items-center gap-1 px-2 py-1 text-[11px] rounded bg-cyan-600/80 hover:bg-cyan-600 disabled:opacity-40 disabled:cursor-not-allowed text-white"
+      >
+        <Link2 className="w-3 h-3" /> 挂载
+      </button>
     </div>
   )
 }

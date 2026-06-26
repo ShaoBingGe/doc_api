@@ -174,7 +174,10 @@ frontend/src/lib/api-client.ts     # OcrSkill 类型 + fetch/create/delete/attac
 - N 固定 **9**（总 12），未跑完整 §2.4-B 噪声扫描定肘点（扫描为开发期可选，未阻塞上线）。
 
 **进行中 / 延后**：
-- **P4** 迭代→技能晋升 🔶：**步骤①采收 + 步骤②后端端点已落地**——`service/skill_promotion.py`（只读）
+- **P4** 迭代→技能晋升 ✅ 全链路打通：采收 → 候选(admin tab) → LLM 起草/管理员编辑确认 → 写全局库 →
+  `SkillLibraryModal`「挂到字段」(attach→`module.skill_ids`) → composer 渲染注入识别。
+  门槛 = 管理员确认(硬门) + 跨租户>5 自动推荐(可越级)。当前全局库仍为空(线上未实际 promote)。
+  〔以下为该项历史细节，保留备查〕**步骤①采收 + 步骤②后端端点已落地**——`service/skill_promotion.py`（只读）
   把反思 `skill_feedback` 按 `(国家,字段)` 聚成候选 + 跨租户计数；`GET /api/v1/platform/skill-promotion/candidates`
   （平台 admin 门）暴露之，生产端到端冒烟通过、无 token→401。门槛 = **管理员确认（唯一硬门）+ 跨租户>5
   作自动推荐信号**（管理员可越级晋升低于阈值者；golden_set 不回归作参考、不硬卡）。生产 11 候选 / 0 推荐

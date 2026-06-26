@@ -197,7 +197,7 @@ A 的全部 + 激活 `OcrSkill` 为 `(国家,字段)` 可训练技能（全局�
 - [ ] `slow_update`：迭代收尾比较相邻版本同样本表现，写守护段（step 级不可改）。
 - [ ] `meta_skill`：优化器侧元记忆（怎么提/合/排 edit），跨轮复用、不入技能正文。
 
-### P4 — 迭代→技能晋升（固化进全局库）　🔶 进行中（步骤①②后端已落地）
+### P4 — 迭代→技能晋升（固化进全局库）　✅ 已实现（①采收 →②候选 →③起草/晋升 →④挂载 全链路）
 **晋升门槛（2026-06-26 拍板，含越级细则）：管理员确认是唯一硬门；跨租户覆盖 > 5 作「自动推荐」
 信号（`recommended`），管理员对低于阈值者亦可显式越级晋升。** golden_set 不回归作管理员**参考**、不硬卡。
 - [x] **步骤①采收（只读）**：`service/skill_promotion.py` 扫同国家各 API 的 `skill_feedback`，按
@@ -211,8 +211,9 @@ A 的全部 + 激活 `OcrSkill` 为 `(国家,字段)` 可训练技能（全局�
   draft 生产冒烟通过（起草出可用的 currency 技能）；promote 由 `create_skill` 既有测试保证（未污染线上库）。
 - [x] **步骤②③前端**：admin 控制台「技能晋升」tab（`pages/admin/SkillPromotion.tsx`）——国家 chips +
   候选列表（计数 + 跨租户>5「推荐」徽标 + 展开看反思原文）+「起草并晋升」弹窗（LLM 起草→管理员编辑→写全局库）。已上线。
-- [ ] **步骤④ attach（唯一剩余）**：UI 把晋升的全局技能挂到 API 的对应字段 module → 才会 composer 渲染。
-  后端 `attach_skill_to_module` + 端点已就绪；`SkillLibraryModal` 现仅列/建技能、缺 attach-to-field 交互。
+- [x] **步骤④ attach**：`SkillLibraryModal` 每条技能加「挂到字段」（下拉选 active 版本的 module + 挂载按钮，
+  显示已挂字段）→ `attach_skill_to_module` 写 `module.skill_ids` → composer 渲染（`SKILL_LIBRARY_RENDER` 已上线）。
+  路由探测 401（已接线）。**P4 全链路打通：反思 skill_feedback → 候选 → LLM 起草/管理员确认 → 全局库 → 挂字段 → 注入识别。**
 
 ### P5 — 让「技能」显性（UX，~1 周）　🔶 部分（技能库面板已上线；val 分曲线/被拒 edit/晋级视图待做）
 - [ ] workspace「优化过程」面板增「技能」标签：展示每字段挂的技能、本轮 edit（含被拒+原因）、val 分曲线、晋级状态。
