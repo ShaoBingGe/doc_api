@@ -268,47 +268,63 @@ _SKILL_TODO_MSG = (
 @router.get(
     "/{api_def_id}/ocr-optimizer/skills",
     response_model=list[OcrSkillResponse],
-    summary="(TODO) 列出该 API 可用的 skills",
+    summary="列出该 API 可用的 skills（私有 + 全局库）",
 )
 def list_skills(
     api_def_id: uuid.UUID,
     db: Session = Depends(get_db),
 ) -> list[OcrSkillResponse]:
-    # MVP: return empty list so UI can render the section without erroring
-    return []
+    from app.ocr_optimizer.service import skill_service
+    return [OcrSkillResponse.model_validate(s) for s in skill_service.list_skills(db, api_def_id)]
 
 
 @router.post(
     "/{api_def_id}/ocr-optimizer/skills",
-    status_code=status.HTTP_501_NOT_IMPLEMENTED,
-    summary="(TODO) 创建一个 skill",
+    response_model=OcrSkillResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="创建一个 skill（api_definition_id=null 即全局库）",
 )
 def create_skill(
     api_def_id: uuid.UUID,
     body: OcrSkillCreateRequest,
     db: Session = Depends(get_db),
-):
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail=_SKILL_TODO_MSG,
+) -> OcrSkillResponse:
+    from app.ocr_optimizer.service import skill_service
+    sk = skill_service.create_skill(
+        db, name=body.name, content=body.content, description=body.description,
+        api_def_id=body.api_definition_id,
     )
+    return OcrSkillResponse.model_validate(sk)
+
+
+@router.delete(
+    "/{api_def_id}/ocr-optimizer/skills/{skill_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="停用一个 skill（软删除）",
+)
+def delete_skill(
+    api_def_id: uuid.UUID,
+    skill_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> None:
+    from app.ocr_optimizer.service import skill_service
+    skill_service.delete_skill(db, skill_id)
 
 
 @router.post(
-    "/{api_def_id}/ocr-optimizer/modules/{module_key}/skills/{skill_id}",
-    status_code=status.HTTP_501_NOT_IMPLEMENTED,
-    summary="(TODO) 把已存在的 skill 挂到模块上",
+    "/{api_def_id}/ocr-optimizer/versions/{version_id}/modules/{module_key}/skills/{skill_id}",
+    summary="把已存在的 skill 挂到某版本的模块上",
 )
 def attach_skill(
     api_def_id: uuid.UUID,
+    version_id: uuid.UUID,
     module_key: str,
     skill_id: uuid.UUID,
     db: Session = Depends(get_db),
-):
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail=_SKILL_TODO_MSG,
-    )
+) -> dict:
+    from app.ocr_optimizer.service import skill_service
+    mod = skill_service.attach_skill_to_module(db, version_id, module_key, skill_id)
+    return {"module_key": mod.module_key, "skill_ids": list(mod.skill_ids or [])}
 
 
 @router.get(
