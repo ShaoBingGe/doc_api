@@ -58,6 +58,21 @@ logger = logging.getLogger(__name__)
 
 MIN_SAMPLES_FOR_ITERATION = 3
 MAX_SAMPLES_HINT = 10  # informational only; messaging caps the suggestion at 9 new uploads
+
+
+def required_samples() -> int:
+    """Min confirmed samples to START iteration. When the noise gate is active
+    (ADR-001), iteration requires 3 anchors + N noise = 12 so the held-out
+    validation split is meaningful; otherwise the legacy MIN_SAMPLES_FOR_ITERATION.
+    Keeps the customize-flow readiness/auto-resume aligned with _resolve_run_inputs."""
+    try:
+        from app.core.config import get_settings
+        if getattr(get_settings(), "SKILL_NOISE_GATE", False):
+            from app.ocr_optimizer.skilltrain import noise_gate
+            return noise_gate.required_total()
+    except Exception:  # noqa: BLE001 — never let config break the flow
+        pass
+    return MIN_SAMPLES_FOR_ITERATION
 STALE_OPTIMIZING_MIN = 10  # minutes before an "optimizing" job is considered stuck
 
 # Confidence tiers by # of confirmed (human-reviewed GT) samples. The iteration
@@ -76,14 +91,19 @@ def sample_confidence(confirmed: int) -> dict:
     the UI can warn "3 个样本可启动但易过拟合，建议补到 ≥5".
     """
     confirmed = max(0, int(confirmed))
-    if confirmed < MIN_SAMPLES_FOR_ITERATION:
-        need = MIN_SAMPLES_FOR_ITERATION - confirmed
+    req = required_samples()
+    if confirmed < req:
+        need = req - confirmed
+        if req > MIN_SAMPLES_FOR_ITERATION:
+            msg = (f"还需 {need} 个多样化样本才能启动迭代（共需 {req}：3 锚点 + "
+                   f"{req - MIN_SAMPLES_FOR_ITERATION} 个噪声样本作留出验证；当前 {confirmed}）。")
+        else:
+            msg = f"还需 {need} 个「已审视」样本才能启动迭代（当前 {confirmed}/{req}）。"
         return {
             "level": "insufficient", "label": "样本不足", "can_iterate": False,
-            "message": f"还需 {need} 个「已审视」样本才能启动迭代"
-                       f"（当前 {confirmed}/{MIN_SAMPLES_FOR_ITERATION}）。",
-            "confirmed": confirmed, "min_required": MIN_SAMPLES_FOR_ITERATION,
-            "recommended": LOW_CONFIDENCE_SAMPLES,
+            "message": msg,
+            "confirmed": confirmed, "min_required": req,
+            "recommended": max(req, LOW_CONFIDENCE_SAMPLES),
         }
     if confirmed < LOW_CONFIDENCE_SAMPLES:
         return {
@@ -490,7 +510,7 @@ def maybe_auto_resume_for_api(api_definition_id: uuid.UUID) -> None:
         if count_id is None:
             return
         confirmed, _ = count_confirmed_samples(db, count_id)
-        if confirmed < MIN_SAMPLES_FOR_ITERATION:
+        if confirmed < required_samples():  # noise gate: don't auto-start until 12
             return
         # (C5 cleanup) — fork-mirror branch removed. Phase 19 makes
         # source ≡ fork, so the rebind condition is permanently false.
@@ -728,7 +748,7 @@ def resume_customize_job(job_id: uuid.UUID) -> bool:
         # ── Path (b) pre-fork resume ──────────────────────────────────────
         if not job.new_api_definition_id:
             confirmed, total = count_confirmed_samples(db, job.source_api_definition_id)
-            if confirmed < MIN_SAMPLES_FOR_ITERATION:
+            if confirmed < required_samples():
                 logger.info(
                     "resume_customize_job(pre-fork): job %s source has %d/%d confirmed, parking",
                     job.id, confirmed, MIN_SAMPLES_FOR_ITERATION,
@@ -756,7 +776,7 @@ def resume_customize_job(job_id: uuid.UUID) -> bool:
                         completed_at=datetime.now(timezone.utc))
             return False
         confirmed, total = count_confirmed_samples(db, job.new_api_definition_id)
-        if confirmed < MIN_SAMPLES_FOR_ITERATION:
+        if confirmed < required_samples():
             logger.info(
                 "resume_customize_job: job %s still has %d/%d confirmed samples (%d total), staying parked",
                 job.id, confirmed, MIN_SAMPLES_FOR_ITERATION, total,
@@ -990,14 +1010,23 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
     # We check the SOURCE ApiDef's count (single-workspace UX from Phase 12).
     confirmed_src, total_src = count_confirmed_samples(db, src_id)
     fork_done = job.new_api_definition_id is not None
-    if not fork_done and confirmed_src < MIN_SAMPLES_FOR_ITERATION:
+    _req = required_samples()
+    if not fork_done and confirmed_src < _req:
         n_edit = sum(1 for d in diffs if d.get("kind") == "edit")
         n_add = sum(1 for d in diffs if d.get("kind") == "add")
-        msg = (
-            f"已记录 {n_edit} 个修改 + {n_add} 个新增字段。等待 "
-            f"{MIN_SAMPLES_FOR_ITERATION - confirmed_src} 个已审视样本以启动反思 agent。"
-            f"（当前 {confirmed_src}/{MIN_SAMPLES_FOR_ITERATION}，共 {total_src} 个样本）"
-        )
+        _need = _req - confirmed_src
+        if _req > MIN_SAMPLES_FOR_ITERATION:
+            msg = (
+                f"已记录 {n_edit} 个修改 + {n_add} 个新增字段。再上传并审视 {_need} 个"
+                f"多样化噪声样本即可启动迭代（共需 {_req}：3 锚点 + {_req - MIN_SAMPLES_FOR_ITERATION} 噪声，"
+                f"作留出验证；当前 {confirmed_src}/{_req}，共 {total_src} 个样本）。"
+            )
+        else:
+            msg = (
+                f"已记录 {n_edit} 个修改 + {n_add} 个新增字段。等待 "
+                f"{_need} 个已审视样本以启动反思 agent。"
+                f"（当前 {confirmed_src}/{_req}，共 {total_src} 个样本）"
+            )
         _update_job(
             db, job,
             status=CustomizeJobStatus.waiting_for_samples.value,
@@ -1265,12 +1294,15 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
     # We require at least MIN_SAMPLES_FOR_ITERATION samples whose annotations
     # the customer has confirmed as GT. Raw upload count is NOT sufficient.
     confirmed, total = count_confirmed_samples(db, new_api.id)
-    if confirmed < MIN_SAMPLES_FOR_ITERATION:
-        need = MIN_SAMPLES_FOR_ITERATION - confirmed
+    _req = required_samples()
+    if confirmed < _req:
+        need = _req - confirmed
+        noise = (f"（3 锚点 + {_req - MIN_SAMPLES_FOR_ITERATION} 多样化噪声样本作留出验证）"
+                 if _req > MIN_SAMPLES_FOR_ITERATION else "")
         msg = (
             f"已生成新模板 {new_api.api_code}。"
-            f"当前 {confirmed}/{MIN_SAMPLES_FOR_ITERATION} 已审视样本（共 {total} 个），"
-            f"还需 {need} 个样本经客户确认 OCR 结果正确后才能启动 3 轮迭代。"
+            f"当前 {confirmed}/{_req} 已审视样本（共 {total} 个），"
+            f"还需 {need} 个样本{noise}经客户确认 OCR 结果正确后才能启动 3 轮迭代。"
         )
         _update_job(db, job,
                     status=CustomizeJobStatus.waiting_for_samples.value,
