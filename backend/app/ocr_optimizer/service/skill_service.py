@@ -9,6 +9,14 @@ separate, gated step (P4).
 This service is the storage/read layer. Composer rendering (injecting a skill's
 content into a module's prompt when attached) is wired separately and
 flag-gated. CRUD here does not touch the prompt-assembly hot path.
+
+⚠️ 术语消歧（"skill" 有两义，勿与反思混）:
+  • 本模块的 `OcrSkill`（"技能库 / skill library"）= 面向客户/管理员、存 DB、有
+    `api_definition_id`、可挂到 module 的可复用规则（本文）。
+  • `reflection/skills_loader.py` 的 `Skill`（"反思路由 / reflection skill"）= 内部反思
+    能力，按 edit_intent 路由反思提示词，静态、不入库、无 api_definition_id。
+  代码层已可区分：本类永远带 `Ocr` 前缀；反思那个是 `reflection/` 包里的裸 `Skill`。
+  详见 docs/repository-structure.md「'skill' 的两义」。
 """
 from __future__ import annotations
 

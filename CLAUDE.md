@@ -8,6 +8,10 @@
 > 决策见 [docs/ADR-001](./docs/ADR-001-skill-optimization-reflact.md)，**线上实际实现以
 > [docs/skill-optimization-as-built.md](./docs/skill-optimization-as-built.md) 为单一事实源**
 > （4 个 `SKILL_*` flag、噪声门 3+9=12、代码地图、部署 runbook）。
+>
+> 🗺️ **东西在哪 / 六大"库"映射 / "skill" 两义消歧 / 样本三角色 / 根目录耦合**：
+> 见 [docs/repository-structure.md](./docs/repository-structure.md)。
+> （注意：`reflection/` 裸 `Skill` = 反思路由；带 `Ocr` 前缀的 `OcrSkill` = 技能库，两者无关。）
 
 ---
 

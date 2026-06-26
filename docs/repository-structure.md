@@ -1,0 +1,74 @@
+# 代码库结构地图（六大"库" + 样本角色 + 命名约定）
+
+> 接手定位用的「东西在哪、为什么在那」的单页索引。配套架构红线见 [CLAUDE.md](../CLAUDE.md)。
+> 最近核对：2026-06-26。
+
+---
+
+## 一、六大领域"库"映射
+
+| 领域 | 物理位置 | 关键说明 |
+|---|---|---|
+| **国家模板库** | 仓库根 `<COUNTRY>_invoice_prompt.yaml`（MY/JP）；加载器 `ocr_optimizer/service/template_loader.py` | 经 `_REPO_ROOT = parents[4]` 在**仓库根** glob，部署镜像到 `/opt/docapi/*.yaml`。顶层 `locked_fields:` 声明国家锁定字段。**见 §三根目录耦合** |
+| **反思路由库** | `ocr_optimizer/reflection/skills/*.yaml`（7 个）+ `reflection/skills_loader.py` | 内部反思能力，按 `edit_intent` 路由反思提示词。静态、PR 维护、不入库。**"skill" 的第①义，见 §二** |
+| **技能库（OcrSkill）** | `ocr_optimizer/service/skill_service.py` / `skill_render.py` / `ocr_optimizer/models.py` 的 `OcrSkill` 表 | 面向客户/管理员、存 DB、可挂 module 的可复用规则。`api_definition_id` NULL=全局/非空=私有。**"skill" 的第②义** |
+| **测试样本库** | 见 §四（三类角色，分散是**有意的**） | Japan-inv（开发基准）/ golden_set（冻结回归）/ runtime uploads（运行时） |
+| **交互页面模板库** | `frontend/src/components/{workspace-v2,templates,fields,document,api,admin}` + `pages/` | 现行工作区是 `workspace-v2`（10 处引用）；`workspace/`（旧）疑似死代码（0 外部路径引用，待确认后清） |
+| **opt skill 与优化测试库** | `ocr_optimizer/skilltrain/`（11 机制文件）+ `ocr_optimizer/eval/`（基准/golden 工具）+ `backend/tests/skill_opt/`（54 用例） | ReflACT 纪律机制 + Japan-inv 基准。详见 [skill-optimization-as-built.md](./skill-optimization-as-built.md) |
+| **租户 api 库** | `models/api_definition.py`（API 定义）+ `OcrSkill.api_definition_id` 非空（私有技能） | 多租户：每个 API 私有版本 + 私有技能；优化作用在私有层 |
+
+---
+
+## 二、"skill" 的两义（命名消歧，勿混）
+
+代码里 `skill` 一词有**两个无关概念**，已在源码加交叉引用注释（`skills_loader.py` / `skill_service.py`）：
+
+| | 反思路由（reflection skill） | 技能库（OcrSkill） |
+|---|---|---|
+| 类名 | `reflection/` 包里的**裸 `Skill`** | 永远带前缀的 **`OcrSkill`** |
+| 位置 | `reflection/skills_loader.py` + `reflection/skills/*.yaml` | `service/skill_service.py` + `models.py` 表 |
+| 是什么 | 「**怎么反思**」——按 `edit_intent` 路由一段反思提示词 | 「**可复用识别规则**」——客户/管理员策展的内容 |
+| 谁维护 | 产品/技术 PR（静态、不演化） | 客户/管理员 CRUD（优化器**禁止写**） |
+| 是否入库 | 否（代码内 yaml） | 是（DB，有 `api_definition_id`） |
+| 是否客户可见 | 否（纯内部） | 是 |
+
+> **判别口诀**：带 `Ocr` 前缀 / 有 `api_definition_id` / 在 `service/` → 技能库；
+> 裸 `Skill` / 在 `reflection/` → 反思路由。
+>
+> 历史背景：曾考虑把 `reflection/skills/` 改名为 `routes/` 彻底消歧，但其词汇深嵌生产反思
+> 核心（5 代码 + 2 测试 + CLAUDE.md 11 处），纯命名收益、却有生产回归风险（同 ADR Tier 2 取舍）→
+> **选择文档 + 代码交叉引用消歧，不做运行时改名。**
+
+---
+
+## 三、根目录耦合（国家模板，勿乱动）
+
+`template_loader.py`：
+```python
+_REPO_ROOT = Path(__file__).resolve().parents[4]      # = 仓库根
+_REPO_ROOT.glob("*_invoice_prompt.yaml")              # MY/JP...
+_REPO_ROOT / f"{country.upper()}_invoice_prompt.yaml" # 单个加载
+```
+- **后果**：国家模板**必须**放在仓库根，且文件名严格 `<COUNTRY>_invoice_prompt.yaml`（`.bak` / `_templet` 等不匹配、不会被加载）。
+- **部署**：服务器镜像到 `/opt/docapi/<COUNTRY>_invoice_prompt.yaml`（与 `backend/` 同级）。
+- **移动代价**：搬到 `templates/` 需同时改 `parents[4]`、服务器布局、rsync 目标 → 风险 > 收益，**当前不动**。
+
+---
+
+## 四、测试样本的三类角色（分散是有意的，别合并）
+
+| 角色 | 位置 | git | 用途 |
+|---|---|---|---|
+| **开发基准** | `Japan-inv/`（根） | gitignore | 363 对 ML 划分（train/val/test），开发期 bench harness 用，**不进生产路径** |
+| **冻结回归** | `ocr_optimizer/eval/golden_set/{MY,JP}/` | GT 答案入库、`docs/` 原始扫描 gitignore | 零容忍严格回归，发版前跑 |
+| **运行时** | `backend/data/`、`backend/static/uploads/` | gitignore | 客户上传 + SQLite，运行时产物 |
+| **本地手测语料** | `testing/`（根） | **gitignore**（含真实发票 PII，勿入库） | 开发者本地手测，**不入库** |
+
+> **PII 约定**（全库统一）：真实发票扫描**一律不入库**；golden_set 只留 GT 答案 key + manifest +
+> 可由 `build_golden_set.py` 再生。`testing/` 曾违规跟踪 48 个 PDF，已于 2026-06-26 取消跟踪（Tier 0）。
+
+---
+
+## 五、`archive/`
+
+被取代但保留出处的源工件（不参与运行时），见 [archive/README.md](../archive/README.md)。

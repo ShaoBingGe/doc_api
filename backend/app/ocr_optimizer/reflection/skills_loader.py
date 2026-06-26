@@ -14,6 +14,14 @@ a `matches(diff)` predicate and a `render(diff, context)` method.
 
 Skills are intentionally NOT customer-facing — the YAML files live in the
 codebase, modified via PR by product/tech.
+
+⚠️ 术语消歧（"skill" 有两义，勿混）:
+  • 本模块的 `Skill`（"反思路由 / reflection skill"）= 内部反思能力，按 diff 的
+    edit_intent 路由到一段反思提示词。静态、PR 维护、不演化、不入库、无 api_definition_id。
+  • `service/skill_service.py` 的 `OcrSkill`（"技能库 / skill library"）= 面向客户/管理员的
+    可复用识别规则，存 DB（`ocr_optimizer/models.py`），有 `api_definition_id`（NULL=全局/非空=私有）。
+  两者代码层已可区分：本类是 `reflection/` 包里的裸 `Skill`，库的永远带 `Ocr` 前缀。
+  详见 docs/repository-structure.md「'skill' 的两义」。
 """
 
 from __future__ import annotations
