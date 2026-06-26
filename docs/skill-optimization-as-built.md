@@ -174,9 +174,11 @@ frontend/src/lib/api-client.ts     # OcrSkill 类型 + fetch/create/delete/attac
 - N 固定 **9**（总 12），未跑完整 §2.4-B 噪声扫描定肘点（扫描为开发期可选，未阻塞上线）。
 
 **进行中 / 延后**：
-- **P4** 迭代→技能晋升 🔶：**步骤①采收已落地**——`service/skill_promotion.py`（只读）把反思
-  `skill_feedback` 按 `(国家,字段)` 聚成晋升候选 + 跨租户计数。晋升门槛 = **跨租户 > 5 AND 管理员确认**
-  （golden_set 不回归作参考、不硬卡）。生产实跑 11 候选 / 0 够格（仅 1 租户）。步骤②③④（展示/确认/挂载）待做。当前全局技能库仍为空。
+- **P4** 迭代→技能晋升 🔶：**步骤①采收 + 步骤②后端端点已落地**——`service/skill_promotion.py`（只读）
+  把反思 `skill_feedback` 按 `(国家,字段)` 聚成候选 + 跨租户计数；`GET /api/v1/platform/skill-promotion/candidates`
+  （平台 admin 门）暴露之，生产端到端冒烟通过、无 token→401。门槛 = **管理员确认（唯一硬门）+ 跨租户>5
+  作自动推荐信号**（管理员可越级晋升低于阈值者；golden_set 不回归作参考、不硬卡）。生产 11 候选 / 0 推荐
+  （仅 1 租户）。步骤②前端 + ③④（确认写库/挂载）待做；技能正文来源（手写 vs LLM 起草）待定。当前全局技能库仍为空。
 - **P3** Slow/Meta epoch 更新（`slow_update` 受保护守护段 + `meta_skill` 元记忆）⏳。
 - **P5** 更深的技能 UX（val 分曲线、被拒 edit 展示、晋级状态、管理员全局库视图）⏳。
 

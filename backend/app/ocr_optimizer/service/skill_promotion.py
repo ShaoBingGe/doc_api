@@ -6,8 +6,9 @@
 
 **只读**：绝不写技能（优化器被硬禁写、晋升须管理员确认，见 ADR-001 P4）。
 
-晋升门槛（2026-06-26 拍板）：**跨租户覆盖 > 5  AND  管理员确认**。
-本模块只计算跨租户信号 + 标 `qualified`；真正写库是另一步管理员确认动作。
+晋升门槛（2026-06-26 拍板，含越级细则）：**管理员确认是唯一硬门**；**跨租户覆盖 > 5**
+作为「自动推荐」信号（`recommended`），管理员对低于阈值的候选也可**显式越级晋升**。
+本模块只计算信号 + 标 `recommended`；真正写库是另一步管理员确认动作。
 golden_set 不回归作为给管理员的**参考信息**展示，不作硬卡。
 
 粒度：起步按 `(国家, 字段)` 确定性分组（不调 LLM）。后续可在字段内再按技能主题聚类（留待增强）。
@@ -37,8 +38,8 @@ class PromotionCandidate:
     sample_feedback: list[str]  # 最多 3 条原文摘录（去噪截断）
 
     @property
-    def qualified(self) -> bool:
-        """是否满足「跨租户 > 5」自动够格门（仍需管理员确认才会写库）。"""
+    def recommended(self) -> bool:
+        """跨租户 > 5 → 系统「自动推荐」晋升（仅优先级信号；管理员可越级晋升低于阈值者）。"""
         return self.tenant_count > QUALIFY_MIN_TENANTS
 
     def to_dict(self) -> dict:
@@ -48,7 +49,7 @@ class PromotionCandidate:
             "occurrence_count": self.occurrence_count,
             "tenant_count": self.tenant_count,
             "api_count": self.api_count,
-            "qualified": self.qualified,
+            "recommended": self.recommended,
             "sample_feedback": self.sample_feedback,
         }
 

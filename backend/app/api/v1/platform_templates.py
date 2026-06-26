@@ -32,6 +32,29 @@ def list_country_templates() -> list[dict]:
     return golden_review.list_country_kinds()
 
 
+@router.get(
+    "/skill-promotion/candidates",
+    summary="技能晋升候选（采收反思 skill_feedback，只读）",
+)
+def list_skill_promotion_candidates(
+    country: str | None = Query(None, description="按国家过滤（如 JP / MY）；省略=全部"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """P4 步骤①：只读采收。把反思每轮在 `skill_feedback` 产出的「该字段应有什么技能」建议，
+    按 `(国家, 字段)` 聚成晋升候选 + 跨租户计数。`recommended`=跨租户>5（自动推荐信号，
+    **非硬门**——管理员可越级晋升低于阈值者）。**绝不写技能**；真正晋升是另一步管理员确认动作。
+    """
+    from app.ocr_optimizer.service import skill_promotion
+
+    cands = skill_promotion.find_promotion_candidates(db, country=country)
+    return {
+        "country": country,
+        "total": len(cands),
+        "recommended": sum(1 for c in cands if c.recommended),
+        "candidates": [c.to_dict() for c in cands],
+    }
+
+
 @router.get("/golden/{country}/seeds", summary="黄金种子 + 人工 GT")
 def list_golden_seeds(country: str) -> dict:
     return {"country": country.upper(), "seeds": golden_review.load_seeds(country)}

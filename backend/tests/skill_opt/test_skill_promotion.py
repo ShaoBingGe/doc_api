@@ -39,15 +39,16 @@ def test_tenant_count_is_distinct():
     assert c.occurrence_count == 3
 
 
-def test_qualified_threshold_strictly_greater_than_5():
-    # exactly 5 tenants → NOT qualified ("> 5")
+def test_recommended_threshold_strictly_greater_than_5():
+    # exactly 5 tenants → NOT auto-recommended ("> 5")
     rows5 = [_row("JP", f"t{i}", f"a{i}", "currency") for i in range(5)]
-    assert extract_candidates_from_rows(rows5)[0].qualified is False
-    # 6 tenants → qualified
+    assert extract_candidates_from_rows(rows5)[0].recommended is False
+    # 6 tenants → recommended
     rows6 = [_row("JP", f"t{i}", f"a{i}", "currency") for i in range(6)]
     c6 = extract_candidates_from_rows(rows6)[0]
     assert c6.tenant_count == 6
-    assert c6.qualified is True
+    assert c6.recommended is True
+    assert c6.to_dict()["recommended"] is True
     assert QUALIFY_MIN_TENANTS == 5
 
 
