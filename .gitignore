@@ -68,3 +68,6 @@ app/ocr_optimizer/eval/golden_set/*/_latest_eval.json
 Japan-inv/
 # 根级运行时残留（真实上传在 backend/static/uploads）
 /data/
+
+# 微软 SkillOpt 参考项目（第三方，仅供研究，勿入库）
+skillopt/
