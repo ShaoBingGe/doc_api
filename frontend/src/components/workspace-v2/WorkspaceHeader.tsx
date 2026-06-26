@@ -10,6 +10,7 @@ import {
   Loader2,
   GitBranch,
   Library,
+  BarChart3,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useWorkspaceStore } from '../../stores/workspace-store'
@@ -17,6 +18,7 @@ import { useNavigate } from 'react-router-dom'
 import { triggerOptimization } from '../../lib/api-client'
 import { toast } from '../../lib/toast'
 import SkillLibraryModal from './SkillLibraryModal'
+import SkillInsightsModal from './SkillInsightsModal'
 
 export type HeaderTab = 'fields' | 'rules' | 'stats' | 'optimize'
 
@@ -52,6 +54,7 @@ export default function WorkspaceHeader({
   const navigate = useNavigate()
   const [optimizing, setOptimizing] = useState(false)
   const [skillOpen, setSkillOpen] = useState(false)
+  const [insightsOpen, setInsightsOpen] = useState(false)
 
   // ── Sample-readiness gate (design v3) ────────────────────────────────────
   // Iteration requires N samples whose OCR result the customer marked as GT
@@ -206,6 +209,20 @@ export default function WorkspaceHeader({
       {/* Right: 技能库 + 开始优化 + 保存 + avatar */}
       <div className="flex items-center gap-2">
         <button
+          onClick={() => setInsightsOpen(true)}
+          disabled={isNewMode}
+          title="技能洞察：每字段轨迹 + 守护状态 + 已挂技能（只读）"
+          className={cn(
+            'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors',
+            isNewMode
+              ? 'bg-white/5 text-gray-500 cursor-not-allowed'
+              : 'bg-white/5 text-gray-300 hover:bg-white/10',
+          )}
+        >
+          <BarChart3 className="w-4 h-4" />
+          洞察
+        </button>
+        <button
           onClick={() => setSkillOpen(true)}
           disabled={isNewMode}
           title="技能库：管理可复用的识别规则（私有 / 全局）"
@@ -264,6 +281,12 @@ export default function WorkspaceHeader({
         apiDefinitionId={apiDefinitionId}
         open={skillOpen}
         onClose={() => setSkillOpen(false)}
+      />
+
+      <SkillInsightsModal
+        apiDefinitionId={apiDefinitionId}
+        open={insightsOpen}
+        onClose={() => setInsightsOpen(false)}
       />
     </header>
   )

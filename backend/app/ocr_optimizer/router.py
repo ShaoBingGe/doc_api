@@ -129,6 +129,21 @@ def get_version(
     return _version_to_detail(v)
 
 
+@router.get(
+    "/{api_def_id}/ocr-optimizer/skill-insights",
+    summary="技能/优化洞察（P5，只读）：每字段轨迹 + 守护 + 已挂技能",
+)
+def get_skill_insights(
+    api_def_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    """P5 显性化：最近一次 run 的每字段跨轮准确率轨迹（P1 留出分）、slow-update 守护状态
+    （P3）、active 版本各字段已挂技能名（P2/P4）。纯读。"""
+    from app.ocr_optimizer.service import skill_insights
+
+    return skill_insights.build_insights(db, api_def_id)
+
+
 @router.patch(
     "/{api_def_id}/ocr-optimizer/versions/{version_id}/activate",
     response_model=ActivateResponse,

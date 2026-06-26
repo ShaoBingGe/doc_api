@@ -340,6 +340,26 @@ export function attachOcrSkill(apiDefId: string, versionId: string, moduleKey: s
   )
 }
 
+// ── P5 技能/优化洞察（只读：每字段轨迹 + 守护 + 已挂技能） ──────────────────
+export interface SkillInsightField {
+  field: string
+  display_name: string
+  trajectory: number[]
+  guardian: { kind: 'pin' | 'caution'; note: string } | null
+  skills: string[]
+}
+export interface SkillInsights {
+  has_run: boolean
+  rounds: number
+  version: string | null
+  fields: SkillInsightField[]
+}
+export function fetchSkillInsights(apiDefId: string) {
+  return apiClient.get<SkillInsights>(
+    `/api/v1/api-definitions/${apiDefId}/ocr-optimizer/skill-insights`,
+  )
+}
+
 // ── Upload with annotations (image + JSON GT pair) ──────────────────────────
 
 export function uploadDocumentWithAnnotations(file: File, annotationsFile: File) {

@@ -186,8 +186,10 @@ frontend/src/lib/api-client.ts     # OcrSkill 类型 + fetch/create/delete/attac
   **前端已落地**：admin 控制台「技能晋升」tab（`pages/admin/SkillPromotion.tsx`）——候选列表 + 推荐徽标 +
   反思原文 + LLM 起草/编辑/晋升弹窗。**唯一剩余 = 步骤④ attach-UI**（把晋升的全局技能挂到字段 module 才渲染；
   后端基建已就绪，`SkillLibraryModal` 缺 attach-to-field 交互）。当前全局技能库仍为空（promote 未在线上触发）。
-- **P3** Slow/Meta epoch 更新（`slow_update` 受保护守护段 + `meta_skill` 元记忆）⏳。
-- **P5** 更深的技能 UX（val 分曲线、被拒 edit 展示、晋级状态、管理员全局库视图）⏳。
+- **P3** 🔶 `slow_update` 已接线（`SKILL_SLOW_UPDATE`，默认 OFF）：按每字段跨轮准确率轨迹确定性产出
+  受保护守护段（pin/caution），compose 时拼入、step 编辑碰不到；`meta_skill` 纯机制就绪未接线（待优化器产 typed edits）。
+- **P5** 🔶 技能洞察已上线（`GET .../ocr-optimizer/skill-insights` + 工作区「洞察」按钮 + `SkillInsightsModal`）：
+  每字段轨迹 + 守护徽标（复用 P3 `compute_guardians`）+ 已挂技能，一处显性；生产实跑验证。被拒 edit 展示待 meta 接线。
 
 ---
 

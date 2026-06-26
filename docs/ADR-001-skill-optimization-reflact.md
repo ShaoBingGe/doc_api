@@ -220,7 +220,12 @@ A 的全部 + 激活 `OcrSkill` 为 `(国家,字段)` 可训练技能（全局�
   显示已挂字段）→ `attach_skill_to_module` 写 `module.skill_ids` → composer 渲染（`SKILL_LIBRARY_RENDER` 已上线）。
   路由探测 401（已接线）。**P4 全链路打通：反思 skill_feedback → 候选 → LLM 起草/管理员确认 → 全局库 → 挂字段 → 注入识别。**
 
-### P5 — 让「技能」显性（UX，~1 周）　🔶 部分（技能库面板已上线；val 分曲线/被拒 edit/晋级视图待做）
+### P5 — 让「技能」显性（UX，~1 周）　🔶 大部已上线（技能库 + 晋升候选 + 技能洞察；被拒 edit 待 meta 接线）
+- [x] **技能洞察**（`GET .../ocr-optimizer/skill-insights` + 工作区「洞察」按钮 + `SkillInsightsModal`）：
+  每字段跨轮准确率轨迹（P1 留出分）+ slow-update 守护徽标（P3 · pin/caution，复用 `compute_guardians`）+
+  已挂技能名（P2/P4），一处显性。生产实跑验证（MY_invoice_Chinkin：total_tax_amount→pin、po/line_items→caution）。
+- [x] 技能库面板（P2）+ admin 晋升候选 tab（P4）已上线。
+- [ ] 被拒 edit 展示：待 meta_skill 接线（优化器产 typed edits）后补。
 - [ ] workspace「优化过程」面板增「技能」标签：展示每字段挂的技能、本轮 edit（含被拒+原因）、val 分曲线、晋级状态。
 - [ ] 平台管理员「全局技能库」视图（候选/已晋级/版本 diff）。
 
