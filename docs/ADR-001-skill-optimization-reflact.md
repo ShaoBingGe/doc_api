@@ -1,9 +1,13 @@
 # ADR-001: 引入 SkillOpt（ReflACT）「技能即可训练文档」纪律，重构 OCR 反思与技能优化
 
-**Status:** Proposed
+**Status:** Accepted —— **P0/P0'/P1/P2 已实现并上线**（2026-06-26，invoicase.cn）；P3/P4/P5 延后。
 **Date:** 2026-06-26
 **Deciders:** 项目负责人
 **参考:** Microsoft SkillOpt（`skillopt/SkillOpt`，arXiv:2605.23904）— *Executive Strategy for Self-Evolving Agent Skills*
+
+> 📌 **本文为决策口径（为何这么做）。线上「实际跑的是什么」以
+> [skill-optimization-as-built.md](./skill-optimization-as-built.md) 为单一事实源**
+> （含 4 个特性开关、噪声门 3+9=12、留出门、字段治理三层、技能库、代码地图、验证证据、部署 runbook）。
 
 ---
 
@@ -166,13 +170,16 @@ A 的全部 + 激活 `OcrSkill` 为 `(国家,字段)` 可训练技能（全局�
 ## Action Items（分阶段开发计划）
 
 > 原则：每期**独立可上线、可回退**，先纪律后资产，先私有后全局，先在线后离线。
+>
+> **实现进度（2026-06-26）：✅ P0' / P0 / P1 / P2 已落地并上线（4 个 `SKILL_*` flag 线上全开）；
+> ⏳ P3 / P4 / P5 延后。** 逐项落地见 [as-built 参考](./skill-optimization-as-built.md)。
 
-### P0 — 地基与对齐（~0.5 周）
+### P0 — 地基与对齐（~0.5 周）　✅ 已实现
 - [ ] 抽象 `RolloutScore{hard, soft, fail_reason}`：把 `OcrModuleIteration.per_sample_results` 规整成统一打分（hard=精确匹配率、soft=字段级部分分），作为后续所有门的输入。
 - [ ] 抽象类型化 `FieldEdit{op∈append/replace/delete, target, content, support_count, source_type}`，落到 `ocr_optimizer/skilltrain/types.py`（不动现有 models）。
 - [ ] 写 1 页《术语映射表》进 `docs/`（SkillOpt↔本项目），团队对齐。
 
-### P1 — 纪律嫁接到现有循环（最高杠杆，~1–1.5 周）  ← 建议先做、可独立上线
+### P1 — 纪律嫁接到现有循环（最高杠杆，~1–1.5 周）　✅ 已实现（`SKILL_HELDOUT_GATE`/`SKILL_NOISE_GATE`/`SKILL_EDIT_DISCIPLINE`）
 - [ ] **留出 Gate**：`evaluation/gate.py`——把已确认样本按 round 切 train/val（少样本走留一法）；候选版本**只有 val soft 分严格 > 当前才接受**，否则回退并把该 edit 入 rejected buffer。接到 `run_orchestrator` compose 之后、finalize 之前。
 - [ ] **编辑预算 / Clip / 自主 LR**：`optimize_module` 产出**类型化有界 edit** 而非整段重写；按支持度排序取 top-L（L 由「未达标严重度」自适应）。
 - [ ] **Minibatch 反思**：`reflect_on_diffs` 改为**按字段把多样本 diff 成组**反思（降噪），产出带 `support_count` 的 edit。
@@ -180,22 +187,22 @@ A 的全部 + 激活 `OcrSkill` 为 `(国家,字段)` 可训练技能（全局�
 - [ ] **Rejected-edit buffer**：新表或 `OcrOptimizationRun.metrics` 内挂；reflect/clip 提案前过滤已拒。
 - [ ] 回归：MY/JP golden_set 跑分**不降**；country-lock 字段仍被排除/钉死。
 
-### P2 — 激活一等技能库（~1.5–2 周）
+### P2 — 激活一等技能库（~1.5–2 周）　✅ 已实现（`SKILL_LIBRARY_RENDER`；全局库待 P4 填充）
 - [ ] 用 `OcrSkill`：技能 = `(country, field)` 维度的 `content`（正文规则）+ 受保护慢更新段；`api_definition_id` NULL=全局库 / 非空=私有覆盖。
 - [ ] composer 渲染：module body = 「全局技能 ⊕ 私有覆盖 ⊕ 本轮 edit」，技能引用而非内联复制（治 prompt 膨胀）。
 - [ ] 接活 501 端点：列出/绑定/编辑技能 + `OcrModule.skill_ids` 真正生效。
 - [ ] P1 的 edit 改为作用在「私有技能」上；私有技能成为可训练产物。
 
-### P3 — Slow / Meta epoch 更新（~1 周）
+### P3 — Slow / Meta epoch 更新（~1 周）　⏳ 延后
 - [ ] `slow_update`：迭代收尾比较相邻版本同样本表现，写守护段（step 级不可改）。
 - [ ] `meta_skill`：优化器侧元记忆（怎么提/合/排 edit），跨轮复用、不入技能正文。
 
-### P4 — 离线 Sleep 固化进全局库（~1.5 周）
+### P4 — 离线 Sleep 固化进全局库（~1.5 周）　⏳ 延后（需 golden_set 门 + 管理员确认策略）
 - [ ] 夜间作业：扫同国家各 API 的**已确认 GT**，蒸馏候选技能 edit（带跨租户支持度）。
 - [ ] **golden_set 留出门**：候选只有在该国 golden_set 上严格不降才晋级进全局 `OcrSkill`（NULL）。
 - [ ] 与「字段晋升进国家模板」的三与门（跨租户覆盖 + 真人确认 + 频率）共用一套晋级策略；晋级走版本化 + 管理员确认（不全自动改库）。
 
-### P5 — 让「技能」显性（UX，~1 周）
+### P5 — 让「技能」显性（UX，~1 周）　🔶 部分（技能库面板已上线；val 分曲线/被拒 edit/晋级视图待做）
 - [ ] workspace「优化过程」面板增「技能」标签：展示每字段挂的技能、本轮 edit（含被拒+原因）、val 分曲线、晋级状态。
 - [ ] 平台管理员「全局技能库」视图（候选/已晋级/版本 diff）。
 

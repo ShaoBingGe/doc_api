@@ -2,7 +2,11 @@
 
 > 配套 [ADR-001](./ADR-001-skill-optimization-reflact.md)。决策已定：采用 Option B；
 > 迭代启动前要求客户补传「噪声样本」；用 `Japan-inv/` 设计前后测试。本文给出三者的
-> 完整方案。**当前仅规划，先不动代码。**
+> 完整方案。
+>
+> ⚠️ **状态更新（2026-06-26）：本文为规划口径；P0'/P0/P1/P2 已实现并上线。
+> 线上实际实现以 [skill-optimization-as-built.md](./skill-optimization-as-built.md) 为准。**
+> （决策 §四已落地：N=9 / `(国家,字段)` 粒度 / soft+滚动留一；噪声 GT 最终用「自动基线不复核」。）
 
 ---
 

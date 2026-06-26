@@ -3,6 +3,11 @@
 > 接管本项目前请读完本文。Doc API 是一个**文档结构化提取平台**：从一份国家模板出发，
 > 用 prompt 自迭代不断打磨「字段识别规则」，把任意票据/文档变成稳定可调用的提取 API。
 > 本文给出**业务架构 + 技术架构 + 工程红线**，违反红线即视为 bug。
+>
+> 📌 **技能优化 / 留出门 / 噪声门 / 字段治理 / 技能库**（ReflACT/Option B，2026-06 上线）：
+> 决策见 [docs/ADR-001](./docs/ADR-001-skill-optimization-reflact.md)，**线上实际实现以
+> [docs/skill-optimization-as-built.md](./docs/skill-optimization-as-built.md) 为单一事实源**
+> （4 个 `SKILL_*` flag、噪声门 3+9=12、代码地图、部署 runbook）。
 
 ---
 
