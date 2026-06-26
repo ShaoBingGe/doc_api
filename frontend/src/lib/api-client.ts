@@ -301,10 +301,43 @@ export function manualPatchVersion(
   )
 }
 
-// ── Skills (TODO placeholders — backend returns 501) ────────────────────────
+// ── Skills (OcrSkill library — P2; private + global) ────────────────────────
+
+export interface OcrSkill {
+  id: string
+  api_definition_id: string | null   // null = global library
+  name: string
+  description: string
+  content: string
+  status: string
+  created_at: string
+}
 
 export function fetchOcrSkills(apiDefId: string) {
-  return apiClient.get(`/api/v1/api-definitions/${apiDefId}/ocr-optimizer/skills`)
+  return apiClient.get<OcrSkill[]>(`/api/v1/api-definitions/${apiDefId}/ocr-optimizer/skills`)
+}
+
+/** api_definition_id: null → create a GLOBAL skill; set → private to that API. */
+export function createOcrSkill(
+  apiDefId: string,
+  data: { name: string; content: string; description?: string; api_definition_id?: string | null },
+) {
+  return apiClient.post<OcrSkill>(`/api/v1/api-definitions/${apiDefId}/ocr-optimizer/skills`, {
+    name: data.name,
+    content: data.content,
+    description: data.description ?? '',
+    api_definition_id: data.api_definition_id ?? null,
+  })
+}
+
+export function deleteOcrSkill(apiDefId: string, skillId: string) {
+  return apiClient.delete(`/api/v1/api-definitions/${apiDefId}/ocr-optimizer/skills/${skillId}`)
+}
+
+export function attachOcrSkill(apiDefId: string, versionId: string, moduleKey: string, skillId: string) {
+  return apiClient.post(
+    `/api/v1/api-definitions/${apiDefId}/ocr-optimizer/versions/${versionId}/modules/${moduleKey}/skills/${skillId}`,
+  )
 }
 
 // ── Upload with annotations (image + JSON GT pair) ──────────────────────────
