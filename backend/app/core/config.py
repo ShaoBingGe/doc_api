@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     # modules (defect, not one-off lapse) and clip to the top-L by severity
     # (learning-rate). Default OFF → all under-target modules optimized.
     SKILL_EDIT_DISCIPLINE: bool = False
+    # Render attached OcrSkill content into composed prompts (P2). Default OFF →
+    # skills are stored/managed but not injected (composer unchanged).
+    SKILL_LIBRARY_RENDER: bool = False
 
     # ── Security ──────────────────────────────────────────────────────────
     SECRET_KEY: str = "CHANGE-ME-IN-PRODUCTION-32-bytes!!"

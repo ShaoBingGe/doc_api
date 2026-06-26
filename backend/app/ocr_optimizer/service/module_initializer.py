@@ -169,8 +169,10 @@ def init_version(
         # composer skips the country section (composed_prompt still well-formed).
         # Customer per-field overrides still apply (returns "" when none).
         _cg = field_constraints.enforce(db, api_definition_id, modules, None) or None
+        from . import skill_render
+        _sk = skill_render.resolve(db, api_definition_id, modules)
         version.composed_schema = assemble_schema(modules)
-        version.composed_prompt = assemble_prompt(modules, country_global=_cg)
+        version.composed_prompt = assemble_prompt(modules, country_global=_cg, skill_content=_sk)
     except ValueError as exc:
         raise ValidationError(f"Schema composition failed: {exc}")
 

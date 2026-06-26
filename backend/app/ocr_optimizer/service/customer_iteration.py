@@ -1987,10 +1987,13 @@ def _fork_api_definition(
         _cg = field_constraints.enforce(
             db, new_version.api_definition_id, new_modules, new_version.country_global_text,
         )
+        from app.ocr_optimizer.service import skill_render
+        _sk = skill_render.resolve(db, new_version.api_definition_id, new_modules)
         new_version.composed_schema = composer.assemble_schema(new_modules)
         new_version.composed_prompt = composer.assemble_prompt(
             new_modules,
             country_global=_cg,
+            skill_content=_sk,
         )
     except ValueError as exc:
         raise ValidationError(f"Compose failed for forked version: {exc}") from exc

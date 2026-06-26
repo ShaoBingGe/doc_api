@@ -361,10 +361,13 @@ def manual_patch(
         _cg = field_constraints.enforce(
             db, api_definition_id, new_modules, new_version.country_global_text,
         )
+        from app.ocr_optimizer.service import skill_render
+        _sk = skill_render.resolve(db, api_definition_id, new_modules)
         new_version.composed_schema = composer.assemble_schema(new_modules)
         new_version.composed_prompt = composer.assemble_prompt(
             new_modules,
             country_global=_cg,
+            skill_content=_sk,
         )
     except ValueError as exc:
         raise ValidationError(f"Compose failed for manual patch: {exc}") from exc
@@ -1068,10 +1071,13 @@ def _run_one_round(
         _cg = field_constraints.enforce(
             db, run.api_definition_id, new_modules, next_version.country_global_text,
         )
+        from app.ocr_optimizer.service import skill_render
+        _sk = skill_render.resolve(db, run.api_definition_id, new_modules)
         next_version.composed_schema = composer.assemble_schema(new_modules)
         next_version.composed_prompt = composer.assemble_prompt(
             new_modules,
             country_global=_cg,
+            skill_content=_sk,
         )
     except ValueError as exc:
         logger.warning("Compose failed for round %d, reusing current version: %s",

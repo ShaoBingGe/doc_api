@@ -75,10 +75,20 @@ GLOBAL_SELF_CHECK = """
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def assemble_prompt(modules: Iterable, *, country_global: str | None) -> str:
+def assemble_prompt(
+    modules: Iterable,
+    *,
+    country_global: str | None,
+    skill_content: dict[str, str] | None = None,
+) -> str:
     """
     Concatenate global frame + country-wide rules + each module's ocr_prompt
     into a single composed prompt string.
+
+    `skill_content` (ADR-001 P2, optional): {module_key: rendered skill text}.
+    When provided, the attached skills' content is appended under each module's
+    body as a "# 技能库补充" block. Default None → unchanged (skill rendering is
+    flag-gated upstream by the caller).
 
     `modules` should already be sorted by order_index (the caller's
     responsibility, or rely on the relationship's order_by).
@@ -120,6 +130,11 @@ def assemble_prompt(modules: Iterable, *, country_global: str | None) -> str:
             ident_bits.append(f"类型 {ftype}")
         ident_line = ("- " + " · ".join(ident_bits) + "\n") if ident_bits else ""
         body = _render_module_body(m)
+        # P2 — append attached-skill content (reusable prompt fragments) under
+        # the module body. Empty/absent → no change.
+        sk = (skill_content or {}).get(key, "") if key else ""
+        if sk and sk.strip():
+            body = f"{body}\n\n{_SKILL_BLOCK_HEADER}\n{sk.strip()}"
         body_parts.append(f"## {i}. {name}\n{ident_line}{body}\n")
 
     schema = assemble_schema(mod_list)
@@ -297,6 +312,7 @@ def _render_module_body(m) -> str:
 
 
 _FEEDBACK_HEADER = "# 客户反馈补充"
+_SKILL_BLOCK_HEADER = "# 技能库补充（可复用规则）"
 
 
 def _fold_feedback_blocks(prompt: str) -> str:
