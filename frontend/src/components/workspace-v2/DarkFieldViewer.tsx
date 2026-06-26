@@ -20,6 +20,7 @@ import {
   Lock,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
+import NoiseSampleModal from './NoiseSampleModal'
 import { useWorkspaceStore, type Annotation, type CustomizeJobStatus, type FieldEditDraft, type ProcessingResult } from '../../stores/workspace-store'
 import { toast } from '../../lib/toast'
 import apiClient from '../../lib/api-client'
@@ -1197,6 +1198,7 @@ function WaitingForSamplesBanner({
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploads, setUploads] = useState<PerFileUpload[]>([])
+  const [noiseOpen, setNoiseOpen] = useState(false)
 
   // Phase 19 single-workspace model: there is no separate "fork URL" to
   // navigate to. Banner state is driven purely by job.status now —
@@ -1214,11 +1216,13 @@ function WaitingForSamplesBanner({
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0" />
             <span className="text-sm text-amber-200 font-medium">
-              {remaining > 0
-                ? (required > 3
-                    ? `还需 ${remaining} 个多样化样本（共 ${required}：3 锚点 + ${required - 3} 噪声）即可启动迭代`
-                    : `还需 ${remaining} 个已审视样本即可启动反思 + 优化`)
-                : '样本已就绪，反思 + 3 轮优化即将自动启动'}
+              {remaining <= 0
+                ? '样本已就绪，反思 + 3 轮优化即将自动启动'
+                : required > 3
+                  ? (confirmed >= 3
+                      ? `即将启动自动迭代优化，请额外上传 ${remaining} 份多样化噪声样本`
+                      : `请先上传并审视 3 份代表样本（当前 ${confirmed}/3），再补 ${required - 3} 份噪声样本`)
+                  : `还需 ${remaining} 个已审视样本即可启动反思 + 优化`}
             </span>
           </div>
           <button
@@ -1244,10 +1248,12 @@ function WaitingForSamplesBanner({
         <div className="text-[11px] text-amber-100/60 leading-relaxed">
           {required > 3 ? (
             <>
-              启动迭代需要 <b>{required} 个</b>已审视样本：<b>3 个锚点</b>（你精选的代表样本）
+              启动迭代需要 <b>{required} 个</b>样本：<b>3 个锚点</b>（你精选并审视的代表样本）
               + <b>{required - 3} 个多样化「噪声」样本</b>（不同开票方/版式/税率/扫描质量，越随机越好）。
-              这些噪声样本作为<b>留出验证集</b>，让优化结果能泛化、不过拟合你那 3 张。
-              上传后逐一标记"已审视"即可；凑满 {required} 个，反思 + 3 轮优化自动启动并直接激活在本工作区。
+              噪声样本作为<b>留出验证集</b>防止过拟合你那 3 张；系统会<b>自动识别并以当前结果为基线，无需逐张复核</b>。
+              {confirmed >= 3
+                ? '点下方按钮一次性批量上传这 ' + (required - 3) + ' 份噪声样本，上传完即自动启动 3 轮迭代。'
+                : '请先把 3 份锚点样本标记为"已审视"。'}
             </>
           ) : (
             <>
@@ -1258,7 +1264,16 @@ function WaitingForSamplesBanner({
           )}
         </div>
         <div className="flex gap-2">
-          {remaining > 0 ? (
+          {remaining > 0 && required > 3 && confirmed >= 3 ? (
+            // Noise-gate: anchors confirmed → batch-upload exactly `remaining`
+            // diverse noise samples (auto-OCR + baseline GT, no per-sample review).
+            <button
+              onClick={() => setNoiseOpen(true)}
+              className="flex-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded transition-colors font-medium"
+            >
+              批量上传 {remaining} 份噪声样本 →
+            </button>
+          ) : remaining > 0 ? (
             <button
               onClick={() => {
                 // Scroll the top sample-thumbnail column into view; document-list lives in Column A
@@ -1317,6 +1332,11 @@ function WaitingForSamplesBanner({
             清理变更标识
           </button>
         </div>
+        <NoiseSampleModal
+          open={noiseOpen}
+          onClose={() => setNoiseOpen(false)}
+          noiseCount={remaining}
+        />
       </div>
     )
   }
