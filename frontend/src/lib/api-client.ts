@@ -507,3 +507,48 @@ export function evaluateGolden(country: string, opts: { processor?: string; limi
 export function fetchGoldenEvaluation(country: string) {
   return apiClient.get<GoldenEvaluation>(`/api/v1/platform/golden/${country}/evaluation`)
 }
+
+// ── P4 技能晋升（采收反思 skill_feedback → 管理员确认晋升进全局技能库） ──────────
+export interface SkillCandidate {
+  country: string
+  field: string
+  occurrence_count: number
+  tenant_count: number
+  api_count: number
+  recommended: boolean // 跨租户>5 自动推荐（非硬门；管理员可越级晋升）
+  sample_feedback: string[]
+}
+export interface SkillDraft {
+  name: string
+  content: string
+  description: string
+}
+export function fetchSkillPromotionCandidates(country?: string) {
+  return apiClient.get<{
+    country: string | null
+    total: number
+    recommended: number
+    candidates: SkillCandidate[]
+  }>(`/api/v1/platform/skill-promotion/candidates`, {
+    params: country ? { country } : {},
+  })
+}
+export function draftSkillPromotion(body: {
+  country: string
+  field: string
+  sample_feedback: string[]
+}) {
+  return apiClient.post<SkillDraft>(`/api/v1/platform/skill-promotion/draft`, body)
+}
+export function promoteSkill(body: {
+  country: string
+  field: string
+  name: string
+  content: string
+  description?: string
+}) {
+  return apiClient.post<{ id: string; name: string; scope: string; status: string }>(
+    `/api/v1/platform/skill-promotion/promote`,
+    body,
+  )
+}
