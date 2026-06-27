@@ -177,6 +177,10 @@ frontend/src/lib/api-client.ts     # OcrSkill 类型 + fetch/create/delete/attac
 - **P4** 迭代→技能晋升 ✅ 全链路打通：采收 → 候选(admin tab) → LLM 起草/管理员编辑确认 → 写全局库 →
   `SkillLibraryModal`「挂到字段」(attach→`module.skill_ids`) → composer 渲染注入识别。
   门槛 = 管理员确认(硬门) + 跨租户>5 自动推荐(可越级)。当前全局库仍为空(线上未实际 promote)。
+  **⚠️ 关键修复(attach 静默失效)**:抽取用静态 `composed_prompt`，attach 仅改 `skill_ids` 不重组 →
+  挂的技能不进模型。已修:`attach_skill_to_module` 后调 `recompose_version_prompt` 重组（复用 compose seam）。
+  回归单测 + 生产 E2E 验证（JP_invoice_test1 挂「日元金额取整」→ total_amount，prompt 真渲染出技能块）。
+  **唯一线上未跑的链节 = promote 写全局库**（避免污染策展库；draft 已冒烟、promote 由测试保证）。
   〔以下为该项历史细节，保留备查〕**步骤①采收 + 步骤②后端端点已落地**——`service/skill_promotion.py`（只读）
   把反思 `skill_feedback` 按 `(国家,字段)` 聚成候选 + 跨租户计数；`GET /api/v1/platform/skill-promotion/candidates`
   （平台 admin 门）暴露之，生产端到端冒烟通过、无 token→401。门槛 = **管理员确认（唯一硬门）+ 跨租户>5
