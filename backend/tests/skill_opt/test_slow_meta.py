@@ -28,10 +28,26 @@ def test_caution_when_regressed_from_peak():
     assert "峰值 100%" in g[0].note and "末 50%" in g[0].note
 
 
-def test_caution_when_volatile_swing():
-    # ends below target, big swing, but did not regress from peak at the very end
-    g = compute_guardians({"buyer": [0.2, 0.6, 0.6]})  # swing 0.4 >= 0.34
-    assert g and g[0].kind == "caution"
+def test_no_caution_for_low_peak_field():
+    # never got above 50% → a drop to 0 is noise, not signal
+    assert compute_guardians({"junk": [0.3, 0.3, 0.0]}) == []
+
+
+def test_no_caution_for_small_drop():
+    # was good (peak 0.8) but only dipped 0.1 (< 0.2) → not flagged
+    assert compute_guardians({"x": [0.8, 0.8, 0.7]}) == []
+
+
+def test_cautions_capped_and_sorted_by_drop():
+    # a bad last round drops 10 good fields to 0; only the worst CAUTION_CAP kept
+    from app.ocr_optimizer.skilltrain.slow_update import CAUTION_CAP
+
+    trajs = {f"f{i}": [0.5 + i * 0.05, 0.0] for i in range(10)}  # peaks 0.5..0.95
+    g = compute_guardians(trajs)
+    assert len(g) == CAUTION_CAP
+    # highest-peak (biggest drop) field must be present; smallest-drop excluded
+    fields = {x.field for x in g}
+    assert "f9" in fields and "f0" not in fields
 
 
 def test_no_guardian_for_steady_improvement_below_target():
