@@ -115,4 +115,34 @@ def attach_skill_to_module(
         flag_modified(mod, "skill_ids")
         db.commit()
         db.refresh(mod)
+        # CRITICAL: extraction uses the STATIC OcrPromptVersion.composed_prompt.
+        # Appending to skill_ids alone does nothing until the version's prompt is
+        # re-composed with the now-attached skill rendered in. Without this,
+        # "attach to field" is a silent no-op. (skill_render is flag-gated by
+        # SKILL_LIBRARY_RENDER; off → recompose is a no-op delta.)
+        recompose_version_prompt(db, version_id)
     return mod
+
+
+def recompose_version_prompt(db: Session, version_id: uuid.UUID) -> None:
+    """Re-render a version's `composed_prompt`/`composed_schema` from its current
+    modules (so newly attached/changed skills reach the model). Mirrors the
+    run_orchestrator compose seam: customer constraints → skill render → assemble.
+    Best-effort: a compose error leaves the prior prompt intact."""
+    from ..models import OcrPromptVersion
+    from . import composer, field_constraints, skill_render
+
+    v = db.get(OcrPromptVersion, version_id)
+    if v is None:
+        return
+    mods = list(v.modules)
+    try:
+        cg = field_constraints.enforce(db, v.api_definition_id, mods, v.country_global_text)
+        sk = skill_render.resolve(db, v.api_definition_id, mods)
+        v.composed_schema = composer.assemble_schema(mods)
+        v.composed_prompt = composer.assemble_prompt(
+            mods, country_global=cg, skill_content=sk
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001 — never break attach on a compose hiccup
+        db.rollback()
