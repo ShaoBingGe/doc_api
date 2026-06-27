@@ -48,10 +48,27 @@ def list_skill_promotion_candidates(
     from app.ocr_optimizer.service import skill_promotion
 
     cands = skill_promotion.find_promotion_candidates(db, country=country)
+
+    # golden_set 参考分（缓存、零 OCR）：晋升的「不回归」参考，不作硬卡。
+    golden_reference = None
+    if country:
+        try:
+            ev = golden_review.load_cached_eval(country)
+            summ = (ev or {}).get("summary") or {}
+            if summ.get("overall_accuracy") is not None:
+                golden_reference = {
+                    "overall_accuracy": summ.get("overall_accuracy"),
+                    "seeds": summ.get("seeds"),
+                    "generated_at": (ev or {}).get("generated_at"),
+                }
+        except Exception:  # noqa: BLE001 — advisory only, never break the list
+            golden_reference = None
+
     return {
         "country": country,
         "total": len(cands),
         "recommended": sum(1 for c in cands if c.recommended),
+        "golden_reference": golden_reference,
         "candidates": [c.to_dict() for c in cands],
     }
 

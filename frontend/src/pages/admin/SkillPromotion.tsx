@@ -17,6 +17,7 @@ import {
   type CountryKind,
   type SkillCandidate,
   type SkillDraft,
+  type GoldenReference,
 } from '../../lib/api-client'
 import { toast } from '../../lib/toast'
 
@@ -27,6 +28,7 @@ export default function SkillPromotion() {
   const [country, setCountry] = useState<string>('')
   const [candidates, setCandidates] = useState<SkillCandidate[]>([])
   const [recommended, setRecommended] = useState(0)
+  const [golden, setGolden] = useState<GoldenReference | null>(null)
   const [loading, setLoading] = useState(true)
   const [promoteFor, setPromoteFor] = useState<SkillCandidate | null>(null)
 
@@ -50,6 +52,7 @@ export default function SkillPromotion() {
       .then(({ data }) => {
         setCandidates(data.candidates)
         setRecommended(data.recommended)
+        setGolden(data.golden_reference)
       })
       .catch(() => toast.error('加载晋升候选失败'))
       .finally(() => setLoading(false))
@@ -105,8 +108,16 @@ export default function SkillPromotion() {
       </div>
 
       {!loading && candidates.length > 0 && (
-        <div className="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-4 py-2">
-          {country}：{candidates.length} 个候选，其中 <b className="text-emerald-600">{recommended}</b> 个达「推荐」阈值（跨租户&gt;5）。
+        <div className="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-4 py-2 flex items-center gap-4 flex-wrap">
+          <span>
+            {country}：{candidates.length} 个候选，其中 <b className="text-emerald-600">{recommended}</b> 个达「推荐」阈值（跨租户&gt;5）。
+          </span>
+          {golden && (
+            <span className="text-gray-400" title={golden.generated_at ? `评测于 ${golden.generated_at.replace('T', ' ').slice(0, 19)}` : undefined}>
+              · golden 参考准确率 <b className="text-indigo-600">{Math.round(golden.overall_accuracy * 100)}%</b>
+              {typeof golden.seeds === 'number' ? `（${golden.seeds} 篇）` : ''}（晋升「不回归」参考，不卡）
+            </span>
+          )}
         </div>
       )}
 

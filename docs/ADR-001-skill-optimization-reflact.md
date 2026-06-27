@@ -209,7 +209,8 @@ A 的全部 + 激活 `OcrSkill` 为 `(国家,字段)` 可训练技能（全局�
   `(国家,字段)` 聚成候选 + 跨租户计数 + `recommended=tenant>5`。纯函数单测 7 绿；生产实跑 11 候选
   （4 JP / 7 MY），1 租户故 0 推荐（符合预期）。**绝不写技能。**
 - [x] **步骤②后端（只读端点）**：`GET /api/v1/platform/skill-promotion/candidates?country=`（平台 admin 门）。
-  生产端到端冒烟通过（登录→4/7 候选），无 token→401。golden 参考分待接。
+  生产端到端冒烟通过（登录→4/7 候选），无 token→401。**golden 参考分已接**（响应含 `golden_reference`：
+  该国缓存 golden 整体准确率 + 篇数，作晋升「不回归」参考、不硬卡；MY 实测 37%/10 篇）。
 - [x] **步骤③后端（起草 + 写库）**：技能正文来源拍板 = **LLM 起草 + 管理员编辑确认**。
   `POST .../skill-promotion/draft`（qwen-plus 境内合规起草 `{name,content,description}`，**不写库**）+
   `POST .../skill-promotion/promote`（管理员确认 → `create_skill(api_def_id=NULL)` 写**全局**库）。

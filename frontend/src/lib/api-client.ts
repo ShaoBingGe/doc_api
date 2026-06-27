@@ -543,11 +543,17 @@ export interface SkillDraft {
   content: string
   description: string
 }
+export interface GoldenReference {
+  overall_accuracy: number
+  seeds?: number
+  generated_at?: string
+}
 export function fetchSkillPromotionCandidates(country?: string) {
   return apiClient.get<{
     country: string | null
     total: number
     recommended: number
+    golden_reference: GoldenReference | null
     candidates: SkillCandidate[]
   }>(`/api/v1/platform/skill-promotion/candidates`, {
     params: country ? { country } : {},
