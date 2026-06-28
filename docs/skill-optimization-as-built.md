@@ -192,7 +192,13 @@ frontend/src/lib/api-client.ts     # OcrSkill 类型 + fetch/create/delete/attac
   反思原文 + LLM 起草/编辑/晋升弹窗。**唯一剩余 = 步骤④ attach-UI**（把晋升的全局技能挂到字段 module 才渲染；
   后端基建已就绪，`SkillLibraryModal` 缺 attach-to-field 交互）。当前全局技能库仍为空（promote 未在线上触发）。
 - **P3** 🔶 `slow_update` 已接线（`SKILL_SLOW_UPDATE`，默认 OFF）：按每字段跨轮准确率轨迹确定性产出
-  受保护守护段（pin/caution），compose 时拼入、step 编辑碰不到；`meta_skill` 纯机制就绪未接线（待优化器产 typed edits）。
+  受保护守护段（pin/caution），compose 时拼入、step 编辑碰不到；**`meta_skill` 已接线**（经 ADR-002：
+  优化器改产 typed edits → accept/reject op 累计进 `run.metrics.meta_memory` → `render_meta_hint` 注入下轮
+  optimize prompt，flag `SKILL_META_MEMORY` 门控）。
+- **ADR-002 typed-edit 优化器** 🔶（flag `SKILL_TYPED_EDITS` 默认 OFF）：优化器产类型化有界 edit
+  （append/replace/delete）演化每字段「规则段」`OcrModule.rule_edits_text`、**正文 `ocr_prompt` 冻结**，
+  经 filter(被拒缓冲)→aggregate→clip→apply→verify。整轮集成测试通过（零 token）。详见
+  [ADR-002](./ADR-002-typed-edits-meta-skill.md)；真实 OCR 灰度待 greenlight。
 - **P5** 🔶 技能洞察已上线（`GET .../ocr-optimizer/skill-insights` + 工作区「洞察」按钮 + `SkillInsightsModal`）：
   每字段轨迹 + 守护徽标（复用 P3 `compute_guardians`）+ 已挂技能，一处显性；生产实跑验证。被拒 edit 展示待 meta 接线。
 

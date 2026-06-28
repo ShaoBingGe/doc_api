@@ -1,9 +1,19 @@
 # ADR-002: 优化器改产「类型化有界编辑」(typed FieldEdit) — 接通 meta_skill 与完整 ReflACT 纪律
 
-**Status:** Proposed（开发计划，待批准后实施）
+**Status:** **Accepted —— P-A/P-B/P-D 已实现（flag `SKILL_TYPED_EDITS`/`SKILL_META_MEMORY` 默认 OFF）**；P-C 大部被冻结正文架构吸收；P-E 真实灰度待监督执行。
 **Date:** 2026-06-28
 **Deciders:** 项目负责人
 **前置:** [ADR-001](./ADR-001-skill-optimization-reflact.md)（P1 纪律 / P3 meta_skill）、[as-built](./skill-optimization-as-built.md)
+
+> 📌 **实现进度（2026-06-28）**：决策按我的判断落地——规则段载体用新增 `OcrModule.rule_edits_text` 列、
+> accept/reject 字段集合粒度。已分阶段实现并 flag-gated（默认 OFF，OFF 路径字节不变）：
+> - **P-A** 契约：`ModuleOptimizerOutput.edits` + flag-on typed 指令。✅
+> - **P-B.1** 载体：`rule_edits_text` 列（prod 已 ALTER）+ composer 渲染规则段。✅
+> - **P-B.2** 应用链：轮循环 `build_rule_update`（filter→aggregate→clip→apply）→ 规则段（正文冻结）+ 被拒缓冲跨轮持久。✅
+> - **P-D** meta：accepted/rejected op → `run.metrics.meta_memory`；`render_meta_hint` 前置进 optimize prompt（`SKILL_META_MEMORY` 门控）。✅
+> - **P-C** 缺陷/失误：被拒缓冲已做；`kind` 已捕获并入 meta；**显式 lapse→附录路由延后**（典型场景已被「typed 模式正文冻结、只演化规则段」吸收）。
+> - **P-E** 真实灰度：**整轮集成测试已通过（零 token：mock OCR/optimizer/verify，证明 edits→规则段+meta 端到端）**；真实 OCR 灰度待你 greenlight（开全局 flag + 烧 token）。
+> - 验证：typed 相关 ~24 单测/集成（含整轮）+ 全量 258 passed。两 flag 默认 OFF、prod 已部署。
 
 ---
 
