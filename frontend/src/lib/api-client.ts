@@ -306,6 +306,7 @@ export function manualPatchVersion(
 export interface OcrSkill {
   id: string
   api_definition_id: string | null   // null = global library
+  country: string | null             // global skills are country-scoped (e.g. "JP")
   name: string
   description: string
   content: string

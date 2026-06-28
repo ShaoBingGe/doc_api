@@ -113,6 +113,7 @@ def promote_skill(
         description=body.description or f"P4 晋升自 {body.country}/{body.field}",
         api_def_id=None,
         created_by=getattr(user, "id", None),
+        country=body.country,  # 全局技能按国家隔离
     )
     return {
         "id": str(sk.id),

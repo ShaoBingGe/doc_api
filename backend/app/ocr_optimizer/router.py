@@ -308,6 +308,9 @@ def create_skill(
     sk = skill_service.create_skill(
         db, name=body.name, content=body.content, description=body.description,
         api_def_id=body.api_definition_id,
+        # Country-scope: derive from the API whose library this was created in, so
+        # a global skill made from a JP API is only referenceable by JP APIs.
+        country=skill_service._api_country(db, api_def_id),
     )
     return OcrSkillResponse.model_validate(sk)
 

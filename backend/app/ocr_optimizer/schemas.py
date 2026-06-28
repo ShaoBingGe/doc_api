@@ -228,6 +228,7 @@ class ManualPatchRequest(BaseModel):
 class OcrSkillResponse(BaseModel):
     id: uuid.UUID
     api_definition_id: uuid.UUID | None = None
+    country: str | None = None   # global skills are country-scoped (e.g. "JP")
     name: str
     description: str
     content: str

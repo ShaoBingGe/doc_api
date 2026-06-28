@@ -359,10 +359,14 @@ class OcrSkill(UUIDMixin, Base):
         ),
     )
 
-    # NULL = global library shared across all APIs; non-null = private to that API.
+    # NULL = global library; non-null = private to that API.
     api_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         nullable=True, index=True
     )
+    # Country scope for GLOBAL skills (e.g. "JP"): a global skill is referenceable
+    # only by APIs of the same country. NULL = universal (cross-country) global,
+    # or N/A for private skills. (Private skills are already scoped by api_definition_id.)
+    country: Mapped[Optional[str]] = mapped_column(String(8), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # Prompt fragment to inject when a module has this skill attached.

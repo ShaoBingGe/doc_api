@@ -31,13 +31,33 @@ from app.core.exceptions import NotFoundError, ValidationError
 from ..models import OcrSkill, SkillStatus
 
 
+def _api_country(db: Session, api_def_id: uuid.UUID | None) -> str | None:
+    """The API's country (config.source_country), for country-scoping globals."""
+    if api_def_id is None:
+        return None
+    from app.models.api_definition import ApiDefinition
+
+    api = db.get(ApiDefinition, api_def_id)
+    cfg = (api.config or {}) if api is not None else {}
+    c = cfg.get("source_country") if isinstance(cfg, dict) else None
+    return str(c) if c else None
+
+
 def list_skills(db: Session, api_def_id: uuid.UUID | None) -> list[OcrSkill]:
-    """Active skills available to an API = its PRIVATE skills + all GLOBAL ones.
-    Pass None to list only the global library."""
+    """Active skills referenceable by an API = its PRIVATE skills + the GLOBAL
+    skills of its COUNTRY (plus country-less universal globals). A JP global skill
+    is NOT referenceable by a MY API. Pass None to list the whole global library.
+    """
     q = db.query(OcrSkill).filter(OcrSkill.status == SkillStatus.active.value)
     if api_def_id is not None:
-        q = q.filter(or_(OcrSkill.api_definition_id == api_def_id,
-                         OcrSkill.api_definition_id.is_(None)))
+        country = _api_country(db, api_def_id)
+        # global part: same-country globals + universal (country IS NULL) globals
+        global_part = OcrSkill.api_definition_id.is_(None)
+        if country:
+            global_part = global_part & or_(
+                OcrSkill.country == country, OcrSkill.country.is_(None)
+            )
+        q = q.filter(or_(OcrSkill.api_definition_id == api_def_id, global_part))
     else:
         q = q.filter(OcrSkill.api_definition_id.is_(None))
     return q.order_by(OcrSkill.api_definition_id.is_(None).desc(), OcrSkill.name).all()
@@ -58,9 +78,11 @@ def create_skill(
     description: str = "",
     api_def_id: uuid.UUID | None = None,
     created_by: uuid.UUID | None = None,
+    country: str | None = None,
 ) -> OcrSkill:
-    """Create a private (api_def_id set) or global (None) skill. Enforces the
-    unique (api_definition_id, name) constraint with a friendly error."""
+    """Create a private (api_def_id set) or global (None) skill. Global skills
+    carry a `country` scope (referenceable only by that country's APIs; NULL =
+    universal). Enforces the unique (api_definition_id, name) constraint."""
     name = (name or "").strip()
     if not name or not (content or "").strip():
         raise ValidationError("skill 需要非空的 name 与 content")
@@ -76,6 +98,7 @@ def create_skill(
         id=uuid.uuid4(), api_definition_id=api_def_id, name=name,
         description=description or "", content=content,
         status=SkillStatus.active.value, created_by=created_by,
+        country=(str(country) if country else None),
     )
     db.add(sk)
     db.commit()

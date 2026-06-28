@@ -168,10 +168,12 @@ export default function SkillLibraryModal({ apiDefinitionId, open, onClose }: Pr
                           ? 'bg-cyan-500/20 text-cyan-300'
                           : 'bg-purple-500/20 text-purple-300',
                       )}
-                      title={s.api_definition_id == null ? '全局技能（所有 API 共享）' : '本 API 私有技能'}
+                      title={s.api_definition_id == null
+                        ? `全局技能（${s.country ? s.country + ' 国家' : '通用'}，同国 API 共享）`
+                        : '本 API 私有技能'}
                     >
                       {s.api_definition_id == null ? <Globe className="w-2.5 h-2.5" /> : <Lock className="w-2.5 h-2.5" />}
-                      {s.api_definition_id == null ? '全局' : '私有'}
+                      {s.api_definition_id == null ? `${s.country ? s.country + ' ' : ''}全局` : '私有'}
                     </span>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm text-gray-200 truncate">{s.name}</div>

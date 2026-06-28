@@ -146,6 +146,27 @@ def test_build_insights_trajectory_guardian_and_skills(db_session):
     assert sk.name in f["skills"]
 
 
+def test_list_skills_country_scopes_globals(db_session):
+    from app.ocr_optimizer.service import skill_service
+
+    jp = _api(db_session, country="JP")
+    my = _api(db_session, country="MY")
+    g = skill_service.create_skill(
+        db_session, name=f"g-{uuid.uuid4().hex[:6]}", content="JPY 规整",
+        api_def_id=None, country="JP",
+    )
+    jp_ids = {s.id for s in skill_service.list_skills(db_session, jp.id)}
+    my_ids = {s.id for s in skill_service.list_skills(db_session, my.id)}
+    assert g.id in jp_ids       # JP global → visible to JP API
+    assert g.id not in my_ids   # …NOT to MY API
+
+    u = skill_service.create_skill(
+        db_session, name=f"u-{uuid.uuid4().hex[:6]}", content="通用规则",
+        api_def_id=None, country=None,  # universal
+    )
+    assert u.id in {s.id for s in skill_service.list_skills(db_session, my.id)}  # 通用 → 两国都可见
+
+
 def test_build_insights_caution_on_regression(db_session):
     from app.ocr_optimizer.service import skill_insights
 
