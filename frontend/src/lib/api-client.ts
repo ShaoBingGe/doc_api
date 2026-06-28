@@ -347,12 +347,20 @@ export interface SkillInsightField {
   trajectory: number[]
   guardian: { kind: 'pin' | 'caution'; note: string } | null
   skills: string[]
+  rule_edits: string[]
+}
+export interface MetaMemoryOp {
+  accepted: number
+  rejected: number
+  reject_rate: number
 }
 export interface SkillInsights {
   has_run: boolean
   rounds: number
   version: string | null
   fields: SkillInsightField[]
+  meta_memory: { by_op: Record<string, MetaMemoryOp>; total_accepted: number; total_rejected: number } | null
+  rejected_count: number
 }
 export function fetchSkillInsights(apiDefId: string) {
   return apiClient.get<SkillInsights>(

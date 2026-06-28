@@ -65,9 +65,17 @@ def build_insights(db, api_def_id: _uuid.UUID) -> dict:
             for sk in db.query(OcrSkill).filter(OcrSkill.id.in_(all_uids)).all():
                 name_by_id[str(sk.id)] = sk.name
 
+        from app.ocr_optimizer.service.composer import _render_rule_edits
+
         for m in mods:
             mk = m.module_key
             g = guardians.get(mk)
+            # ADR-002: the iterated rule section (typed-edit mode), as rule lines
+            rules = [
+                ln.lstrip("- ").strip()
+                for ln in _render_rule_edits(getattr(m, "rule_edits_text", "") or "").splitlines()
+                if ln.strip()
+            ]
             fields.append(
                 {
                     "field": mk,
@@ -79,12 +87,17 @@ def build_insights(db, api_def_id: _uuid.UUID) -> dict:
                         for s in (m.skill_ids or [])
                         if str(s) in name_by_id
                     ],
+                    "rule_edits": rules,
                 }
             )
 
+    # ADR-002 P-D: run-level meta memory (edit-op accept/reject) + rejected count
+    rm = (run.metrics or {}) if run is not None else {}
     return {
         "has_run": run is not None,
         "rounds": (run.rounds_completed if run else 0),
         "version": (ver.version if ver is not None else None),
         "fields": fields,
+        "meta_memory": rm.get("meta_memory") or None,
+        "rejected_count": len(rm.get("rejected_edits") or []),
     }
