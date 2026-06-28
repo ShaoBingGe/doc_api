@@ -81,7 +81,7 @@ def _patch(monkeypatch, gts):
     def fake_ocr(db, *, sample_document_ids, **kw):
         return {str(sid): {"invoiceNumber": "WRONG"} for sid in sample_document_ids}
 
-    def fake_optimize(*, module, iteration, history, processor_spec, model_name, meta_hint=""):
+    def fake_optimize(*, module, iteration, history, processor_spec, model_name, meta_hint="", user_feedback="", **kw):
         return {
             "aggregate_diff": {"differences_description": "", "differences_reason_analysis": ""},
             "optimization_suggestion": "add a prefix rule",
@@ -145,7 +145,7 @@ def test_typed_round_off_uses_wholesale_path(db_session, mock_env, monkeypatch):
     def fake_ocr(db, *, sample_document_ids, **kw):
         return {str(sid): {"invoiceNumber": "WRONG"} for sid in sample_document_ids}
 
-    def fake_optimize(*, module, iteration, history, processor_spec, model_name, meta_hint=""):
+    def fake_optimize(*, module, iteration, history, processor_spec, model_name, meta_hint="", user_feedback="", **kw):
         return {
             "aggregate_diff": {"differences_description": "", "differences_reason_analysis": ""},
             "optimization_suggestion": "", "new_ocr_suggestions": None,

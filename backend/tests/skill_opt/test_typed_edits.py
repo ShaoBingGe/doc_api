@@ -101,6 +101,20 @@ def test_meta_hint_prepended_to_user_prompt(monkeypatch):
     assert cap["user"].startswith("（元记忆）") and cap["user"].endswith("user")  # prepended
 
 
+def test_user_feedback_prepended_as_reflection_context(monkeypatch):
+    import app.ocr_optimizer.service.module_optimizer as mo
+
+    cap = {}
+    _patch_llm(monkeypatch, cap)
+    mo.optimize_module(
+        module=SimpleNamespace(module_key="currency"), iteration=None, history=[],
+        processor_spec="mock", model_name=None,
+        user_feedback="发票号必须输出纯数字，不要前缀",
+    )
+    assert "用户对该字段的反馈" in cap["user"]
+    assert "发票号必须输出纯数字" in cap["user"]
+
+
 def test_no_meta_hint_when_empty(monkeypatch):
     import app.ocr_optimizer.service.module_optimizer as mo
 

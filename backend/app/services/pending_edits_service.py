@@ -60,6 +60,10 @@ def _empty() -> dict[str, Any]:
         # Enforced by ocr_optimizer.service.field_constraints — survives every
         # optimization round and overrides the country template's Part 1.
         "field_constraints": {},
+        # field_feedback: per-field free-text USER FEEDBACK ({field: text}).
+        # NOT the final prompt — injected as reflection CONTEXT during the next
+        # optimization so the optimizer knows what the customer expects.
+        "field_feedback": {},
     }
 
 
@@ -78,6 +82,10 @@ def _normalize(overlay: dict | None) -> dict[str, Any]:
     out["field_constraints"] = {
         str(k): dict(v) for k, v in (overlay.get("field_constraints") or {}).items()
         if isinstance(v, dict)
+    }
+    out["field_feedback"] = {
+        str(k): str(v) for k, v in (overlay.get("field_feedback") or {}).items()
+        if v is not None
     }
     return out
 
@@ -123,6 +131,31 @@ def _save_overlay(db: Session, api_def: ApiDefinition, overlay: dict) -> None:
     SQLAlchemy's JSON type compares by identity for some operations;
     assigning a new dict is the safe path."""
     api_def.pending_edits = _normalize(overlay)
+
+
+def record_field_feedback(
+    db: Session,
+    api_def_id: uuid.UUID,
+    field_name: str,
+    text: str | None,
+) -> dict[str, Any]:
+    """Register / update a field's free-text USER FEEDBACK. This is NOT the final
+    prompt — it is injected as reflection CONTEXT in the next optimization so the
+    optimizer learns what the customer expects. Empty text clears it."""
+    api_def = db.get(ApiDefinition, api_def_id)
+    if not api_def:
+        raise NotFoundError(f"ApiDefinition {api_def_id} not found")
+    if not field_name:
+        return _normalize(api_def.pending_edits)
+    overlay = _normalize(api_def.pending_edits)
+    t = (text or "").strip()
+    if t:
+        overlay["field_feedback"][field_name] = t
+    else:
+        overlay["field_feedback"].pop(field_name, None)
+    _save_overlay(db, api_def, overlay)
+    db.commit()
+    return overlay
 
 
 def record_rename(

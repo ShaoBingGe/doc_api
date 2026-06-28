@@ -72,6 +72,9 @@ export interface FieldEditDraft {
   correctedValue: string
   originalFormat?: string
   correctedFormat: string
+  /** Free-text USER FEEDBACK for this field — saved to overlay.field_feedback and
+   * injected as reflection context next optimization (NOT the final prompt). */
+  feedback?: string
 }
 
 /**
@@ -196,6 +199,9 @@ interface WorkspaceStore {
    * can trigger the SAME cascade as the edit-panel delete button. When
    * omitted, falls back to editingFieldId (the edit-panel path). */
   commitFieldDeletion: (annotationId?: string) => Promise<void>
+  /** Save a field's free-text user feedback to overlay.field_feedback (reflection
+   * hint, not the final prompt). Idempotent; empty text clears it. */
+  saveFieldFeedback: (fieldName: string, text: string) => Promise<void>
 
   /** Phase 13 — canonical field set the customer wants on every sample.
    * Computed by the backend as:
@@ -1211,6 +1217,19 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       await get().loadRequiredFields()
     } catch (err) {
       console.warn('flushDraftsToOverlay had errors', err)
+    }
+  },
+
+  saveFieldFeedback: async (fieldName: string, text: string) => {
+    const id = get().apiDefinitionId
+    if (!id || !fieldName) return
+    try {
+      await apiClient.post(
+        `/api/v1/api-definitions/${id}/pending-edits/commit-draft`,
+        { field_feedback: { field_name: fieldName, text } },
+      )
+    } catch (err) {
+      console.warn('saveFieldFeedback failed', err)
     }
   },
 

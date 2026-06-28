@@ -123,6 +123,7 @@ def optimize_module(
     processor_spec: str,
     model_name: str | None,
     meta_hint: str = "",
+    user_feedback: str = "",
 ) -> dict | None:
     """
     Call the LLM to produce optimizations for one module's iteration.
@@ -133,6 +134,13 @@ def optimize_module(
     Returns None if the LLM call fails (caller should leave the module unchanged).
     """
     user_prompt = _build_user_prompt(module, iteration, history)
+    # Per-field USER FEEDBACK (reflection context — the customer's expectation,
+    # NOT the final prompt). Prepended so the optimizer weighs it while reflecting.
+    if user_feedback and user_feedback.strip():
+        user_prompt = (
+            f"【用户对该字段的反馈（请据此调整识别规则，但这不是最终 prompt 正文）】\n"
+            f"{user_feedback.strip()}\n\n{user_prompt}"
+        )
     # ADR-002 P-D: prepend the meta-memory hint (optimizer proposal bias) when given.
     if meta_hint and meta_hint.strip():
         user_prompt = f"{meta_hint.strip()}\n\n{user_prompt}"

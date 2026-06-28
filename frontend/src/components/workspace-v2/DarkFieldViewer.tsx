@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, Fragment } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -793,6 +793,20 @@ function FieldEditPanel({
           </div>
         </div>
 
+        {/* 字段反馈提示（迭代反思用，不是最终 prompt）—— 与本次修改一起保存 */}
+        <div>
+          <div className="text-xs text-cyan-300/70 mb-1 flex items-center gap-1">
+            <Sparkles className="w-3 h-3" /> 反馈提示（可选 · 喂给迭代优化，不进最终 prompt）
+          </div>
+          <textarea
+            value={draft.feedback || ''}
+            onChange={(e) => onUpdate({ feedback: e.target.value })}
+            className="w-full bg-[#1e1e24] border border-cyan-500/30 focus:border-cyan-400 rounded px-2 py-1.5 text-sm text-white outline-none transition-colors min-h-[32px] resize-y"
+            placeholder="例如：发票号要输出纯数字、去掉前缀；或：这个字段取右下角那个值"
+            rows={2}
+          />
+        </div>
+
         <p className="text-xs text-gray-500 leading-relaxed">
           点"保存到模板"会把这条修改立刻提交到客户模板的跨样本 overlay：
           其他样本的同名字段会自动跟随重命名/同步标识，OCR 新上传样本时也会用新名识别。
@@ -801,6 +815,10 @@ function FieldEditPanel({
         <div className="flex gap-2">
           <button
             onClick={async () => {
+              // 反馈一起保存：落 overlay.field_feedback，下次优化作反思上下文
+              await useWorkspaceStore
+                .getState()
+                .saveFieldFeedback(draft.moduleKey || draft.correctedName, draft.feedback || '')
               await onSaveToOverlay()
               onCancel()
             }}
@@ -1116,7 +1134,8 @@ function AddFieldList() {
             </thead>
             <tbody>
               {addFieldDrafts.map((row, idx) => (
-                <tr key={idx} className="hover:bg-white/5 transition-colors">
+                <Fragment key={idx}>
+                <tr className="hover:bg-white/5 transition-colors">
                   <td className="px-2 py-1.5 text-gray-500 border-b border-white/5">{idx + 1}</td>
                   <td className="px-2 py-1.5 border-b border-white/5">
                     <input
@@ -1154,6 +1173,23 @@ function AddFieldList() {
                     </button>
                   </td>
                 </tr>
+                {/* 反馈提示行（在字段行下方）— 输入后自动保存，喂给迭代优化 */}
+                <tr>
+                  <td className="border-b border-white/5" />
+                  <td colSpan={4} className="px-2 pb-2 border-b border-white/5">
+                    <input
+                      value={row.feedback || ''}
+                      onChange={(e) => updateAddDraft(idx, { feedback: e.target.value })}
+                      onBlur={() => {
+                        const nm = (row.correctedName || '').trim()
+                        if (nm) useWorkspaceStore.getState().saveFieldFeedback(nm, row.feedback || '')
+                      }}
+                      className="w-full bg-transparent border-b border-cyan-500/20 focus:border-cyan-400 text-gray-300 outline-none px-1 py-0.5 text-xs"
+                      placeholder="↳ 反馈提示（可选 · 输入后自动保存，喂给迭代优化，不进最终 prompt）"
+                    />
+                  </td>
+                </tr>
+                </Fragment>
               ))}
             </tbody>
           </table>

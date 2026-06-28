@@ -6,7 +6,6 @@ import WorkspaceHeader, { type HeaderTab } from '../components/workspace-v2/Work
 import DarkDocumentViewer from '../components/workspace-v2/DarkDocumentViewer'
 import DarkFieldViewer from '../components/workspace-v2/DarkFieldViewer'
 import DarkJsonViewer from '../components/workspace-v2/DarkJsonViewer'
-import AiChat from '../components/workspace-v2/AiChat'
 import WorkspaceModals from '../components/workspace-v2/WorkspaceModals'
 import InlineUploadPanel from '../components/workspace-v2/InlineUploadPanel'
 import DocumentThumbnailColumn from '../components/workspace-v2/DocumentThumbnailColumn'
@@ -250,7 +249,6 @@ export default function Workspace() {
         </div>
       )}
 
-      {!isNewMode && hasSelectedDoc && activeTab === 'fields' && <AiChat />}
 
       <WorkspaceModals
         activeModal={activeModal}

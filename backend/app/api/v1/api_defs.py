@@ -248,6 +248,14 @@ def commit_draft_to_overlay(
             note=fc.get("note"),
         )
 
+    # Case 6: per-field free-text USER FEEDBACK (reflection hint, NOT final prompt).
+    #   {"field_feedback": {"field_name": "currency", "text": "..."}}
+    ff = body.get("field_feedback") or {}
+    if ff.get("field_name"):
+        pending_edits_service.record_field_feedback(
+            db, api_def_id, str(ff["field_name"]), ff.get("text"),
+        )
+
     return pending_edits_service.get_overlay(db, api_def_id)
 
 

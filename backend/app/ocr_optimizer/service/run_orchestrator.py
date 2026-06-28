@@ -882,6 +882,18 @@ def _run_one_round(
     # ADR-002 typed-edit mode (flag-gated): bounded edits evolve a per-field rule
     # section instead of rewriting ocr_prompt. Rejected edits persist across rounds
     # so the optimizer doesn't re-propose them. Default OFF → none of this runs.
+    # Per-field USER FEEDBACK (overlay) → injected as reflection context per module.
+    from app.services import pending_edits_service as _pes
+    _field_feedback = (_pes.get_overlay(db, run.api_definition_id) or {}).get("field_feedback") or {}
+
+    def _uf_for(mod) -> str:
+        return (
+            _field_feedback.get(mod.module_key)
+            or _field_feedback.get(field_constraints.field_leaf(mod.json_path))
+            or _field_feedback.get(getattr(mod, "display_name", "") or "")
+            or ""
+        )
+
     _typed = getattr(_s, "SKILL_TYPED_EDITS", False)
     _rej_buffer = None
     _round_accepted_ops: list[str] = []
@@ -971,7 +983,7 @@ def _run_one_round(
             result = module_optimizer.optimize_module(
                 module=mod, iteration=it, history=histories.get(mod.module_key, []),
                 processor_spec=provider_spec, model_name=provider_model,
-                meta_hint=_meta_hint,
+                meta_hint=_meta_hint, user_feedback=_uf_for(mod),
             )
             out["llm_calls"] += 1
             if _typed and result and result.get("edits"):
