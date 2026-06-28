@@ -34,6 +34,16 @@ class _AggregateDiff(BaseModel):
     differences_reason_analysis: str = ""
 
 
+class _TypedEdit(BaseModel):
+    """ADR-002 — one bounded edit on a field's rule section."""
+    model_config = ConfigDict(extra="forbid")
+    op: str                       # append | replace | delete
+    target: str                   # the field's module_key
+    content: str = ""             # rule text (empty for delete)
+    source_type: str = "failure"  # failure | success
+    kind: str = ""                # SKILL_DEFECT | EXECUTION_LAPSE | ""
+
+
 class ModuleOptimizerOutput(BaseModel):
     """
     Strict schema for Module Optimizer LLM output.
@@ -48,6 +58,28 @@ class ModuleOptimizerOutput(BaseModel):
     new_description: str | None = None
     new_ocr_prompt: str | None = None
     skill_feedback: str = ""
+    # ADR-002 (typed-edit mode): bounded edits on the field's rule section.
+    # Optional — absent in wholesale-rewrite mode, defaults to None.
+    edits: list[_TypedEdit] | None = None
+
+
+# Appended to SYSTEM_INSTRUCTION only when SKILL_TYPED_EDITS is on. Asks for
+# bounded typed edits on the field's rule section instead of a full rewrite.
+TYPED_EDIT_INSTRUCTION = (
+    "\n\nTYPED-EDIT MODE (return an `edits` array; you may set new_ocr_prompt=null):\n"
+    "Instead of rewriting the whole prompt, return `edits`: a SHORT list (≤4) of "
+    "bounded edits to THIS field's rule section. Each edit = {op, target, content, "
+    "source_type, kind}:\n"
+    "- op: 'append' (add one rule line — PREFER THIS), 'replace' (swap the whole "
+    "rule section — use sparingly), or 'delete' (remove it — rare).\n"
+    "- target: this field's key (module_key).\n"
+    "- content: ONE concise, cross-sample rule (pattern/alias/constraint); empty for delete.\n"
+    "- source_type: 'failure' (fixing a miss) or 'success' (reinforcing).\n"
+    "- kind: 'SKILL_DEFECT' if the rule itself is wrong/missing, or "
+    "'EXECUTION_LAPSE' if the rule is fine but the model slipped once "
+    "(when unsure, use 'EXECUTION_LAPSE'). \n"
+    "Keep edits minimal and high-support (prefer rules supported by multiple samples)."
+)
 
 
 SYSTEM_INSTRUCTION = (
@@ -99,11 +131,17 @@ def optimize_module(
     Returns None if the LLM call fails (caller should leave the module unchanged).
     """
     user_prompt = _build_user_prompt(module, iteration, history)
+    # ADR-002: in typed-edit mode, ask for bounded edits (flag-gated; OFF →
+    # identical system prompt as before).
+    from app.core.config import get_settings as _gs
+    system = SYSTEM_INSTRUCTION
+    if getattr(_gs(), "SKILL_TYPED_EDITS", False):
+        system = SYSTEM_INSTRUCTION + TYPED_EDIT_INSTRUCTION
     try:
         result = llm_text_completion(
             processor_spec=processor_spec,
             model_name=model_name,
-            system_instruction=SYSTEM_INSTRUCTION,
+            system_instruction=system,
             user_prompt=user_prompt,
             as_json=True,
         )
@@ -152,6 +190,8 @@ def optimize_module(
         "new_description": parsed.new_description,
         "new_ocr_prompt": parsed.new_ocr_prompt,
         "skill_feedback": parsed.skill_feedback,
+        # ADR-002: typed edits (None in wholesale-rewrite mode)
+        "edits": [e.model_dump() for e in parsed.edits] if parsed.edits else None,
     }
 
 

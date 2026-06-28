@@ -97,6 +97,12 @@ class Settings(BaseSettings):
     # and (when ON) surface a proposal-bias hint to the optimizer. Default OFF →
     # stats are still recorded (cheap, additive) but no optimizer behavior change.
     SKILL_META_MEMORY: bool = False
+    # ADR-002: optimizer emits TYPED bounded edits (append/replace/delete on a
+    # per-field rule section) instead of wholesale-rewriting ocr_prompt. Enables
+    # aggregate/clip/buffer/classify/meta wiring. Default OFF → wholesale-rewrite
+    # path unchanged (byte-identical). The frozen ocr_prompt body is never
+    # rewritten when ON; edits evolve a separate rule section.
+    SKILL_TYPED_EDITS: bool = False
 
     # ── Security ──────────────────────────────────────────────────────────
     SECRET_KEY: str = "CHANGE-ME-IN-PRODUCTION-32-bytes!!"
