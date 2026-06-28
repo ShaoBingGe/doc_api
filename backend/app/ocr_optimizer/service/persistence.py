@@ -357,6 +357,13 @@ def clone_modules_to_new_version(
                 schema_fragment=m.schema_fragment,
                 ocr_suggestions=merged_suggestions,
                 ocr_prompt=upd.get("ocr_prompt") or m.ocr_prompt,
+                # ADR-002: inherit the frozen rule section; typed-edit mode passes
+                # a fresh `rule_edits_text` in upd, else carry the existing one.
+                rule_edits_text=(
+                    upd["rule_edits_text"]
+                    if upd.get("rule_edits_text") is not None
+                    else (getattr(m, "rule_edits_text", "") or "")
+                ),
                 # ★ HARD COPY: skill_ids never come from updates dict — design §15.10.
                 # Optimizer's `updates` payload is filtered upstream to exclude skills,
                 # but defense in depth: we never read skill_ids from upd here.

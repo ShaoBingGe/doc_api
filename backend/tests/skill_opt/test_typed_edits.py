@@ -113,3 +113,71 @@ def test_composer_no_rule_block_when_empty():
 
     base = composer.assemble_prompt([_cmod("x", "")], country_global=None)
     assert composer._RULE_EDITS_HEADER not in base   # empty → byte-identical
+
+
+# ── P-B.2 clone carries rule_edits_text (inherit + update) ───────────────────
+
+
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.fixture
+def db_session():
+    from app.core.database import SessionLocal
+    s = SessionLocal()
+    try:
+        yield s
+    finally:
+        s.rollback()
+        s.close()
+
+
+def _ver_with_mod(db, rule="## [field:amount]\n- 旧规则"):
+    import uuid
+
+    from app.ocr_optimizer.models import (
+        OcrModule, OcrPromptVersion, PromptVersionStatus, VersionOrigin,
+    )
+
+    ver = OcrPromptVersion(id=uuid.uuid4(), api_definition_id=uuid.uuid4(), version="1",
+                           status=PromptVersionStatus.active.value, origin=VersionOrigin.init.value,
+                           composed_prompt="x", composed_schema={}, country_global_text="")
+    db.add(ver)
+    db.add(OcrModule(id=uuid.uuid4(), prompt_version_id=ver.id, module_key="amount",
+                     display_name="金额", description="d", json_path="$.amount",
+                     schema_fragment={}, ocr_suggestions={}, ocr_prompt="找金额",
+                     order_index=1, rule_edits_text=rule))
+    db.commit()
+    return ver
+
+
+def _clone(db, src_ver, updates):
+    import uuid
+
+    from app.ocr_optimizer.models import OcrPromptVersion, PromptVersionStatus, VersionOrigin
+    from app.ocr_optimizer.service import persistence
+
+    new = OcrPromptVersion(id=uuid.uuid4(), api_definition_id=src_ver.api_definition_id,
+                           version="2", status=PromptVersionStatus.draft.value,
+                           origin=VersionOrigin.round.value, composed_prompt="",
+                           composed_schema={}, country_global_text="")
+    db.add(new)
+    db.flush()
+    mods = persistence.clone_modules_to_new_version(
+        db, new_version=new, base_modules=list(src_ver.modules), updates=updates,
+        keep_keys=None, add_specs=None, renames=None,
+    )
+    return {m.module_key: m for m in mods}
+
+
+def test_clone_updates_rule_edits_text(db_session):
+    ver = _ver_with_mod(db_session)
+    out = _clone(db_session, ver, {"amount": {"rule_edits_text": "## [field:amount]\n- 新规则"}})
+    assert "新规则" in out["amount"].rule_edits_text
+    assert "旧规则" not in out["amount"].rule_edits_text
+
+
+def test_clone_inherits_rule_edits_text_when_no_update(db_session):
+    ver = _ver_with_mod(db_session)
+    out = _clone(db_session, ver, {})  # no update → inherit
+    assert "旧规则" in out["amount"].rule_edits_text

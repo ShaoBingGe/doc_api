@@ -879,6 +879,17 @@ def _run_one_round(
     provider_model = _split_provider(run.llm_provider)[1]
     updates: dict[str, dict] = {}
 
+    # ADR-002 typed-edit mode (flag-gated): bounded edits evolve a per-field rule
+    # section instead of rewriting ocr_prompt. Rejected edits persist across rounds
+    # so the optimizer doesn't re-propose them. Default OFF → none of this runs.
+    _typed = getattr(_s, "SKILL_TYPED_EDITS", False)
+    _rej_buffer = None
+    _round_accepted_ops: list[str] = []
+    _round_rejected_ops: list[str] = []
+    if _typed:
+        from app.ocr_optimizer.skilltrain.buffer import RejectedEditBuffer
+        _rej_buffer = RejectedEditBuffer.from_list((run.metrics or {}).get("rejected_edits"))
+
     # Country-locked fields are EXCLUDED from optimization: they're still
     # evaluated (measured) above, but their recognition spec is governed by
     # Part 1 and must not enter the Part-2 modifiable/reflection scope. The
@@ -912,17 +923,66 @@ def _run_one_round(
         )
         histories[mod.module_key] = [x for x in h if x.get("round_num") != round_num]
 
+    def _typed_optimize(out, mod, it, result) -> None:
+        """ADR-002: turn the LLM's `edits` into a bounded rule-section update.
+        filter(rejected) → aggregate → clip(top-L) → apply_edits → verify the
+        body+rules combo. On accept: out['new_rules']; on reject: buffer the edits."""
+        from app.ocr_optimizer.service import composer as _comp
+        from app.ocr_optimizer.skilltrain.aggregate import aggregate_edits
+        from app.ocr_optimizer.skilltrain.apply import apply_edits
+        from app.ocr_optimizer.skilltrain.clip import decide_L, rank_and_select
+        from app.ocr_optimizer.skilltrain.types import FieldEdit
+
+        raw = [
+            FieldEdit(
+                op=e["op"], target=(e.get("target") or mod.module_key),
+                content=(e.get("content") or ""),
+                source_type=(e.get("source_type") or "failure"),
+                kind=(e.get("kind") or ""),
+            )
+            for e in result["edits"]
+            if isinstance(e, dict) and e.get("op") in ("append", "replace", "delete")
+        ]
+        fresh = _rej_buffer.filter(raw) if _rej_buffer is not None else raw
+        severity = 1.0 - float(getattr(it, "aggregate_accuracy", 0.0) or 0.0)
+        clipped = rank_and_select(aggregate_edits(fresh), decide_L(severity))
+        if not clipped:
+            return
+        new_rules = apply_edits(getattr(mod, "rule_edits_text", "") or "", clipped)
+        rendered = _comp._render_rule_edits(new_rules)
+        combined = mod.ocr_prompt or ""
+        if rendered:
+            combined = f"{combined}\n\n{_comp._RULE_EDITS_HEADER}\n{rendered}"
+        proposed = dict(result)
+        proposed["new_ocr_prompt"] = combined  # verify the body+rules combo
+        verdict = module_optimizer.verify_module_fix(
+            module=mod, iteration=it, proposed=proposed,
+            processor_spec=provider_spec, model_name=provider_model,
+        )
+        out["llm_calls"] += 1
+        if verdict.get("verdict") == "reject":
+            out["rejected"] = result
+            out["verdict"] = verdict
+            out["rejected_edits"] = clipped
+        else:
+            out["result"] = result
+            out["new_rules"] = new_rules
+            out["accepted_edits"] = clipped
+
     def _optimize_and_verify(mod, it) -> dict:
         """纯 LLM（无 DB），可在工作线程跑。返回供主线程串行应用的结果。
         单字段任何异常都吞掉（返回空结果）——绝不让一个字段拖垮整轮。"""
-        out = {"mod": mod, "it": it, "result": None, "rejected": None, "verdict": None, "llm_calls": 0}
+        out = {"mod": mod, "it": it, "result": None, "rejected": None, "verdict": None,
+               "llm_calls": 0, "new_rules": None, "accepted_edits": None, "rejected_edits": None}
         try:
             result = module_optimizer.optimize_module(
                 module=mod, iteration=it, history=histories.get(mod.module_key, []),
                 processor_spec=provider_spec, model_name=provider_model,
             )
             out["llm_calls"] += 1
-            if result and (result.get("new_ocr_prompt") or result.get("new_description")):
+            if _typed and result and result.get("edits"):
+                _typed_optimize(out, mod, it, result)   # sets out fields itself
+            elif result and (result.get("new_ocr_prompt") or result.get("new_description")):
                 verdict = module_optimizer.verify_module_fix(
                     module=mod, iteration=it, proposed=result,
                     processor_spec=provider_spec, model_name=provider_model,
@@ -932,7 +992,9 @@ def _run_one_round(
                     out["rejected"] = result
                     out["verdict"] = verdict
                     result = None
-            out["result"] = result
+                out["result"] = result
+            else:
+                out["result"] = result
         except Exception as exc:  # noqa: BLE001
             logger.warning("module optimize failed for %s: %s", mod.module_key, exc)
         return out
@@ -962,24 +1024,43 @@ def _run_one_round(
                 (out["rejected"].get("optimization_suggestion") or "")
                 + f"\n\n[VERIFIER REJECT] {verdict.get('reasoning', '')[:200]}"
             )
-        result = out["result"]
-        if result:
-            it.aggregate_diff = result.get("aggregate_diff")
-            it.optimization_suggestion = result.get("optimization_suggestion")
-            it.new_description = result.get("new_description")
-            it.new_ocr_suggestions = result.get("new_ocr_suggestions")
-            it.new_ocr_prompt = result.get("new_ocr_prompt")
-            # skill_feedback — the ONLY skill-related field optimizer may set
-            it.skill_feedback = result.get("skill_feedback") or None
-            if any([result.get("new_description"),
-                    result.get("new_ocr_suggestions"),
-                    result.get("new_ocr_prompt")]):
-                updates[mod.module_key] = {
-                    "description": result.get("new_description"),
-                    "ocr_suggestions": result.get("new_ocr_suggestions"),
-                    "ocr_prompt": result.get("new_ocr_prompt"),
-                }
+        if out.get("new_rules") is not None:
+            # ADR-002 typed-edit ACCEPT: evolve the rule section, freeze the body.
+            res = out["result"] or {}
+            it.aggregate_diff = res.get("aggregate_diff")
+            it.optimization_suggestion = res.get("optimization_suggestion")
+            it.skill_feedback = res.get("skill_feedback") or None
+            updates.setdefault(mod.module_key, {})["rule_edits_text"] = out["new_rules"]
+        else:
+            result = out["result"]
+            if result:
+                it.aggregate_diff = result.get("aggregate_diff")
+                it.optimization_suggestion = result.get("optimization_suggestion")
+                it.new_description = result.get("new_description")
+                it.new_ocr_suggestions = result.get("new_ocr_suggestions")
+                it.new_ocr_prompt = result.get("new_ocr_prompt")
+                # skill_feedback — the ONLY skill-related field optimizer may set
+                it.skill_feedback = result.get("skill_feedback") or None
+                if any([result.get("new_description"),
+                        result.get("new_ocr_suggestions"),
+                        result.get("new_ocr_prompt")]):
+                    updates[mod.module_key] = {
+                        "description": result.get("new_description"),
+                        "ocr_suggestions": result.get("new_ocr_suggestions"),
+                        "ocr_prompt": result.get("new_ocr_prompt"),
+                    }
+        # ADR-002: collect typed-edit ops → rejected buffer (filter next round) + meta (P-D)
+        if _typed:
+            _round_accepted_ops.extend(e.op for e in (out.get("accepted_edits") or []))
+            for e in (out.get("rejected_edits") or []):
+                _round_rejected_ops.append(e.op)
+                if _rej_buffer is not None:
+                    _rej_buffer.add(e)
     db.commit()
+    # ADR-002: persist the rejected-edit buffer across rounds (typed mode)
+    if _typed and _rej_buffer is not None:
+        run.metrics = {**(run.metrics or {}), "rejected_edits": _rej_buffer.to_list()}
+        db.commit()
 
     # ── Step 4: Meta optimizer (1 LLM call) ──────────────────────────────
     # When `enable_meta=False` (the customer-iteration path) we skip
