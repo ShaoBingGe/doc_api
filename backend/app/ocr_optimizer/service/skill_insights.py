@@ -15,6 +15,7 @@ def build_insights(db, api_def_id: _uuid.UUID) -> dict:
         OcrOptimizationRound,
         OcrOptimizationRun,
         OcrSkill,
+        SkillStatus,
     )
     from app.ocr_optimizer.service import persistence
     from app.ocr_optimizer.skilltrain import slow_update
@@ -62,7 +63,16 @@ def build_insights(db, api_def_id: _uuid.UUID) -> dict:
                     continue
         name_by_id: dict[str, str] = {}
         if all_uids:
-            for sk in db.query(OcrSkill).filter(OcrSkill.id.in_(all_uids)).all():
+            # Only ACTIVE skills — consistent with list_skills (技能库) and
+            # skill_render: an archived/dangling attachment must not show as a
+            # usable skill in 技能洞察.
+            rows = (
+                db.query(OcrSkill)
+                .filter(OcrSkill.id.in_(all_uids),
+                        OcrSkill.status == SkillStatus.active.value)
+                .all()
+            )
+            for sk in rows:
                 name_by_id[str(sk.id)] = sk.name
 
         from app.ocr_optimizer.service.composer import _render_rule_edits
