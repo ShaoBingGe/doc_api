@@ -14,6 +14,7 @@ export default function AdminLayout() {
     { to: '/admin/tenant-admins', label: '用户管理员 / 租户' },
     { to: '/admin/country-templates', label: '国家模板' },
     { to: '/admin/skill-promotion', label: '技能晋升' },
+    { to: '/admin/skill-insights', label: '技能洞察' },
   ]
 
   function handleLogout() {

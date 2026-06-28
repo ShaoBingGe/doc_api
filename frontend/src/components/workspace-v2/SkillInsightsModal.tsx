@@ -7,11 +7,13 @@ interface Props {
   apiDefinitionId: string | null
   open: boolean
   onClose: () => void
+  /** Render as an inline page (admin「技能洞察」) instead of a modal overlay. */
+  inline?: boolean
 }
 
 /** P5 技能/优化洞察（只读）。一处显性化 P1–P4：每字段跨轮准确率轨迹（P1 留出分）、
  *  slow-update 守护状态（P3 · pin 稳定 / caution 波动）、已挂技能（P2/P4）。 */
-export default function SkillInsightsModal({ apiDefinitionId, open, onClose }: Props) {
+export default function SkillInsightsModal({ apiDefinitionId, open, onClose, inline }: Props) {
   const [data, setData] = useState<SkillInsights | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -26,10 +28,13 @@ export default function SkillInsightsModal({ apiDefinitionId, open, onClose }: P
 
   if (!open) return null
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+  const body = (
       <div
-        className="w-[720px] max-h-[82vh] overflow-hidden flex flex-col bg-[#1e1e24] border border-white/10 rounded-xl shadow-2xl"
+        className={
+          inline
+            ? 'w-full overflow-hidden flex flex-col bg-[#1e1e24] border border-white/10 rounded-xl'
+            : 'w-[720px] max-h-[82vh] overflow-hidden flex flex-col bg-[#1e1e24] border border-white/10 rounded-xl shadow-2xl'
+        }
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
@@ -42,9 +47,11 @@ export default function SkillInsightsModal({ apiDefinitionId, open, onClose }: P
               </span>
             )}
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-300">
-            <X className="w-4 h-4" />
-          </button>
+          {!inline && (
+            <button onClick={onClose} className="text-gray-500 hover:text-gray-300">
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-3">
@@ -89,6 +96,12 @@ export default function SkillInsightsModal({ apiDefinitionId, open, onClose }: P
           )}
         </div>
       </div>
+  )
+
+  if (inline) return body
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      {body}
     </div>
   )
 }

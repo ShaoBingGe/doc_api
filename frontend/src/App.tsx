@@ -11,6 +11,7 @@ import SystemAdmins from './pages/admin/SystemAdmins'
 import TenantAdmins from './pages/admin/TenantAdmins'
 import CountryTemplates from './pages/admin/CountryTemplates'
 import SkillPromotion from './pages/admin/SkillPromotion'
+import SkillInsights from './pages/admin/SkillInsights'
 import ApiKeyManagement from './pages/settings/ApiKeyManagement'
 import UserManagement from './pages/settings/UserManagement'
 import TrafficMonitoring from './pages/settings/TrafficMonitoring'
@@ -103,6 +104,7 @@ export default function App() {
           <Route path="tenant-admins" element={<TenantAdmins />} />
           <Route path="country-templates" element={<CountryTemplates />} />
           <Route path="skill-promotion" element={<SkillPromotion />} />
+          <Route path="skill-insights" element={<SkillInsights />} />
         </Route>
 
         {/* fallback */}
