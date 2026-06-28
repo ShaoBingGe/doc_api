@@ -12,7 +12,11 @@
 > - **P-B.2** 应用链：轮循环 `build_rule_update`（filter→aggregate→clip→apply）→ 规则段（正文冻结）+ 被拒缓冲跨轮持久。✅
 > - **P-D** meta：accepted/rejected op → `run.metrics.meta_memory`；`render_meta_hint` 前置进 optimize prompt（`SKILL_META_MEMORY` 门控）。✅
 > - **P-C** 缺陷/失误：被拒缓冲已做；`kind` 已捕获并入 meta；**显式 lapse→附录路由延后**（典型场景已被「typed 模式正文冻结、只演化规则段」吸收）。
-> - **P-E** 真实灰度：**整轮集成测试已通过（零 token：mock OCR/optimizer/verify，证明 edits→规则段+meta 端到端）**；真实 OCR 灰度待你 greenlight（开全局 flag + 烧 token）。
+> - **P-E** 真实灰度：**整轮集成测试通过（零 token）+ 真实 LLM 灰度通过**。真实灰度（脚本进程开 flag、
+>   服务流量未受影响）抓到并修复一个真 bug：基础 prompt「EXACTLY these keys」未列 `edits` → qwen 忽略
+>   typed 指令返 null；修后 qwen-plus 产出格式正确的 SKILL_DEFECT 编辑、`build_rule_update` 干净应用成规则段。
+>   **残留**：完整真实 round（含 `verify_module_fix` 真 OCR 组合 prompt）未跑；逻辑未变、低风险。
+>   开启服务级 flag（真实租户走 typed）由你决定。
 > - 验证：typed 相关 ~24 单测/集成（含整轮）+ 全量 258 passed。两 flag 默认 OFF、prod 已部署。
 
 ---
