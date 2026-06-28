@@ -66,10 +66,11 @@ class ModuleOptimizerOutput(BaseModel):
 # Appended to SYSTEM_INSTRUCTION only when SKILL_TYPED_EDITS is on. Asks for
 # bounded typed edits on the field's rule section instead of a full rewrite.
 TYPED_EDIT_INSTRUCTION = (
-    "\n\nTYPED-EDIT MODE (return an `edits` array; you may set new_ocr_prompt=null):\n"
-    "Instead of rewriting the whole prompt, return `edits`: a SHORT list (≤4) of "
-    "bounded edits to THIS field's rule section. Each edit = {op, target, content, "
-    "source_type, kind}:\n"
+    "\n\nTYPED-EDIT MODE — THIS OVERRIDES THE OUTPUT RULES ABOVE:\n"
+    "Your PRIMARY output is now a NON-EMPTY `edits` array, and you MUST set "
+    "new_ocr_prompt to null (do NOT rewrite the whole prompt). "
+    "`edits` = a SHORT list (1–4) of bounded edits to THIS field's rule section. "
+    "Each edit = {op, target, content, source_type, kind}:\n"
     "- op: 'append' (add one rule line — PREFER THIS), 'replace' (swap the whole "
     "rule section — use sparingly), or 'delete' (remove it — rare).\n"
     "- target: this field's key (module_key).\n"
@@ -140,7 +141,13 @@ def optimize_module(
     from app.core.config import get_settings as _gs
     system = SYSTEM_INSTRUCTION
     if getattr(_gs(), "SKILL_TYPED_EDITS", False):
-        system = SYSTEM_INSTRUCTION + TYPED_EDIT_INSTRUCTION
+        # The base prompt says "EXACTLY these keys and nothing more" and omits
+        # `edits` → the real LLM obeys that and drops edits. So in typed mode we
+        # ADD `edits` to the allowed key list (not just append an instruction).
+        system = SYSTEM_INSTRUCTION.replace(
+            "skill_feedback (string). ",
+            "skill_feedback (string), edits (array — see TYPED-EDIT MODE below). ",
+        ) + TYPED_EDIT_INSTRUCTION
     try:
         result = llm_text_completion(
             processor_spec=processor_spec,
