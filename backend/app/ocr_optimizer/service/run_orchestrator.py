@@ -886,9 +886,14 @@ def _run_one_round(
     _rej_buffer = None
     _round_accepted_ops: list[str] = []
     _round_rejected_ops: list[str] = []
+    _meta_hint = ""
     if _typed:
         from app.ocr_optimizer.skilltrain.buffer import RejectedEditBuffer
         _rej_buffer = RejectedEditBuffer.from_list((run.metrics or {}).get("rejected_edits"))
+        # P-D: meta-memory hint from PRIOR rounds (gated by SKILL_META_MEMORY).
+        if getattr(_s, "SKILL_META_MEMORY", False):
+            from app.ocr_optimizer.skilltrain import meta_skill
+            _meta_hint = meta_skill.render_meta_hint((run.metrics or {}).get("meta_memory") or {})
 
     # Country-locked fields are EXCLUDED from optimization: they're still
     # evaluated (measured) above, but their recognition spec is governed by
@@ -928,27 +933,15 @@ def _run_one_round(
         filter(rejected) → aggregate → clip(top-L) → apply_edits → verify the
         body+rules combo. On accept: out['new_rules']; on reject: buffer the edits."""
         from app.ocr_optimizer.service import composer as _comp
-        from app.ocr_optimizer.skilltrain.aggregate import aggregate_edits
-        from app.ocr_optimizer.skilltrain.apply import apply_edits
-        from app.ocr_optimizer.skilltrain.clip import decide_L, rank_and_select
-        from app.ocr_optimizer.skilltrain.types import FieldEdit
+        from app.ocr_optimizer.skilltrain.apply import build_rule_update
 
-        raw = [
-            FieldEdit(
-                op=e["op"], target=(e.get("target") or mod.module_key),
-                content=(e.get("content") or ""),
-                source_type=(e.get("source_type") or "failure"),
-                kind=(e.get("kind") or ""),
-            )
-            for e in result["edits"]
-            if isinstance(e, dict) and e.get("op") in ("append", "replace", "delete")
-        ]
-        fresh = _rej_buffer.filter(raw) if _rej_buffer is not None else raw
         severity = 1.0 - float(getattr(it, "aggregate_accuracy", 0.0) or 0.0)
-        clipped = rank_and_select(aggregate_edits(fresh), decide_L(severity))
+        new_rules, clipped = build_rule_update(
+            getattr(mod, "rule_edits_text", "") or "", result["edits"],
+            target_default=mod.module_key, rej_buffer=_rej_buffer, severity=severity,
+        )
         if not clipped:
             return
-        new_rules = apply_edits(getattr(mod, "rule_edits_text", "") or "", clipped)
         rendered = _comp._render_rule_edits(new_rules)
         combined = mod.ocr_prompt or ""
         if rendered:
@@ -978,6 +971,7 @@ def _run_one_round(
             result = module_optimizer.optimize_module(
                 module=mod, iteration=it, history=histories.get(mod.module_key, []),
                 processor_spec=provider_spec, model_name=provider_model,
+                meta_hint=_meta_hint,
             )
             out["llm_calls"] += 1
             if _typed and result and result.get("edits"):
@@ -1057,9 +1051,24 @@ def _run_one_round(
                 if _rej_buffer is not None:
                     _rej_buffer.add(e)
     db.commit()
-    # ADR-002: persist the rejected-edit buffer across rounds (typed mode)
-    if _typed and _rej_buffer is not None:
-        run.metrics = {**(run.metrics or {}), "rejected_edits": _rej_buffer.to_list()}
+    # ADR-002 P-D: persist rejected buffer + accumulate edit-op outcomes → meta memory
+    # (cheap, additive; recorded whenever typed mode is on, for the optimizer hint
+    # and P5 visibility). The hint injection itself is gated by SKILL_META_MEMORY.
+    if _typed:
+        from app.ocr_optimizer.skilltrain import meta_skill
+        from app.ocr_optimizer.skilltrain.types import FieldEdit
+        m = dict(run.metrics or {})
+        if _rej_buffer is not None:
+            m["rejected_edits"] = _rej_buffer.to_list()
+        ops = dict(m.get("edit_ops") or {})
+        ops["accepted"] = list(ops.get("accepted") or []) + _round_accepted_ops
+        ops["rejected"] = list(ops.get("rejected") or []) + _round_rejected_ops
+        m["edit_ops"] = ops
+        m["meta_memory"] = meta_skill.summarize_edit_outcomes(
+            [FieldEdit(op=o, target="") for o in ops["accepted"]],
+            [FieldEdit(op=o, target="") for o in ops["rejected"]],
+        )
+        run.metrics = m
         db.commit()
 
     # ── Step 4: Meta optimizer (1 LLM call) ──────────────────────────────

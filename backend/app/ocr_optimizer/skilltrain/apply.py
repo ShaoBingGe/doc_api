@@ -60,6 +60,41 @@ def apply_edits(doc: str, edits: Iterable[FieldEdit]) -> str:
     return doc
 
 
+def build_rule_update(
+    current_rules: str,
+    edit_dicts: Iterable[dict],
+    *,
+    target_default: str,
+    rej_buffer=None,
+    severity: float = 1.0,
+):
+    """ADR-002 typed-edit pipeline (pure): edit dicts → FieldEdit → filter(rejected
+    buffer) → aggregate(support) → clip(top-L by severity) → apply to the rule doc.
+
+    Returns `(new_rules, clipped_edits)`. `new_rules == current_rules` when nothing
+    survives clipping (no-op). Deterministic; no DB, no LLM.
+    """
+    from .aggregate import aggregate_edits
+    from .clip import decide_L, rank_and_select
+    from .types import FieldEdit
+
+    raw = [
+        FieldEdit(
+            op=e["op"], target=(e.get("target") or target_default),
+            content=(e.get("content") or ""),
+            source_type=(e.get("source_type") or "failure"),
+            kind=(e.get("kind") or ""),
+        )
+        for e in edit_dicts
+        if isinstance(e, dict) and e.get("op") in ("append", "replace", "delete")
+    ]
+    fresh = rej_buffer.filter(raw) if rej_buffer is not None else raw
+    sev = max(0.0, min(1.0, severity))
+    clipped = rank_and_select(aggregate_edits(fresh), decide_L(sev))
+    new_rules = apply_edits(current_rules or "", clipped) if clipped else (current_rules or "")
+    return new_rules, clipped
+
+
 def diff_line_count(before: str, after: str) -> int:
     """Number of changed lines (added or removed) — used to assert edits stay
     bounded (no whole-prompt rewrite)."""

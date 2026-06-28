@@ -121,6 +121,7 @@ def optimize_module(
     history: list[dict],
     processor_spec: str,
     model_name: str | None,
+    meta_hint: str = "",
 ) -> dict | None:
     """
     Call the LLM to produce optimizations for one module's iteration.
@@ -131,6 +132,9 @@ def optimize_module(
     Returns None if the LLM call fails (caller should leave the module unchanged).
     """
     user_prompt = _build_user_prompt(module, iteration, history)
+    # ADR-002 P-D: prepend the meta-memory hint (optimizer proposal bias) when given.
+    if meta_hint and meta_hint.strip():
+        user_prompt = f"{meta_hint.strip()}\n\n{user_prompt}"
     # ADR-002: in typed-edit mode, ask for bounded edits (flag-gated; OFF →
     # identical system prompt as before).
     from app.core.config import get_settings as _gs

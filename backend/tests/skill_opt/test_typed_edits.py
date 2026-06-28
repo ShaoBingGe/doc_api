@@ -44,8 +44,9 @@ def test_schema_still_forbids_skill_fields():
 def _patch_llm(monkeypatch, captured):
     import app.ocr_optimizer.service.module_optimizer as mo
 
-    def fake_llm(*, system_instruction, **kw):
+    def fake_llm(*, system_instruction, user_prompt="", **kw):
         captured["system"] = system_instruction
+        captured["user"] = user_prompt
         return {
             "aggregate_diff": {"differences_description": "", "differences_reason_analysis": ""},
             "new_ocr_prompt": None,
@@ -85,6 +86,31 @@ def test_flag_off_keeps_plain_instruction(monkeypatch):
     assert "TYPED-EDIT MODE" not in cap["system"]         # unchanged system prompt
     # edits still parsed if the LLM returns them, but prompt didn't ask
     assert out["edits"] and out["edits"][0]["target"] == "currency"
+
+
+def test_meta_hint_prepended_to_user_prompt(monkeypatch):
+    import app.ocr_optimizer.service.module_optimizer as mo
+
+    cap = {}
+    _patch_llm(monkeypatch, cap)
+    mo.optimize_module(
+        module=SimpleNamespace(module_key="currency"), iteration=None, history=[],
+        processor_spec="mock", model_name=None,
+        meta_hint="（元记忆）replace 被拒率高，优先 append",
+    )
+    assert cap["user"].startswith("（元记忆）") and cap["user"].endswith("user")  # prepended
+
+
+def test_no_meta_hint_when_empty(monkeypatch):
+    import app.ocr_optimizer.service.module_optimizer as mo
+
+    cap = {}
+    _patch_llm(monkeypatch, cap)
+    mo.optimize_module(
+        module=SimpleNamespace(module_key="currency"), iteration=None, history=[],
+        processor_spec="mock", model_name=None, meta_hint="",
+    )
+    assert cap["user"] == "user"  # unchanged
 
 
 # ── P-B.1 composer renders rule_edits_text ──────────────────────────────────
@@ -181,3 +207,31 @@ def test_clone_inherits_rule_edits_text_when_no_update(db_session):
     ver = _ver_with_mod(db_session)
     out = _clone(db_session, ver, {})  # no update → inherit
     assert "旧规则" in out["amount"].rule_edits_text
+
+
+# ── P-B.2 core: build_rule_update pipeline (pure) ────────────────────────────
+
+
+def test_build_rule_update_applies_and_clips():
+    from app.ocr_optimizer.skilltrain.apply import build_rule_update
+
+    edits = [
+        {"op": "append", "target": "currency", "content": "统一为 JPY"},
+        {"op": "bogus", "target": "currency", "content": "ignored"},   # invalid op dropped
+    ]
+    new_rules, clipped = build_rule_update("", edits, target_default="currency", severity=1.0)
+    assert len(clipped) == 1 and clipped[0].op == "append"
+    assert "统一为 JPY" in new_rules
+    assert "## [field:currency]" in new_rules   # section created
+
+
+def test_build_rule_update_filters_rejected():
+    from app.ocr_optimizer.skilltrain.apply import build_rule_update
+    from app.ocr_optimizer.skilltrain.buffer import RejectedEditBuffer
+    from app.ocr_optimizer.skilltrain.types import FieldEdit
+
+    buf = RejectedEditBuffer()
+    buf.add(FieldEdit(op="append", target="currency", content="统一为 JPY"))
+    edits = [{"op": "append", "target": "currency", "content": "统一为 JPY"}]  # already rejected
+    new_rules, clipped = build_rule_update("", edits, target_default="currency", rej_buffer=buf)
+    assert clipped == [] and new_rules == ""   # filtered → no-op
