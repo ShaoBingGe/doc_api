@@ -16,6 +16,8 @@ interface Props {
   apiDefinitionId: string | null
   open: boolean
   onClose: () => void
+  /** Render as an inline page (the「新增技能」tab) instead of a modal overlay. */
+  inline?: boolean
 }
 
 type ModuleLite = { module_key: string; display_name: string; skill_ids: string[] }
@@ -23,7 +25,7 @@ type ModuleLite = { module_key: string; display_name: string; skill_ids: string[
 /** 技能库管理面板（ADR-001 P2 + P4 步骤④）。技能 = 可复用的 prompt 规则片段：
  *  全局（所有 API 共享，需后端启用 SKILL_LIBRARY_RENDER 才注入）/ 私有（仅本 API）。
  *  「挂到字段」把技能 attach 到当前 active 版本的某 module → composer 渲染时注入该字段提示词。 */
-export default function SkillLibraryModal({ apiDefinitionId, open, onClose }: Props) {
+export default function SkillLibraryModal({ apiDefinitionId, open, onClose, inline }: Props) {
   const [skills, setSkills] = useState<OcrSkill[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -125,21 +127,24 @@ export default function SkillLibraryModal({ apiDefinitionId, open, onClose }: Pr
 
   if (!open) return null
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-      onClick={onClose}
-    >
+  const body = (
       <div
-        className="w-[640px] max-h-[80vh] overflow-hidden flex flex-col bg-[#1e1e24] border border-white/10 rounded-xl shadow-2xl"
+        className={cn(
+          'overflow-hidden flex flex-col bg-[#1e1e24] border border-white/10 rounded-xl',
+          inline
+            ? 'w-full max-w-2xl mx-auto h-full'
+            : 'w-[640px] max-h-[80vh] shadow-2xl',
+        )}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
-          <div className="text-white font-medium">技能库</div>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-300">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="text-white font-medium">{inline ? '新增技能' : '技能库'}</div>
+          {!inline && (
+            <button onClick={onClose} className="text-gray-500 hover:text-gray-300">
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         {/* List */}
@@ -245,6 +250,17 @@ export default function SkillLibraryModal({ apiDefinitionId, open, onClose }: Pr
           </div>
         </div>
       </div>
+  )
+
+  if (inline) {
+    return <div className="h-full overflow-hidden bg-[#18181c] px-6 py-4">{body}</div>
+  }
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      onClick={onClose}
+    >
+      {body}
     </div>
   )
 }

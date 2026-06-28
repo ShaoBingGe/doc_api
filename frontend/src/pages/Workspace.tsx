@@ -11,6 +11,7 @@ import WorkspaceModals from '../components/workspace-v2/WorkspaceModals'
 import InlineUploadPanel from '../components/workspace-v2/InlineUploadPanel'
 import DocumentThumbnailColumn from '../components/workspace-v2/DocumentThumbnailColumn'
 import OptimizationProcessPanel from '../components/workspace-v2/OptimizationProcessPanel'
+import SkillLibraryModal from '../components/workspace-v2/SkillLibraryModal'
 import CountryPickerBar from '../components/workspace-v2/CountryPickerBar'
 import apiClient from '../lib/api-client'
 import { cn } from '../lib/utils'
@@ -175,6 +176,15 @@ export default function Workspace() {
                 optimizing={optimizing}
               />
             </div>
+          ) : activeTab === 'skills' && apiDefinitionId ? (
+            <div className="flex-1 overflow-y-auto py-4">
+              <SkillLibraryModal
+                apiDefinitionId={apiDefinitionId}
+                open
+                inline
+                onClose={() => setActiveTab('fields')}
+              />
+            </div>
           ) : (
             <>
               {/* Column A: Document Preview / Upload */}
@@ -240,7 +250,7 @@ export default function Workspace() {
         </div>
       )}
 
-      {!isNewMode && hasSelectedDoc && activeTab !== 'optimize' && <AiChat />}
+      {!isNewMode && hasSelectedDoc && activeTab === 'fields' && <AiChat />}
 
       <WorkspaceModals
         activeModal={activeModal}

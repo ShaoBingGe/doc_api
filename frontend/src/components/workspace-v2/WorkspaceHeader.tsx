@@ -2,8 +2,6 @@ import { useState } from 'react'
 import {
   ArrowLeft,
   List,
-  ShieldCheck,
-  BarChart2,
   Save,
   User,
   Sparkles,
@@ -17,10 +15,9 @@ import { useWorkspaceStore } from '../../stores/workspace-store'
 import { useNavigate } from 'react-router-dom'
 import { triggerOptimization } from '../../lib/api-client'
 import { toast } from '../../lib/toast'
-import SkillLibraryModal from './SkillLibraryModal'
 import SkillInsightsModal from './SkillInsightsModal'
 
-export type HeaderTab = 'fields' | 'rules' | 'stats' | 'optimize'
+export type HeaderTab = 'fields' | 'optimize' | 'skills'
 
 interface WorkspaceHeaderProps {
   activeTab: HeaderTab
@@ -53,7 +50,6 @@ export default function WorkspaceHeader({
   } = useWorkspaceStore()
   const navigate = useNavigate()
   const [optimizing, setOptimizing] = useState(false)
-  const [skillOpen, setSkillOpen] = useState(false)
   const [insightsOpen, setInsightsOpen] = useState(false)
 
   // ── Sample-readiness gate (design v3) ────────────────────────────────────
@@ -130,9 +126,8 @@ export default function WorkspaceHeader({
 
   const tabs: { key: HeaderTab; label: string; icon: React.ElementType }[] = [
     { key: 'fields', label: '字段视图', icon: List },
-    { key: 'rules', label: '校验规则', icon: ShieldCheck },
-    { key: 'stats', label: '统计分析', icon: BarChart2 },
     { key: 'optimize', label: '优化过程', icon: GitBranch },
+    { key: 'skills', label: '新增技能', icon: Library },
   ]
 
   // Tooltip text for the optimize button depending on state
@@ -206,7 +201,7 @@ export default function WorkspaceHeader({
         )}
       </div>
 
-      {/* Right: 技能库 + 开始优化 + 保存 + avatar */}
+      {/* Right: 洞察 + 开始优化 + 保存 + avatar （技能库已改为「新增技能」tab） */}
       <div className="flex items-center gap-2">
         <button
           onClick={() => setInsightsOpen(true)}
@@ -221,20 +216,6 @@ export default function WorkspaceHeader({
         >
           <BarChart3 className="w-4 h-4" />
           洞察
-        </button>
-        <button
-          onClick={() => setSkillOpen(true)}
-          disabled={isNewMode}
-          title="技能库：管理可复用的识别规则（私有 / 全局）"
-          className={cn(
-            'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors',
-            isNewMode
-              ? 'bg-white/5 text-gray-500 cursor-not-allowed'
-              : 'bg-white/5 text-gray-300 hover:bg-white/10',
-          )}
-        >
-          <Library className="w-4 h-4" />
-          技能库
         </button>
         <button
           onClick={handleOptimize}
@@ -276,12 +257,6 @@ export default function WorkspaceHeader({
           <User className="w-4 h-4" />
         </div>
       </div>
-
-      <SkillLibraryModal
-        apiDefinitionId={apiDefinitionId}
-        open={skillOpen}
-        onClose={() => setSkillOpen(false)}
-      />
 
       <SkillInsightsModal
         apiDefinitionId={apiDefinitionId}
