@@ -58,10 +58,17 @@ export default function SkillInsightsModal({ apiDefinitionId, open, onClose }: P
             </p>
           ) : (
             <>
+              {/* 图例只显示当前数据里真实出现的项，避免「无技能却显示已挂技能图例」的误导 */}
               <div className="flex items-center gap-4 text-[10px] text-gray-500 mb-3 pb-2 border-b border-white/5">
-                <span className="flex items-center gap-1"><Pin className="w-3 h-3 text-emerald-400" /> 稳定达标（pin）</span>
-                <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-amber-400" /> 波动（caution）</span>
-                <span className="flex items-center gap-1"><Sparkles className="w-3 h-3 text-cyan-400" /> 已挂技能</span>
+                {data.fields.some((f) => f.guardian?.kind === 'pin') && (
+                  <span className="flex items-center gap-1"><Pin className="w-3 h-3 text-emerald-400" /> 稳定达标（pin）</span>
+                )}
+                {data.fields.some((f) => f.guardian?.kind === 'caution') && (
+                  <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-amber-400" /> 波动（caution）</span>
+                )}
+                {data.fields.some((f) => f.skills.length > 0) && (
+                  <span className="flex items-center gap-1"><Sparkles className="w-3 h-3 text-cyan-400" /> 已挂技能</span>
+                )}
                 <span className="ml-auto">柱 = 各轮准确率</span>
               </div>
               {/* ADR-002: typed-edit meta memory (accept/reject by op) */}
