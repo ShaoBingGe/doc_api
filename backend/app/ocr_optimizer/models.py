@@ -150,6 +150,10 @@ class OcrModule(UUIDMixin, Base):
     schema_fragment: Mapped[dict] = mapped_column(JSON, nullable=False)
     ocr_suggestions: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     ocr_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    # ADR-002 typed-edit mode: a section-structured rule doc evolved by bounded
+    # FieldEdits (the frozen ocr_prompt body is never rewritten when typed-edits
+    # are on). composer renders it after the body. Empty in wholesale-rewrite mode.
+    rule_edits_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # List of OcrSkill.id (uuid strings). MVP placeholder — composer doesn't read this yet
     # and optimizer is HARD-FORBIDDEN from modifying it (see design §15.10, §17).
     skill_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)

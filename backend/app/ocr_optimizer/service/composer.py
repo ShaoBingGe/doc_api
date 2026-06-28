@@ -141,6 +141,11 @@ def assemble_prompt(
         sk = (skill_content or {}).get(key, "") if key else ""
         if sk and sk.strip():
             body = f"{body}\n\n{_SKILL_BLOCK_HEADER}\n{sk.strip()}"
+        # ADR-002 — append the field's iterated rule section (typed-edit mode).
+        # Empty in wholesale-rewrite mode → no block (byte-identical).
+        re_rendered = _render_rule_edits(getattr(m, "rule_edits_text", "") or "")
+        if re_rendered:
+            body = f"{body}\n\n{_RULE_EDITS_HEADER}\n{re_rendered}"
         body_parts.append(f"## {i}. {name}\n{ident_line}{body}\n")
 
     schema = assemble_schema(mod_list)
@@ -324,6 +329,20 @@ def _render_module_body(m) -> str:
 
 _FEEDBACK_HEADER = "# 客户反馈补充"
 _SKILL_BLOCK_HEADER = "# 技能库补充（可复用规则）"
+_RULE_EDITS_HEADER = "# 规则补充（迭代沉淀）"
+
+
+def _render_rule_edits(text: str) -> str:
+    """Render a module's `rule_edits_text` (a `## [field:X]` section doc, ADR-002)
+    into readable rule lines — strip the section markers, keep the `- ` lines.
+    Returns '' when empty so the composer adds no block."""
+    if not text or not text.strip():
+        return ""
+    lines = [
+        ln for ln in text.splitlines()
+        if ln.strip() and not ln.lstrip().startswith("## [field:")
+    ]
+    return "\n".join(lines).strip()
 
 
 def _fold_feedback_blocks(prompt: str) -> str:

@@ -85,3 +85,31 @@ def test_flag_off_keeps_plain_instruction(monkeypatch):
     assert "TYPED-EDIT MODE" not in cap["system"]         # unchanged system prompt
     # edits still parsed if the LLM returns them, but prompt didn't ask
     assert out["edits"] and out["edits"][0]["target"] == "currency"
+
+
+# ── P-B.1 composer renders rule_edits_text ──────────────────────────────────
+
+
+def _cmod(key, rule_edits=""):
+    return SimpleNamespace(
+        module_key=key, display_name=key, json_path=f"$.{key}",
+        schema_fragment={"type": "string"}, ocr_prompt="find it",
+        order_index=0, rule_edits_text=rule_edits,
+    )
+
+
+def test_composer_renders_rule_edits_block():
+    from app.ocr_optimizer.service import composer
+
+    m = _cmod("currency", "## [field:currency]\n- 货币统一为 ISO 4217 三字母码")
+    p = composer.assemble_prompt([m], country_global=None)
+    assert composer._RULE_EDITS_HEADER in p
+    assert "ISO 4217" in p
+    assert "## [field:currency]" not in p   # section marker stripped
+
+
+def test_composer_no_rule_block_when_empty():
+    from app.ocr_optimizer.service import composer
+
+    base = composer.assemble_prompt([_cmod("x", "")], country_global=None)
+    assert composer._RULE_EDITS_HEADER not in base   # empty → byte-identical
