@@ -50,7 +50,12 @@ def test_reflect_on_golden_routes_to_reflection(monkeypatch):
             "semantic": "发票唯一编号",
             "anchors": ["'Invoice No.' 右侧"],
             "format_rule": "字母+数字，保留原文",
-            "generalization": {"rule": "始终取票头 Invoice No. 后的串", "holds_for_all": True},
+            # 批次5：holds_for_all 需有证据支撑（≥2 条），否则 sanitize 会
+            # 降为 False——LLM 自报「覆盖全部样本」不可信，凭证据说话。
+            "generalization": {"rule": "始终取票头 Invoice No. 后的串",
+                               "evidence_per_sample": ["样本1: INV-1 在 Invoice No. 右侧",
+                                                       "样本2: INV-2 在 Invoice No. 右侧"],
+                               "holds_for_all": True},
         }
     monkeypatch.setattr(reflector, "llm_text_completion_failover", fake_llm)
 

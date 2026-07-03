@@ -8,10 +8,22 @@
   RETARGET    修正后的值与原值实质不同（不是删字符可得）→ 抓取**内容/范围**
               错了。反思应全文检索正确值出现的位置、分析邻近锚点并跨样本
               验证相关性。
+  SUPPRESS    客户**清空**了该值 → OCR 输出了票面上不存在/不属于该字段的值
+              （幻觉/误抓）。反思应产出**抑制规则**（何时输出 null、禁止从
+              哪个区域取值），绝不能去「重新定位」一个本不存在的值。
   RENAME_ONLY 只改了字段名 → 命名/Schema 问题，值规则不动。
   TYPE_ONLY   只改了格式/类型声明 → 输出类型约束问题。
   CASE_ONLY   仅大小写差异 → 大小写规范。
   MIXED       同时含改名与改值等多重动作（按值的子分类继续处理）。
+
+数值防误判（批次5）：
+  - 两侧都是纯数值且**数值相等**（"600.0" vs "600.00"、str(float) 序列化差异）
+    → 不是内容修正，归 NORMALIZE（输出精度规范），绝不进 RETARGET；
+  - 两侧都是纯数值但**数值不同**（"1000.00" → "100.00"，OCR 认错/多认数字）
+    → 即使 corrected 恰好是 original 的字符子序列，也**不是**删字符规范问题，
+    归 RETARGET（历史 bug：子序列判定把认错数字当 NORMALIZE，产出荒谬的
+    「输出时删掉 0」规则）。千分位/货币符删除（"6,000.00"→"6000.00"）数值
+    相等，仍正确落 NORMALIZE。
 
 为什么用纯代码而不是 LLM：这一层是**证据提取**，字符级 diff 是确定性的；
 把准确的证据（删了哪些字符、删除模式是前缀/后缀/中间）注入反思 prompt，
@@ -72,6 +84,7 @@ class EditIntent:
         zh = {
             "NORMALIZE": "格式规范化修正——取值位置正确，但输出需删除/规范某些字符",
             "RETARGET": "取值内容修正——当前抓取的内容或范围错误，需要重新定位",
+            "SUPPRESS": "抑制修正——客户清空了该值，OCR 输出了不该存在的值（幻觉/误抓）",
             "RENAME_ONLY": "仅字段改名——值规则不需要变动",
             "TYPE_ONLY": "仅输出类型/格式声明调整",
             "CASE_ONLY": "仅大小写规范调整",
@@ -153,9 +166,49 @@ def _classify(diff: dict) -> EditIntent:
     # ── 值变化的子分类 ────────────────────────────────────────────────────
     o, c = ov.strip(), cv.strip()
 
+    # SUPPRESS：客户清空该值 → OCR 幻觉/误抓。历史 bug：落进 RETARGET，
+    # 反思去「重新定位」一个票面上本不存在的值，甚至发明锚点。
+    if o and not c:
+        it.intent = "SUPPRESS"
+        it.notes.append(
+            f"客户**清空**了该值（原 OCR 输出 `{o[:80]}`）——票面上该字段"
+            "很可能不存在，或该值属于别的字段。请产出**抑制规则**："
+            "写明何种情况下应输出 null、禁止从哪个区域/标签取值；"
+            "**不要**为它发明新的取值锚点。"
+        )
+        return it
+
     if o.lower() == c.lower() and o != c:
         it.intent = "CASE_ONLY"
         it.notes.append("原值与正确值仅大小写不同 → 产出大小写规范规则。")
+        return it
+
+    # ── 数值防误判（批次5）──────────────────────────────────────────────
+    fo, fc = _parse_number(o), _parse_number(c)
+    if fo is not None and fc is not None:
+        if abs(fo - fc) <= max(1e-9, 1e-9 * max(abs(fo), abs(fc))):
+            # 数值相等：序列化/精度/千分位差异 → 输出规范，不是内容修正
+            it.intent = "MIXED" if name_changed else "NORMALIZE"
+            deletion = _deletion_evidence(o, c) or {}
+            it.removed_chars = deletion.get("removed_chars", [])
+            it.removed_prefix = deletion.get("removed_prefix", "")
+            it.removed_suffix = deletion.get("removed_suffix", "")
+            it.removal_pattern = deletion.get("pattern", "")
+            it.notes.append(
+                f"原值与正确值**数值相等**（{o} = {c}）——仅序列化/小数位/"
+                "千分位格式差异。请产出输出精度/格式规范，不要改取值锚点。"
+            )
+            return it
+        # 数值不同：OCR 认错/多认数字或抓错行 → 内容修正。即使 corrected
+        # 恰好是 original 的字符子序列（"1000.00"→"100.00" 删一个 0），
+        # 也绝不能当成「删字符」输出规范。
+        it.intent = "MIXED" if name_changed else "RETARGET"
+        it.overlap_ratio = _overlap_ratio(o, c)
+        it.notes.append(
+            f"两侧都是数值但**数值不同**（{o} ≠ {c}）——大概率是 OCR 认错"
+            "数字或抓错了行/字段，属内容修正；不要产出「删除某个数字字符」"
+            "之类的规范化规则。"
+        )
         return it
 
     deletion = _deletion_evidence(o, c)
@@ -170,6 +223,28 @@ def _classify(diff: dict) -> EditIntent:
     it.intent = "MIXED" if name_changed else "RETARGET"
     it.overlap_ratio = _overlap_ratio(o, c)
     return it
+
+
+_NUMBER_SHAPE_RE = re.compile(r"^-?[\d,，.\s]+$")
+
+
+def _parse_number(s: str) -> float | None:
+    """把「纯数值形态」的字符串解析为 float；非数值形态返回 None。
+
+    只接受由数字/千分位/小数点/空白组成的串（可含货币符前后缀会先剥掉），
+    避免把 "INV-100" 这类编号误当数字。
+    """
+    t = re.sub(r"[¥$€£￥]|RM|USD|MYR", "", s or "", flags=re.IGNORECASE).strip()
+    if not t or not _NUMBER_SHAPE_RE.match(t):
+        return None
+    cleaned = t.replace(",", "").replace("，", "").replace(" ", "")
+    # 纯分隔符/多个小数点等非法形态
+    if cleaned.count(".") > 1 or cleaned in ("", "-", "."):
+        return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
 
 
 def _deletion_evidence(original: str, corrected: str) -> dict | None:

@@ -223,8 +223,45 @@ def optimize_module(
 # Returns:
 #   {"verdict": "accept" | "reject", "reasoning": str}
 #
-# Caller decides whether to apply the mutation. On LLM error we default to
-# "accept" (fail-open) so a flaky LLM doesn't block progress.
+# Caller decides whether to apply the mutation.
+#
+# 批次3：FAIL-CLOSED。判官是采纳变更前的唯一闸门（红线④「accept 才采纳」），
+# 历史 fail-open（LLM 异常/非 dict/verdict 非法 → 默认 accept）意味着 LLM
+# 越不稳定、优化器输出越不可信的时刻，闸门恰好消失——降级到 mock 时（mock
+# 返回 fixture list，非 dict）更是恒 accept，坏 prompt 直写新版本。现在任何
+# 无法完成审查的情况一律 reject（保留旧 prompt）：宁可这一轮无变化，也不
+# 采纳未经审查的变更。轮次级兜底（入口 eval + 单调守护）仍在，但不再是
+# 唯一防线。唯一保留的默认 accept：无失败样本可验（无需审查）。
+
+_FEEDBACK_HEADER = "# 客户反馈补充"
+
+
+def customer_feedback_preserved(old_prompt: str | None, new_prompt: str | None) -> bool:
+    """批次6 保留性守护（红线⑤「累积不覆盖」的 round 路径 enforcement）：
+
+    optimizer 整体重写 ocr_prompt 时，客户已确认的反馈内容不得静默丢失。
+    历史缺口：SYSTEM 指令鼓励 "CONSOLIDATE… drop rules"，而判官只看 3 个
+    失败样本切片——恰好不含某条反馈针对的问题时，客户修正就被回退。
+
+    判定：旧 prompt 的反馈块内容行（≥6 字符的实质行）至少一半在新 prompt
+    中逐字存活（协调器整合过的行会带「已并入」标注，同样算存活）。旧 prompt
+    没有反馈块 → 恒 True。
+    """
+    old = old_prompt or ""
+    new = new_prompt or ""
+    if _FEEDBACK_HEADER not in old:
+        return True
+    lines: list[str] = []
+    for seg in old.split(_FEEDBACK_HEADER)[1:]:
+        for raw in seg.splitlines():
+            t = raw.strip().lstrip("-• ").strip()
+            if len(t) >= 6 and not t.startswith("（"):
+                lines.append(t)
+    if not lines:
+        return True
+    surviving = sum(1 for t in lines if t in new)
+    return surviving * 2 >= len(lines)
+
 
 VERIFIER_SYSTEM = (
     "你是一个 OCR prompt 修改的审查员。给定一个字段当前 prompt 提取失败的样本，"
@@ -277,16 +314,27 @@ def verify_module_fix(
         )
     except Exception as exc:
         logger.warning(
-            "verify_module_fix LLM failed for %s: %s — accepting by default",
-            module.module_key, exc,
+            "verify_module_fix LLM failed for %s: %s — REJECTING (fail-closed, "
+            "keep old prompt)", module.module_key, exc,
         )
-        return {"verdict": "accept", "reasoning": f"verifier error: {exc}"}
+        return {"verdict": "reject", "reasoning": f"verifier unavailable: {exc}"}
 
     if not isinstance(result, dict):
-        return {"verdict": "accept", "reasoning": "non-dict response, defaulting accept"}
-    verdict = str(result.get("verdict", "accept")).lower()
+        # 典型场景：LLM 链降级到 mock（返回 fixture list）→ 审查根本没发生
+        logger.warning(
+            "verify_module_fix got non-dict response for %s (likely mock "
+            "degradation) — REJECTING (fail-closed)", module.module_key,
+        )
+        return {
+            "verdict": "reject",
+            "reasoning": "verifier returned non-dict response (verification did not happen)",
+        }
+    verdict = str(result.get("verdict", "")).lower()
     if verdict not in ("accept", "reject"):
-        verdict = "accept"
+        return {
+            "verdict": "reject",
+            "reasoning": f"verifier returned invalid verdict {verdict!r} (fail-closed)",
+        }
     return {
         "verdict": verdict,
         "reasoning": str(result.get("reasoning", ""))[:500],

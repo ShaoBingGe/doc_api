@@ -140,11 +140,22 @@ def reflect_on_diffs(
                 if o is not None:
                     outputs.append((skill.key, o))
 
+        from ..service.field_rule import has_absolute_coordinates
+
         for skill_key, output in outputs:
             result.skill_outputs.append({"skill": skill_key, "output": output})
             if isinstance(output, dict):
                 if isinstance(output.get("fix_suggestion"), str) and output["fix_suggestion"].strip():
-                    result.fix_suggestions.append(output["fix_suggestion"].strip())
+                    sug = output["fix_suggestion"].strip()
+                    # 批次6（§3.5 泛化守护代码执行）：含绝对坐标/固定行列号的
+                    # 建议打回——换一张版式即失效，且同版式样本上判官检不出。
+                    if has_absolute_coordinates(sug):
+                        logger.warning(
+                            "skill %s fix_suggestion dropped (absolute coordinates): %s",
+                            skill_key, sug[:120],
+                        )
+                    else:
+                        result.fix_suggestions.append(sug)
                 if isinstance(output.get("description_patch"), str) and output["description_patch"].strip():
                     if not result.description_patch:
                         result.description_patch = output["description_patch"].strip()
@@ -154,8 +165,16 @@ def reflect_on_diffs(
             if isinstance(o.get("output"), dict) and o["output"].get("rationale")
         ]
         result.rationale_summary = " | ".join(rats)
-        result.field_rule = _field_rule_from_outputs(
-            result.skill_outputs, diff, intent=result.edit_intent,
+        # 批次5：落库前硬校验——value_pattern 必须可编译且匹配全部观测值、
+        # 枚举与观测值矛盾即丢弃、holds_for_all 凭证据条数说话。
+        from ..service.field_rule import sanitize_field_rule
+        observed, n_rows = _observed_values_for(diff, cross_doc_context)
+        result.field_rule = sanitize_field_rule(
+            _field_rule_from_outputs(
+                result.skill_outputs, diff, intent=result.edit_intent,
+            ),
+            observed_values=observed,
+            sample_count=n_rows or None,
         )
         return key, result
 
@@ -168,17 +187,78 @@ def reflect_on_diffs(
             key = diff.get("module_key") or f"_new_{idx}"
             return key, ReflectionResult(module_key=key, kind=diff.get("kind", "edit"), diff=diff)
 
-    results: dict[str, ReflectionResult] = {}
+    raw: list[tuple[str, ReflectionResult]] = []
     if len(diffs) <= 1:
         for idx, diff in enumerate(diffs):
-            k, r = _safe(idx, diff)
-            results[k] = r
+            raw.append(_safe(idx, diff))
     else:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=min(_REFLECT_CONCURRENCY, len(diffs))) as ex:
-            for k, r in ex.map(lambda p: _safe(*p), list(enumerate(diffs))):
-                results[k] = r
+            raw = list(ex.map(lambda p: _safe(*p), list(enumerate(diffs))))
+
+    # 批次5：同一 module_key 的多条 diff（客户在多个样本上修同一字段——
+    # 产品要求 ≥3 样本已审视的标准形态）反思结果**合并**而非字典覆盖。
+    # 历史 bug：`results[key] = r` 让后者覆盖前者，2/3 的跨样本视角被丢弃。
+    results: dict[str, ReflectionResult] = {}
+    for k, r in raw:
+        if k in results:
+            results[k] = _merge_reflection_results(results[k], r)
+        else:
+            results[k] = r
     return results
+
+
+def _merge_reflection_results(a: ReflectionResult, b: ReflectionResult) -> ReflectionResult:
+    """合并同一 module_key 的两条反思结果（累积不覆盖，§⑤.3）。"""
+    from ..service.field_rule import merge_field_rules
+
+    merged = ReflectionResult(module_key=a.module_key, kind=a.kind, diff=a.diff)
+    merged.skill_outputs = list(a.skill_outputs) + list(b.skill_outputs)
+
+    seen: set[str] = set()
+    for s in list(a.fix_suggestions) + list(b.fix_suggestions):
+        key = (s or "").strip()
+        if key and key not in seen:
+            seen.add(key)
+            merged.fix_suggestions.append(key)
+
+    merged.description_patch = a.description_patch or b.description_patch
+    rats = [x for x in (a.rationale_summary, b.rationale_summary) if x]
+    merged.rationale_summary = " | ".join(rats)
+    merged.field_rule = merge_field_rules(
+        getattr(a, "field_rule", None), getattr(b, "field_rule", None),
+    )
+    # reconciler 按「最新客户意图」裁决：取后到达的非 NONE 意图
+    merged.edit_intent = b.edit_intent if b.edit_intent != "NONE" else a.edit_intent
+    return merged
+
+
+def _observed_values_for(
+    diff: dict, cross_doc_context: dict[str, list[dict]],
+) -> tuple[list[str], int]:
+    """收集该字段的观测值（客户修正值 + 跨样本已审视值），供 FieldRule
+    硬校验用。返回 (observed_values, 跨样本行数)。"""
+    observed: list[str] = []
+    cv = diff.get("corrected_value")
+    if cv is not None and str(cv).strip():
+        observed.append(str(cv).strip())
+    rows: list[dict] = []
+    for name in (
+        (diff.get("original_name") or "").strip(),
+        (diff.get("corrected_name") or "").strip(),
+        (diff.get("module_key") or "").strip(),
+    ):
+        if name and name in (cross_doc_context or {}):
+            rows = cross_doc_context[name]
+            break
+    for r in rows:
+        v = r.get("value")
+        if r.get("is_corrected") and v is not None and str(v).strip():
+            observed.append(str(v).strip())
+    # 去重保序
+    seen: set[str] = set()
+    out = [v for v in observed if not (v in seen or seen.add(v))]
+    return out, len(rows)
 
 
 def _field_rule_from_outputs(skill_outputs: list[dict], diff: dict, *, intent: str = "NONE"):

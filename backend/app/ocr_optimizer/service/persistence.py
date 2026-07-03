@@ -268,10 +268,11 @@ def _merge_round_suggestions(
     if not isinstance(base, dict):
         base = {}
     # If the optimizer produced a fresh structured dict, take its
-    # top-level keys (but never let it clobber an existing reflections list)
+    # top-level keys (but never let it clobber the reflections history list
+    # or the persisted FieldRule — optimizer 无权改写结构化规则，批次5)
     if isinstance(new_text, dict):
         for k, v in new_text.items():
-            if k == "reflections":
+            if k in ("reflections", "_field_rule"):
                 continue
             base[k] = v
         summary_text = (

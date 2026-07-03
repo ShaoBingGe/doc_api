@@ -114,6 +114,31 @@ def _run_single(
     return _parse_json_lenient(raw_text)
 
 
+def invalid_output_reason(out: Any) -> str | None:
+    """判定一份 OCR 输出是否为「传输/解析级失败」——这类样本不允许参与
+    质量决策（评分聚合、早停、版本比较、优化目标），否则一次网络抖动 /
+    限流 / 截断就会把整轮分数打成假 0，劫持单调守护与优化方向。
+
+    有效 = 模型真的返回了可解析的 JSON 容器（dict/list，含空 list —— 那是
+    「模型判定无记录」的真实提取结果）。无效 = _error（异常）、_raw（不可
+    解析）、空 dict（空响应）、非容器标量。返回 None 表示有效，否则返回
+    人类可读的原因。
+    """
+    if out is None:
+        return "no output"
+    if isinstance(out, dict):
+        if "_error" in out:
+            return f"OCR error: {str(out.get('_error'))[:200]}"
+        if "_raw" in out:
+            return "output not parseable as JSON"
+        if not out:
+            return "empty output"
+        return None
+    if isinstance(out, list):
+        return None
+    return f"non-JSON-container output ({type(out).__name__})"
+
+
 def _parse_json_lenient(raw: str | None) -> Any:
     if not raw:
         return {}

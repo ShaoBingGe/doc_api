@@ -1400,9 +1400,11 @@ def _run_three_rounds(db: Session, job: CustomizeJob, new_api: ApiDefinition) ->
         except Exception as exc:  # noqa: BLE001
             logger.warning("final-confirmation eval failed: %s", exc)
             latest_acc = None
-        if latest_acc is not None and latest_acc >= best_eval_acc:
+        # 批次6：终轮采纳要求**严格优于**已评估最优（含小平局带）——
+        # 持平时保留已确认版本，避免噪声驱动的版本切换。
+        if latest_acc is not None and latest_acc > best_eval_acc + 0.005:
             logger.info(
-                "final-confirmation: latest version acc=%.4f >= best_eval=%.4f → activate latest",
+                "final-confirmation: latest version acc=%.4f > best_eval=%.4f → activate latest",
                 latest_acc, best_eval_acc,
             )
             best_eval_id, best_eval_acc = latest_id, latest_acc
@@ -1592,6 +1594,10 @@ def _confirm_version_accuracy(db: Session, run, version_id: uuid.UUID) -> float 
     _conf_proc, _conf_model = _PF.resolve_spec(
         api_def.processor_type, api_def.model_name
     )
+    # 批次2：降级到 mock 的确认评估不可信 → 返回 None（保守保留已评估最优版）。
+    if _PF.is_degraded_to_mock(_conf_proc, api_def.processor_type):
+        logger.warning("final-confirmation degraded to mock — skipping (keep best evaluated)")
+        return None
     outputs = run_ocr_on_samples(
         db,
         sample_document_ids=sample_ids,
@@ -1600,6 +1606,16 @@ def _confirm_version_accuracy(db: Session, run, version_id: uuid.UUID) -> float 
         processor_spec=_conf_proc,
         model_name=_conf_model,
     )
+    # 批次2：传输/解析失败的样本剔除；剩余有效样本太少 → 无法确认（None）。
+    from .ocr_runner import invalid_output_reason
+    invalid = {sid: r for sid, out in outputs.items()
+               if (r := invalid_output_reason(out))}
+    if invalid:
+        logger.warning("final-confirmation: excluding invalid samples %s", invalid)
+        outputs = {sid: out for sid, out in outputs.items() if sid not in invalid}
+        gts = {sid: gt for sid, gt in gts.items() if sid not in invalid}
+    if len(outputs) < min(2, len(sample_ids)):
+        return None
     report = score_outputs(module_specs_from_orm(modules), outputs, gts)
     return report.overall_accuracy
 
@@ -1625,15 +1641,39 @@ def _best_evaluated_version(db: Session, run_id: uuid.UUID) -> tuple[uuid.UUID |
     rounds = (
         db.query(OcrOptimizationRound)
         .filter(OcrOptimizationRound.run_id == run_id)
+        .order_by(OcrOptimizationRound.round_num)
         .all()
     )
     best_id: uuid.UUID | None = None
     best_acc = -1.0
     for r in rounds:
-        acc = r.overall_accuracy if r.overall_accuracy is not None else -1.0
-        if r.prompt_version_id and acc > best_acc:
+        if r.overall_accuracy is None or not r.prompt_version_id:
+            continue  # 评测无效轮（批次2）不参与
+        acc = r.overall_accuracy
+        # 批次6 平局带：切换到更晚的版本要求提升超过「半个量化步长」
+        # （1/(2·样本数·字段数)）。LLM OCR 单次采样天然抖动，观测分差小于
+        # 一个字段一次翻转的一半基本是噪声——持平保早版（更少变更=更稳）。
+        band = _tie_band(r)
+        if best_id is None or acc > best_acc + band:
             best_acc, best_id = acc, r.prompt_version_id
+        elif acc > best_acc:
+            best_acc = acc  # 记录观测高值但不切版本（差异在噪声带内）
     return best_id, best_acc
+
+
+def _tie_band(rnd) -> float:
+    """半个量化步长：0.5 / (有效样本数 × 字段数)；信息不足时保守 0.005。"""
+    try:
+        n_samples = len(rnd.per_sample_accuracy or {}) or None
+        if n_samples is None:
+            q = rnd.eval_quality or {}
+            n_samples = q.get("valid_sample_count") or None
+        n_modules = len(rnd.iterations or []) or None
+        if n_samples and n_modules:
+            return 0.5 / (n_samples * n_modules)
+    except Exception:  # noqa: BLE001
+        pass
+    return 0.005
 
 
 # ── Forking ──────────────────────────────────────────────────────────────────
@@ -1840,6 +1880,11 @@ def _fork_api_definition(
             name, synth["module_key"],
         )
 
+    # 批次5：反思结果现在按 module_key 合并（reflector 侧），同字段多条 diff
+    # 的 fix_suggestions 只能追加一次——历史 bug：每条 diff 都 extend 同一份
+    # 合并建议，同一建议在 __prompt_suffix 里重复 N 遍。
+    _reflection_sugs_consumed: set[str] = set()
+
     for orig_idx, d in enumerate(diffs):
         if d.get("kind") == "edit":
             mk = d.get("module_key")
@@ -1889,9 +1934,11 @@ def _fork_api_definition(
                 existing["__rename_old"] = old_name
                 existing["__rename_new"] = new_name
             # Suffix: accumulate per-cell hints + reflection fix_suggestions
+            # （合并后的反思建议每个 module_key 只消费一次；值示例逐 diff 保留）
             suffix_parts: list[str] = []
-            if r:
+            if r and mk not in _reflection_sugs_consumed:
                 suffix_parts.extend(s for s in r.fix_suggestions if s)
+                _reflection_sugs_consumed.add(mk)
             field_label = d.get("original_name") or d.get("corrected_name") or ""
             corrected_value = d.get("corrected_value")
             if corrected_value:
@@ -1942,8 +1989,13 @@ def _fork_api_definition(
         if r is None:
             continue
         new_sugs = list(getattr(r, "fix_suggestions", []) or [])
-        if (new_sugs or _reconciler.is_bloated(m.ocr_prompt)) and \
-                _reconciler.has_accumulated_feedback(m.ocr_prompt):
+        if not _reconciler.has_accumulated_feedback(m.ocr_prompt):
+            continue
+        # 批次6（红线⑤「矛盾才协调」）：膨胀 → 纯整合；新建议与旧反馈疑似
+        # 矛盾 → LLM 裁决；否则确定性盲追加（composer 折叠去重，零信息损失、
+        # 零 LLM 漂移）。历史行为是逢新建议必 LLM 重写。
+        if _reconciler.is_bloated(m.ocr_prompt) or \
+                _reconciler.has_contradiction(m.ocr_prompt, new_sugs):
             reconcile_targets.append((m, r, new_sugs))
 
     def _reconcile_one(m, r, new_sugs):
@@ -2102,6 +2154,18 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
         reflections_log = list(new_suggestions.get("reflections") or [])
         reflections_log.append(entry)
         new_suggestions["reflections"] = reflections_log
+
+        # 批次5：把反思产出的结构化 FieldRule（已在 reflector 侧硬校验）
+        # 持久化到 ocr_suggestions[FIELD_RULE_KEY]，与既有规则合并
+        # （累积不覆盖）。composer 以附加段渲染其骨架——这是 Phase 2/3
+        # 结构化设计的落地点，此前 FieldRule 从未落库，骨架渲染是死代码。
+        fr_new = getattr(reflection, "field_rule", None)
+        if fr_new is not None:
+            from .field_rule import FIELD_RULE_KEY, FieldRule, merge_field_rules
+            fr_old = FieldRule.from_dict(new_suggestions.get(FIELD_RULE_KEY))
+            fr_merged = merge_field_rules(fr_old, fr_new)
+            if fr_merged is not None and fr_merged.is_renderable():
+                new_suggestions[FIELD_RULE_KEY] = fr_merged.to_dict()
 
     new_schema = src.schema_fragment
     schema_type = patch.get("__schema_type")

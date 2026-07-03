@@ -125,7 +125,7 @@ frontend/src/        pages / components / stores / lib/api-client.ts
 |---|---|
 | `ApiDefinition` | 一个可调用提取 API。`api_code` 唯一；状态见 §3.6 |
 | `OcrPromptVersion.composed_prompt` | 非空，含 GLOBAL_PREAMBLE 前缀 |
-| `OcrPromptVersion.composed_schema` | dict，`type:"object"` + 至少 1 个 property |
+| `OcrPromptVersion.composed_schema` | dict；根形状跟随模块 json_path 家族：`$.x` 家族 → `type:"object"`，`$[*].x` 家族（国家模板）→ `type:"array"` + items object，混用 compose 时 raise |
 | `OcrPromptVersion.country_global_text` | 国家全局规则（Part 1+2）；新版本**原样沿用、不改写** |
 | `OcrModule` | 一个字段模块。`json_path` 用 jsonpath 语法；`"$"`/`""` 表示全局 |
 | `OcrModule.skill_ids` | 只读硬拷贝，optimizer 不能写 |
@@ -171,7 +171,10 @@ GLOBAL_SELF_CHECK               ← 输出前自检（写死在 composer.py）
   `enum_values`（有限集合约束）— FieldRule 同名字段承接并由 composer 渲染。
 - **reconciler**（`service/reconciler.py`）：当某字段 prompt 已含累积反馈、本轮又有新建议且**矛盾**时，
   调 LLM 协调成单一自洽 prompt，**冲突以最新客户意图为准**；fail-open（失败回退到累积追加）。
-  **统筹扩展**：模块体膨胀（`is_bloated`：反馈块 ≥2 或 >600 字符）时即便无新建议也触发纯整合，
+  **矛盾门是代码判定**（`has_contradiction`：对立指令对 + 同主题不同文本启发式）——无矛盾走
+  确定性盲追加（composer 折叠去重），不调 LLM，杜绝逢建议必重写的 prompt 漂移；协调输出保留
+  「# 客户反馈补充」marker（防状态机振荡）。
+  **统筹扩展**：模块体膨胀（`is_bloated`：反馈块 ≥3 或 >1500 字符）时即便无新建议也触发纯整合，
   把堆叠的历史反馈收敛为单一规则集（按 语义→别名→锚点→格式→排歧 组织）。
 - **评测 harness**（`eval/harness.py`）：OCR + 逐字段打分；GT 与 json_path 根对齐
   （`ground_truth.align_for_path`，数组根路径下把 dict GT 包成 `[gt]`，避免假分）。
@@ -220,6 +223,12 @@ schema 冲突 `raise ValueError`，调用方 `try/except`：迭代末尾回退�
 每轮入口先 OCR+eval：`overall ≥ 0.999` 立即早停复用，**早停必须在调 optimizer 之前**；
 版本级回退守护：若新版本 `acc < 上一已激活版本 acc` → **丢弃新版本、保留旧版本**（记「无提升」，不算 failed），
 **准确率永不下降**。前提：评分必须是 GT 根对齐后的真实值。
+**评测有效性门**（批次2）：传输/解析失败样本（`_error`/`_raw`/空响应）从聚合剔除、不记 0 分；
+降级到 mock 或有效样本 < min(2, 总数) → 该轮 `eval_quality.invalid`、`overall_accuracy=None`，
+不参与早停/单调守护/优化（`OcrOptimizationRound.eval_quality` 记录原因）。
+**平局带**（批次6）：版本切换要求提升 > 半个量化步长（`_tie_band`），持平保早版——单次 LLM 采样的
+观测分差不是真实质量差。**判官 fail-closed**（批次3）：verify_module_fix 的 LLM 异常/非 dict/
+verdict 非法一律 reject 保旧 prompt；optimizer 重写丢客户反馈行 → 保留性守护直接 reject。
 
 ### ⑤ 反思按 skill 分流、可累积、矛盾才协调
 新字段的 LLM 扩展必须在**建新版本前**完成（给第 1 轮一个完整起点）；
@@ -240,6 +249,8 @@ LLM_FALLBACK_CHAIN 由 `get_chain` 做同样的可用性过滤。降级时丢弃
 - LLM 失败走 `LLM_FALLBACK_CHAIN` → 最终 `mock`，job 继续。
 - compose 失败 → 复用上一版本；该轮标 failed 但 job 不挂。
 - **永不**自动把 OCR 输出标成 GT；**永不**让上传后 OCR 出错抛 500。
+- **降级不参与决策**（批次2/3）：job 可以继续，但降级/失败产物**不得**进入质量决策——
+  失败样本不计分、mock 轮标 invalid、mock 判官恒 reject。「不阻塞」≠「当真」。
 
 ---
 

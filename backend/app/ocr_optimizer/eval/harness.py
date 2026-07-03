@@ -157,6 +157,11 @@ def score_outputs(
                 continue
 
             if isinstance(ocr_full, dict) and "_error" in ocr_full:
+                if strict:
+                    # 批次6：黄金 strict 路径同样剔除传输失败——0 分会把一次
+                    # 网络抖动误读成「机器回归」，拦下无辜的平台 PR。失败
+                    # doc 已收进 ocr_error_doc_ids，调用方据此判定批次有效性。
+                    continue
                 per_sample.append({
                     "doc_id": d, "accuracy": 0.0, "matched": False,
                     "diff": f"OCR error: {str(ocr_full.get('_error'))[:120]}",

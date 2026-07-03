@@ -101,6 +101,76 @@ def ensure_customize_job_columns() -> None:
             logging.getLogger(__name__).exception("ensure_customize_job_columns failed")
 
 
+def ensure_ocr_module_columns() -> None:
+    """Idempotent add of `ocr_modules.rule_edits_text` (TEXT, ADR-002).
+
+    存量缺口：该列随 ADR-002 加入 ORM 但从未配 ensure 迁移——任何早于
+    ADR-002 建的库，ORM 一查 ocr_modules 就 OperationalError。
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+        try:
+            if is_sqlite:
+                cols = {row[1] for row in conn.execute(
+                    text('PRAGMA table_info("ocr_modules")'))}
+            else:
+                cols = {
+                    row[0]
+                    for row in conn.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns "
+                            "WHERE table_name = :t"
+                        ),
+                        {"t": "ocr_modules"},
+                    )
+                }
+            if cols and "rule_edits_text" not in cols:
+                conn.execute(text(
+                    "ALTER TABLE \"ocr_modules\" ADD COLUMN rule_edits_text TEXT "
+                    "NOT NULL DEFAULT ''"
+                ))
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("ensure_ocr_module_columns failed")
+
+
+def ensure_round_eval_quality_column() -> None:
+    """Idempotent add of `ocr_optimization_rounds.eval_quality` (JSON).
+
+    批次2（降级/失败样本剔除）新增列：记录该轮评测有效性（剔除样本、
+    降级标记）。与 ensure_customize_job_columns 同款原型迁移模式。
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+        try:
+            if is_sqlite:
+                cols = {row[1] for row in conn.execute(
+                    text('PRAGMA table_info("ocr_optimization_rounds")'))}
+            else:
+                cols = {
+                    row[0]
+                    for row in conn.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns "
+                            "WHERE table_name = :t"
+                        ),
+                        {"t": "ocr_optimization_rounds"},
+                    )
+                }
+            if cols and "eval_quality" not in cols:
+                col_type = "TEXT" if is_sqlite else "JSON"
+                conn.execute(text(
+                    f'ALTER TABLE "ocr_optimization_rounds" ADD COLUMN eval_quality {col_type}'
+                ))
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("ensure_round_eval_quality_column failed")
+
+
 def ensure_tenant_columns() -> None:
     """
     Idempotent lightweight migration for the prototype SQLite DB.

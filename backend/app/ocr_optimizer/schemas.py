@@ -138,6 +138,7 @@ class RoundSummary(BaseModel):
 class RoundDetail(RoundSummary):
     per_sample_accuracy: dict | None = None
     ocr_raw_outputs: dict | None = None
+    eval_quality: dict | None = None
     iterations: list[IterationResponse] = []
 
 

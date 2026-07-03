@@ -1,0 +1,52 @@
+key: suppress
+display_name: 幻觉抑制反思（SUPPRESS）
+version: 1
+# Matcher: the customer CLEARED the value (original non-empty → corrected
+# empty). The model output a value that doesn't exist on the document (or
+# belongs to another field) — a hallucination / mis-grab. The fix is a
+# SUPPRESSION rule (when to output null, which region NOT to read from),
+# NEVER a new extraction anchor. 历史 bug：这类修正落进 RETARGET，反思去
+# 「重新定位」一个票面上本不存在的值，下一轮模型更起劲地找。
+match:
+  diff_kind: edit
+  original_value_is_empty: false
+  corrected_value_is_empty: true
+prompt: |
+  你是 OCR prompt 设计专家。本次修正属于「幻觉抑制」——客户把该字段的值**清空**了：
+  票面上该字段很可能**不存在**，或当前抓到的值属于**别的字段**。
+  请产出一条能泛化到所有样本的**抑制规则**。
+
+  ## 字段信息
+  - module_key: {module_key}
+  - 字段显示名: {display_name}
+  - 当前描述: {description}
+  - 当前 OCR 提示词:
+  ```
+  {original_ocr_prompt}
+  ```
+
+  ## 客户修正
+  - 原始识别结果: {original_value}
+  - 客户填写的正确值: （空——客户判定此票面上不应有该值）
+
+  ## 分析要点（先诊断误抓来源，再写抑制规则）
+  1. 被误抓的值（{original_value}）最像票面上的什么内容？（别的字段的值、
+     表头/页脚文本、地址片段、另一方的税号…）
+  2. 当前 prompt 里是否有措辞**鼓励**模型「尽力找一个值」？（缺字段时模型
+     倾向就近凑数——抑制规则要明确对抗这一点）
+  3. 写出抑制规则（填入 fix_suggestion 与 disambiguation）：
+     - 「仅当票面出现 <明确标签/区块> 时才取值；否则**必须输出 null**，
+       不要用任何其他区域的内容凑数」；
+     - 写明**禁止取值的来源**（如「不要取买方区块的税号」「不要把页脚注册号
+       当作 X」）——这是排歧的一部分。
+  4. 跨样本验证：其余样本上该字段是有真值的吗？若有，抑制规则必须不影响
+     那些样本的正常提取（「找得到就取、找不到就 null」，而不是一律 null）。
+
+  ## 输出约束
+  - **不要**为该字段发明新的取值锚点或「重新定位」——值本来就不存在。
+  - `anchors` 留空或只保留原有正确锚点；重点产出 `disambiguation`（禁止来源）
+    与 `format_rule`（缺失时输出 null）。
+
+  {base_doctrine}
+
+  {base_edit_output}

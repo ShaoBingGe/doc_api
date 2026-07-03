@@ -75,6 +75,11 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         db.close()
 
+    # 批次6：传输失败的 doc 已从 strict 打分中剔除（harness），这里显式
+    # 声明批次有效性——有失败 doc 时分数只覆盖部分批次；全失败 = 结果无效
+    # （网络/key 问题，不是 prompt 回归），退出码非 0 防止 CI 误判通过。
+    n_errors = len(report.ocr_error_doc_ids or [])
+    eval_valid = n_errors < batch["batch_size"]
     payload = {
         "country": args.country, "candidate": args.candidate,
         "batch_size": batch["batch_size"], "pool_size": batch["pool_size"],
@@ -82,21 +87,26 @@ def main(argv: list[str] | None = None) -> int:
         "strict_overall_accuracy": round(report.overall_accuracy, 4),
         "modules": report.to_dict()["modules"],
         "deviations": len(deviations),
+        "ocr_error_docs": n_errors,
+        "eval_valid": eval_valid,
     }
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return 0
+        return 0 if eval_valid else 2
 
     print(f"GOLDEN STRICT · {args.country} · candidate={args.candidate}")
     print(f"  batch {batch['batch_size']} seeds (pool {batch['pool_size']}) · "
           f"{len(batch['core_fields'])} core fields")
     print(f"  strict overall (exact-match) = {payload['strict_overall_accuracy']}")
+    if n_errors:
+        print(f"  ⚠️ OCR 传输失败 {n_errors}/{batch['batch_size']} doc（已剔除，不计 0 分）"
+              + ("" if eval_valid else " —— 全部失败，本次结果无效（网络/key 问题）"))
     print("-" * 60)
     for m in sorted(payload["modules"], key=lambda x: x["accuracy"]):
         print(f"  {m['accuracy']:.2f}  {m['matched']:>6}  {m['module_key']}")
     print("-" * 60)
     print(f"deviations: {len(deviations)} (each → a diff for reflect_on_golden)")
-    return 0
+    return 0 if eval_valid else 2
 
 
 if __name__ == "__main__":

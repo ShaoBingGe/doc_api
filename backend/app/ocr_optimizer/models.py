@@ -225,6 +225,10 @@ class OcrOptimizationRound(UUIDMixin, Base):
     per_sample_accuracy: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     ocr_raw_outputs: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     meta_decision: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # 评测有效性（批次2）：{excluded_samples: {sid: reason}, valid_sample_count,
+    # total_sample_count, degraded_to_mock, invalid}。invalid=True 的轮
+    # overall_accuracy 为 None，不参与早停/单调守护/优化。
+    eval_quality: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     phase: Mapped[str] = mapped_column(
         String(24), nullable=False, default=RoundPhase.ocr_running.value
     )

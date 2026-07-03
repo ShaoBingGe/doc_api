@@ -118,7 +118,11 @@ def test_is_bloated_thresholds():
 
     assert not reconciler.is_bloated(None)
     assert not reconciler.is_bloated("简短规则")
+    # 批次6：阈值 2 块 → 3 块、600 → 1500 字符——原阈值让健康 prompt
+    # 每轮被 LLM 有损重写（不可复现漂移）
     two_blocks = "x\n# 客户反馈补充\na\n# 客户反馈补充\nb"
-    assert reconciler.is_bloated(two_blocks)
-    assert reconciler.is_bloated("y" * 601)
-    assert not reconciler.is_bloated("y" * 600)
+    assert not reconciler.is_bloated(two_blocks)
+    three_blocks = two_blocks + "\n# 客户反馈补充\nc"
+    assert reconciler.is_bloated(three_blocks)
+    assert reconciler.is_bloated("y" * 1501)
+    assert not reconciler.is_bloated("y" * 1500)

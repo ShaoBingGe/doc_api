@@ -213,6 +213,32 @@ class ProcessorFactory:
         return "mock", None
 
     @classmethod
+    def is_degraded_to_mock(cls, resolved_proc: Optional[str], preferred: Optional[str]) -> bool:
+        """True 当 resolve_spec 落到 mock 且这不是有意配置——即行偏好或
+        DEFAULT_PROCESSOR 本想要一个真实 provider，但都不可用被静默兜底。
+
+        质量决策（评分聚合 / 早停 / 版本单调守护 / 判官）不得信任降级轮：
+        mock 返回固定 fixture，对着它打分再「优化」prompt 是纯噪声迭代。
+        有意配 mock（开发/测试：行偏好或 DEFAULT_PROCESSOR 显式 mock，或
+        两者皆空）不算降级。
+        """
+        if (resolved_proc or "").strip().lower() != "mock":
+            return False
+        pref = (preferred or "").split("|", 1)[0].strip().lower()
+        if pref == "mock":
+            return False
+        try:
+            from app.core.config import get_settings
+            default = (get_settings().DEFAULT_PROCESSOR or "").strip().lower()
+        except Exception:  # pragma: no cover — settings 不可读时只剩 mock，视为有意
+            default = "mock"
+        if default == "mock" or not (pref or default):
+            # DEFAULT_PROCESSOR 显式 mock（开发/测试）或完全无偏好 → 有意配置
+            return False
+        # pref/default 都想要真实 provider 但都不可用 → resolve_spec 静默兜底
+        return True
+
+    @classmethod
     def register(cls, name: str, processor_cls: Type[DocumentProcessor]) -> None:
         """Register a custom processor type at runtime."""
         if not (isinstance(processor_cls, type) and issubclass(processor_cls, DocumentProcessor)):

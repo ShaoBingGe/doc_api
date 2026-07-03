@@ -75,15 +75,16 @@ def test_field_rule_of_reads_persisted_copy():
     assert fr is not None and fr.semantic == "X 字段语义"
 
 
-def test_composer_uses_field_rule_when_present():
-    """A module carrying a renderable FieldRule renders the skeleton; a plain
-    module renders its raw ocr_prompt (Phase-1 behavior, unchanged)."""
+def test_composer_appends_field_rule_skeleton_to_body():
+    """批次5：FieldRule 骨架是**附加式**渲染——基体 ocr_prompt（国家模板
+    指令/客户反馈/重命名指令）必须保留，骨架以独立小节追加其后。
+    历史替换式渲染会让一条稀疏反思规则压掉整个字段 prompt。"""
     from app.ocr_optimizer.service import composer
     from app.ocr_optimizer.service.field_rule import FieldRule
 
     structured = SimpleNamespace(
         module_key="inv_no", display_name="发票号", json_path="$[*].invoiceNumber",
-        schema_fragment={"type": "string"}, ocr_prompt="RAW-BLOB-SHOULD-NOT-APPEAR",
+        schema_fragment={"type": "string"}, ocr_prompt="RAW-BASE-BODY-MUST-STAY",
         order_index=0,
         field_rule=FieldRule(semantic="发票唯一编号", format_rule="字母+数字"),
     )
@@ -93,8 +94,11 @@ def test_composer_uses_field_rule_when_present():
         order_index=1,
     )
     text = composer.assemble_prompt([structured, plain], country_global="CG")
-    # structured → skeleton, raw blob suppressed
+    # structured → 基体保留 + 骨架附加
+    assert "RAW-BASE-BODY-MUST-STAY" in text
+    assert "# 结构化字段规则（反思沉淀）" in text
     assert "- 语义：发票唯一编号" in text
-    assert "RAW-BLOB-SHOULD-NOT-APPEAR" not in text
+    # 骨架在基体之后
+    assert text.index("RAW-BASE-BODY-MUST-STAY") < text.index("- 语义：发票唯一编号")
     # plain → raw body preserved
     assert "找币种代码 RAW-PLAIN-BODY" in text

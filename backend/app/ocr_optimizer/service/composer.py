@@ -197,21 +197,50 @@ def assemble_schema(modules: Iterable) -> dict:
     For each module we use the `json_path` to know where in the final schema
     its fragment lives. Conflicting paths (two modules claim the same path)
     raise ValueError so callers can surface the misconfiguration.
+
+    根形状跟随模块 json_path 家族：
+      - 对象根（"$.foo"）        → {"type":"object", properties: ...}
+      - 数组根（"$[*].foo"）     → {"type":"array", "items": {object...}}
+    国家模板全部字段是 "$[*].x"，OCR 输出与 GT 对齐（align_for_path）都按
+    列表根处理，response_schema 必须同为列表根。历史 bug：根级 [*] token 曾
+    被 _inject 静默丢弃，composed_schema 根被拼成 object——严格执行
+    response_schema 的模型（Gemini）随即输出 dict，slicer 按 $[*].x 切片
+    全部为 None，整轮评分假 0 分。两种根混用 raise ValueError；
+    "$"/"" 全局模块与两种根都兼容（其 fragment.properties 并入记录对象）。
     """
+    pairs: list[tuple] = []
+    for m in modules:
+        path = (m.json_path or "").strip()
+        if not path:
+            continue
+        pairs.append((m, _normalize_path(path)))
+
+    if any(n.startswith("[*]") for _, n in pairs):
+        object_rooted = [m.module_key for m, n in pairs if n and not n.startswith("[*]")]
+        if object_rooted:
+            raise ValueError(
+                "Schema conflict: array-rooted json_paths ($[*].x) cannot mix "
+                f"with object-rooted paths (modules: {object_rooted})"
+            )
+        record = _assemble_object_schema(
+            (m, n[3:].lstrip(".")) for m, n in pairs
+        )
+        return {"type": "array", "items": record}
+    return _assemble_object_schema(pairs)
+
+
+def _assemble_object_schema(pairs: Iterable) -> dict:
+    """Merge (module, normalized_path) pairs into one object-rooted schema."""
     root: dict = {"type": "object", "properties": {}}
     seen_paths: dict[str, str] = {}
 
-    for m in modules:
-        path = (m.json_path or "").strip()
+    for m, norm in pairs:
         fragment = copy.deepcopy(m.schema_fragment or {})
-        if not path:
-            continue
-        norm = _normalize_path(path)
 
-        # Root-targeted modules (json_path = "$") merge their fragment's
-        # properties into root.properties (grouped scalar modules use this).
-        # Multiple root modules are allowed as long as their property keys
-        # do not collide.
+        # Root-targeted modules (json_path = "$", or "$[*]" after the array
+        # prefix is stripped) merge their fragment's properties into
+        # root.properties (grouped scalar modules use this). Multiple root
+        # modules are allowed as long as their property keys do not collide.
         if norm == "":
             if not isinstance(fragment, dict):
                 continue
@@ -228,7 +257,7 @@ def assemble_schema(modules: Iterable) -> dict:
         if norm in seen_paths:
             raise ValueError(
                 f"Schema conflict: modules '{seen_paths[norm]}' and "
-                f"'{m.module_key}' both claim json_path '{path}'"
+                f"'{m.module_key}' both claim json_path '{norm}'"
             )
         seen_paths[norm] = m.module_key
 
@@ -273,6 +302,9 @@ def _render_schema_tree(schema: dict, *, max_depth: int = 6) -> str:
             it = _type_of(items) if isinstance(items, dict) else "any"
             if name is not None:
                 lines.append(f"{indent}- {name}[]: {it}")
+            else:
+                # 数组根（国家模板 $[*].x 家族）：明确告知输出是 JSON 数组
+                lines.append(f"{indent}- 输出为 JSON 数组，每个元素为一条记录（{it}），字段如下：")
             if isinstance(items, dict) and items.get("properties"):
                 for k, v in items["properties"].items():
                     _walk(v if isinstance(v, dict) else {}, k, depth + 1)
@@ -305,15 +337,14 @@ def _render_schema_tree(schema: dict, *, max_depth: int = 6) -> str:
 
 
 def _render_module_body(m) -> str:
-    """Phase 2 — render a module's body.
+    """Phase 2 / 批次5 — render a module's body.
 
-    Opt-in structured path: if the module carries a renderable FieldRule
-    (in-memory `field_rule` attr or persisted under ocr_suggestions), render
-    its uniform skeleton (语义/别名/取值锚点/格式/值模式/枚举/排歧/跨样本规则).
-    Otherwise fall back to the raw ocr_prompt — so production modules authored
-    before Phase 2 render EXACTLY as in Phase 1 (no accuracy risk; the
-    structured path is only taken once upstream producers populate a FieldRule
-    in Phase 3+).
+    结构化路径是**附加式**而非替换式：模块携带可渲染 FieldRule（in-memory
+    `field_rule` 属性或持久化在 ocr_suggestions[FIELD_RULE_KEY]）时，其骨架
+    （语义/别名/取值锚点/格式/值模式/枚举/排歧/跨样本规则）以独立小节追加在
+    ocr_prompt 基体之后。历史设计是「有 FieldRule 就整体替换 ocr_prompt」——
+    那会把国家模板基体、客户反馈、重命名指令全部丢弃（一条稀疏反思规则
+    压掉整个字段 prompt），故改为附加。
 
     Still pure string work — composer never calls an LLM (CLAUDE.md §③.4).
     渲染时对累积的「# 客户反馈补充」块做确定性折叠（去重行 + 合并为单块），
@@ -321,15 +352,20 @@ def _render_module_body(m) -> str:
     """
     from .field_rule import field_rule_of
 
+    body = _fold_feedback_blocks((getattr(m, "ocr_prompt", "") or "").strip())
     fr = field_rule_of(m)
     if fr is not None and fr.is_renderable():
-        return fr.render_skeleton()
-    return _fold_feedback_blocks((getattr(m, "ocr_prompt", "") or "").strip())
+        skel = fr.render_skeleton()
+        if body:
+            return f"{body}\n\n{_FIELD_RULE_HEADER}\n{skel}"
+        return skel
+    return body
 
 
 _FEEDBACK_HEADER = "# 客户反馈补充"
 _SKILL_BLOCK_HEADER = "# 技能库补充（可复用规则）"
 _RULE_EDITS_HEADER = "# 规则补充（迭代沉淀）"
+_FIELD_RULE_HEADER = "# 结构化字段规则（反思沉淀）"
 
 
 def _render_rule_edits(text: str) -> str:

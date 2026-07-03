@@ -150,4 +150,7 @@ def test_field_rule_renders_aliases_pattern_enum():
     text = fr.render_skeleton()
     assert "标签别名" in text and "CCY" in text
     assert "值模式" in text and "^[A-Z]{3}$" in text
-    assert "枚举约束" in text and "MYR | USD | SGD" in text
+    # 批次5：枚举改为建议式（样本实证）而非排他硬约束——LLM 从少量样本
+    # 归纳的枚举渲染成「只能输出其中之一」会把新票面合法值逼成错误输出
+    assert "常见取值" in text and "MYR | USD | SGD" in text
+    assert "只能输出其中之一" not in text

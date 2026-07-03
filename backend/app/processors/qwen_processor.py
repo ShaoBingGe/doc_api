@@ -105,6 +105,10 @@ class QwenProcessor(DocumentProcessor):
         body: dict = {"model": model, "messages": messages, "temperature": 0}
         # response_format=json_object 只给纯文本模型：DashScope 视觉模型
         # （vl/ocr 命名）带此参数会返回 200 + 空 content（qwen3.5-ocr 实测）。
+        # 已知降级：qwen 链路无法强制 runtime_config["response_schema"]
+        # （DashScope 不支持 json_schema 结构化输出于视觉模型）——输出形状
+        # 完全依赖 prompt 内的紧凑 schema 树（composer 已在数组根家族下
+        # 显式声明「输出为 JSON 数组」）。Gemini 链路才有 schema 硬约束。
         if as_json and not self._is_vision_name(model):
             body["response_format"] = {"type": "json_object"}
         resp = httpx.post(

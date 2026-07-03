@@ -36,7 +36,9 @@ def test_reconcile_prioritizes_latest_intent(monkeypatch):
         latest_intent={"corrected_value": "INV-1"},
         processor_spec="mock",
     )
-    assert out == "取括号外的发票号（去掉括号内附注）"
+    # 批次6：协调输出保留反馈 marker（消除 has_accumulated_feedback 状态机振荡）
+    assert out.startswith("取括号外的发票号（去掉括号内附注）")
+    assert "# 客户反馈补充" in out
     # the LLM saw both the old (contradictory) prompt and the latest intent
     assert "取括号内的值" in captured["user"]
     assert "INV-1" in captured["user"]

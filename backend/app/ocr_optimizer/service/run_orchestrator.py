@@ -612,13 +612,18 @@ def _accumulate_metrics(prev: dict | None, rnd: OcrOptimizationRound) -> dict:
 def detect_module_regressions(
     prev_acc: dict[str, float],
     curr_acc: dict[str, float],
-    eps: float = 1e-6,
+    eps: float = 0.01,
 ) -> list[str]:
     """Pure: module_keys whose accuracy DROPPED vs the previous round.
 
     Per-field monotonic check (req 3). Only modules present in BOTH maps are
     considered; a drop greater than eps counts as a regression. Zero OCR — the
     caller feeds it the round-entry evaluations it already has.
+
+    批次6：eps 从 1e-6 提到 0.01——生产 OCR 是 LLM，同 prompt 两次输出天然
+    抖动；1e-6 会把纯浮点/采样噪声标成 REGRESSION，触发无谓的重反思。任何
+    真实回归至少是「一个样本上一个单元」的量化步长（3 样本标量字段 ≈ 0.33），
+    远大于 0.01。
     """
     out: list[str] = []
     for mk, cur in curr_acc.items():
@@ -737,29 +742,58 @@ def _run_one_round(
     rnd.phase = RoundPhase.analyzing.value
     db.commit()
 
-    # ── Step 2: Slice + evaluate each module ────────────────────────────
+    # ── Step 1.5: 评测有效性门（批次2）────────────────────────────────────
+    # 传输/解析级失败的样本（_error / _raw / 空响应）不参与任何质量决策：
+    # 按 0 分聚合会让一次网络抖动把整轮分数打塌，劫持早停/单调守护，并让
+    # optimizer 对着「OCR error」假 diff 改 prompt。降级到 mock 的轮同理——
+    # 对固定 fixture 打分再优化是纯噪声迭代。
+    excluded_samples: dict[str, str] = {}
+    for sid in sample_ids:
+        reason = ocr_runner.invalid_output_reason(ocr_outputs.get(str(sid)))
+        if reason:
+            excluded_samples[str(sid)] = reason
+    valid_sample_ids = [sid for sid in sample_ids if str(sid) not in excluded_samples]
+    degraded_to_mock = ProcessorFactory.is_degraded_to_mock(_proc, api_def.processor_type)
+    # 有效样本太少（< min(2, 总样本数)）时该轮不可判定
+    min_valid = min(2, len(sample_ids))
+    round_invalid = degraded_to_mock or len(valid_sample_ids) < min_valid
+    rnd.eval_quality = {
+        "excluded_samples": excluded_samples,
+        "valid_sample_count": len(valid_sample_ids),
+        "total_sample_count": len(sample_ids),
+        "degraded_to_mock": degraded_to_mock,
+        "invalid": round_invalid,
+    }
+    if round_invalid:
+        logger.warning(
+            "round %d: eval INVALID (degraded_to_mock=%s, valid=%d/%d, excluded=%s) "
+            "— skipping scoring & optimization, keeping current version",
+            round_num, degraded_to_mock, len(valid_sample_ids), len(sample_ids),
+            excluded_samples,
+        )
+        rnd.phase = RoundPhase.failed.value
+        rnd.overall_accuracy = None  # 不可信分数绝不落库参与决策
+        rnd.next_version_id = current_version.id  # 合法「无变化」信号
+        rnd.duration_ms = int(time.time() * 1000) - start_ms
+        rnd.completed_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(rnd)
+        return rnd
+    if excluded_samples:
+        logger.warning(
+            "round %d: excluding %d/%d samples from scoring: %s",
+            round_num, len(excluded_samples), len(sample_ids), excluded_samples,
+        )
+
+    # ── Step 2: Slice + evaluate each module（仅有效样本）─────────────────
     iterations: list[OcrModuleIteration] = []
     per_sample_accuracy: dict[str, float] = {}
 
     for mod in modules:
         per_sample: list[dict] = []
-        for sid in sample_ids:
+        for sid in valid_sample_ids:
             sid_str = str(sid)
             ocr_full = ocr_outputs.get(sid_str)
-            if isinstance(ocr_full, dict) and "_error" in ocr_full:
-                # OCR failed for this sample
-                per_sample.append({
-                    "sample_doc_id": sid_str,
-                    "ocr_sliced": None,
-                    "ground_truth": slicer.extract(
-                        ground_truth.align_for_path(ground_truths.get(sid_str), mod.json_path),
-                        mod.json_path,
-                    ),
-                    "matched": False,
-                    "field_accuracy": 0.0,
-                    "diff_detail": f"OCR error: {ocr_full.get('_error', '')[:200]}",
-                })
-                continue
             sliced = slicer.extract(ocr_full, mod.json_path)
             # Align GT root to the (array-rooted) json_path before slicing —
             # otherwise a dict GT slices to None for every field and accuracy
@@ -812,7 +846,8 @@ def _run_one_round(
                     break
 
     # Per-sample overall accuracy (avg of module accuracies for that sample)
-    for sid in sample_ids:
+    # 仅有效样本 —— 被剔除样本不产生 0 分记录（原因在 rnd.eval_quality）。
+    for sid in valid_sample_ids:
         sid_str = str(sid)
         sample_accs = []
         for it in iterations:
@@ -834,18 +869,18 @@ def _run_one_round(
     # samples), so a round's improvement must GENERALIZE — the existing monotonic
     # `_best_evaluated_version` then picks the best-on-val version (zero extra OCR).
     _target_acc = {it.module_key: (it.aggregate_accuracy or 0.0) for it in iterations}
-    _train_set = {str(s) for s in sample_ids}  # all samples unless held-out splits
+    _train_set = {str(s) for s in valid_sample_ids}  # 有效样本；held-out 时再切分
     from app.core.config import get_settings as _get_settings
     _s = _get_settings()
-    if getattr(_s, "SKILL_HELDOUT_GATE", False) and len(sample_ids) >= 8 and iterations:
+    if getattr(_s, "SKILL_HELDOUT_GATE", False) and len(valid_sample_ids) >= 8 and iterations:
         from app.ocr_optimizer.skilltrain import heldout
-        _val_set = {str(v) for v in heldout.val_ids(sample_ids, frac=_s.SKILL_HELDOUT_VAL_FRAC)}
-        _train_set = {str(s) for s in sample_ids} - _val_set
+        _val_set = {str(v) for v in heldout.val_ids(valid_sample_ids, frac=_s.SKILL_HELDOUT_VAL_FRAC)}
+        _train_set = {str(s) for s in valid_sample_ids} - _val_set
         _overall_val, _target_acc = heldout.split_accuracy(iterations, _val_set)
         rnd.overall_accuracy = _overall_val  # version selection on held-out val
         logger.info(
             "round %d: held-out gate ON — val_acc=%.4f (%d val / %d train)",
-            round_num, _overall_val, len(_val_set), len(sample_ids) - len(_val_set),
+            round_num, _overall_val, len(_val_set), len(valid_sample_ids) - len(_val_set),
         )
 
     # ── Round-start early stop (design v4) ───────────────────────────────
@@ -989,6 +1024,17 @@ def _run_one_round(
             if _typed and result and result.get("edits"):
                 _typed_optimize(out, mod, it, result)   # sets out fields itself
             elif result and (result.get("new_ocr_prompt") or result.get("new_description")):
+                # 批次6 保留性守护：整体重写丢弃客户反馈内容 → 直接 reject
+                # （不浪费判官 LLM 调用）。红线⑤「累积不覆盖」的 round 路径闸门。
+                if result.get("new_ocr_prompt") and not \
+                        module_optimizer.customer_feedback_preserved(
+                            mod.ocr_prompt, result["new_ocr_prompt"]):
+                    out["rejected"] = result
+                    out["verdict"] = {
+                        "verdict": "reject",
+                        "reasoning": "rewrite drops customer feedback lines (保留性守护)",
+                    }
+                    return out
                 verdict = module_optimizer.verify_module_fix(
                     module=mod, iteration=it, proposed=result,
                     processor_spec=provider_spec, model_name=provider_model,
