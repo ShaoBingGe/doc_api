@@ -48,14 +48,12 @@ from ..models import (
 )
 from . import (
     composer,
-    evaluator,
     field_constraints,
     ground_truth,
     meta_optimizer,
     module_optimizer,
     ocr_runner,
     persistence,
-    slicer,
 )
 from .module_initializer import init_version
 
@@ -787,40 +785,137 @@ def _run_one_round(
         )
 
     # ── Step 2: Slice + evaluate each module（仅有效样本）─────────────────
+    from app.core.config import get_settings as _get_settings
+    _s = _get_settings()
+    iterations, _target_acc, _train_set = _evaluate_round(
+        db, run=run, rnd=rnd, round_num=round_num, modules=modules,
+        ocr_outputs=ocr_outputs, ground_truths=ground_truths,
+        valid_sample_ids=valid_sample_ids, settings=_s,
+    )
+
+    # ── Round-start early stop (design v4) ───────────────────────────────
+    # If the OCR+eval at the start of this round already matches GT on
+    # EVERY field across EVERY sample, the previous prompt is already
+    # correct — no need to mutate it. Skip steps 3-5, reuse the current
+    # version as the round's "next" version (idempotent).
+    if rnd.overall_accuracy >= 0.999:
+        logger.info(
+            "round %d: round-start eval shows %.2f%% — skipping all mutations",
+            round_num, rnd.overall_accuracy * 100,
+        )
+        rnd.phase = RoundPhase.completed.value
+        rnd.next_version_id = current_version.id
+        rnd.duration_ms = int(time.time() * 1000) - start_ms
+        rnd.completed_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(rnd)
+        return rnd
+
+    rnd.phase = RoundPhase.optimizing.value
+    db.commit()
+
+    # ── Step 3: Per-module optimizer (skip modules already at 1.0) ───────
+    # Country-locked fields are EXCLUDED from optimization: they're still
+    # evaluated (measured) above, but their recognition spec is governed by
+    # Part 1 and must not enter the Part-2 modifiable/reflection scope. The
+    # composition step additionally PINS them back to the country spec.
+    _locked = field_constraints.locked_fields_for_api(db, run.api_definition_id)
+    updates = _optimize_failing_modules(
+        db, run=run, round_num=round_num, modules=modules,
+        iterations=iterations, target_acc=_target_acc, train_set=_train_set,
+        locked=_locked, settings=_s, metrics=metrics,
+    )
+
+    # ── Step 4: Meta optimizer (1 LLM call) ──────────────────────────────
+    # When `enable_meta=False` (the customer-iteration path) we skip
+    # add/remove/rename entirely — the customer's module set is locked at
+    # fork time and only failing fields' prompts may be refined.
+    if enable_meta:
+        meta = meta_optimizer.run_meta_optimization(
+            api_def=api_def,
+            modules=modules,
+            iterations=iterations,
+            ocr_outputs=ocr_outputs,
+            ground_truths=ground_truths,
+            processor_spec=_split_provider(run.llm_provider)[0],
+            model_name=_split_provider(run.llm_provider)[1],
+        )
+        if meta.get("rationale") and not meta["rationale"].startswith(("no unclaimed", "meta optimizer skipped")):
+            metrics["total_llm_calls"] += 1
+    else:
+        meta = {
+            "add_modules": [],
+            "remove_module_keys": [],
+            "rename": [],
+            "rationale": "meta disabled (customer-iteration mode — modules locked at fork)",
+        }
+    rnd.meta_decision = meta
+    rnd.phase = RoundPhase.composing.value
+    db.commit()
+
+    # ── Step 5: Compose next version ─────────────────────────────────────
+    return _compose_next_version(
+        db, run=run, rnd=rnd, round_num=round_num,
+        current_version=current_version, modules=modules,
+        iterations=iterations, meta=meta, updates=updates,
+        locked=_locked, settings=_s, start_ms=start_ms,
+    )
+
+
+def _evaluate_round(
+    db: Session,
+    *,
+    run: OcrOptimizationRun,
+    rnd: OcrOptimizationRound,
+    round_num: int,
+    modules: list[OcrModule],
+    ocr_outputs: dict[str, Any],
+    ground_truths: dict[str, dict],
+    valid_sample_ids: list[uuid.UUID],
+    settings: Any,
+) -> tuple[list[OcrModuleIteration], dict[str, float], set[str]]:
+    """Step 2（_run_one_round 拆分）：切片评估 + 回归标记 + 分数聚合。
+
+    评分单一事实源（结构审查 F9）：切片/GT 对齐/模糊比较/聚合全部走
+    eval/harness.score_outputs——此前 orchestrator 手写了一份与 harness
+    刻意相同的循环，改评分时两边都要记得同步。这里只负责把 harness 的
+    per_sample 形状映射进 OcrModuleIteration（消费方：optimizer 失败样本
+    上下文、UI、历史轨迹——字段名保持不变）。
+
+    设置 rnd.overall_accuracy / per_sample_accuracy；返回
+    (iterations, target_acc, train_set) 供 Step 3 选目标。
+    """
+    from ..eval.harness import module_specs_from_orm, score_outputs
+
     iterations: list[OcrModuleIteration] = []
-    per_sample_accuracy: dict[str, float] = {}
 
-    for mod in modules:
-        per_sample: list[dict] = []
-        for sid in valid_sample_ids:
-            sid_str = str(sid)
-            ocr_full = ocr_outputs.get(sid_str)
-            sliced = slicer.extract(ocr_full, mod.json_path)
-            # Align GT root to the (array-rooted) json_path before slicing —
-            # otherwise a dict GT slices to None for every field and accuracy
-            # becomes a root-type coincidence. See ground_truth.align_for_path.
-            gt_sliced = slicer.extract(
-                ground_truth.align_for_path(ground_truths.get(sid_str), mod.json_path),
-                mod.json_path,
-            )
-            matched, acc, diff = evaluator.compare(sliced, gt_sliced, mod.schema_fragment)
-            per_sample.append({
-                "sample_doc_id": sid_str,
-                "ocr_sliced": sliced,
-                "ground_truth": gt_sliced,
-                "matched": matched,
-                "field_accuracy": acc,
-                "diff_detail": diff,
-            })
-
-        agg_acc = mean(p["field_accuracy"] for p in per_sample) if per_sample else 0.0
+    _valid_keys = [str(s) for s in valid_sample_ids]
+    report = score_outputs(
+        module_specs_from_orm(modules),
+        {k: ocr_outputs.get(k) for k in _valid_keys},
+        {k: ground_truths.get(k) for k in _valid_keys},
+    )
+    # 非 strict 模式下 module_scores 与 modules 一一对应且保序（strict 才会
+    # 跳过无 GT 模块），按序 zip 而非按 key 匹配——防重复 module_key 丢行。
+    for mod, ms in zip(modules, report.module_scores):
+        per_sample = [
+            {
+                "sample_doc_id": p["doc_id"],
+                "ocr_sliced": p.get("got"),
+                "ground_truth": p.get("expected"),
+                "matched": p["matched"],
+                "field_accuracy": p["accuracy"],
+                "diff_detail": p.get("diff", ""),
+            }
+            for p in ms.per_sample
+        ]
         it = OcrModuleIteration(
             id=uuid.uuid4(),
             round_id=rnd.id,
             module_id=mod.id,
             module_key=mod.module_key,
             per_sample_results=per_sample,
-            aggregate_accuracy=round(agg_acc, 4),
+            aggregate_accuracy=round(ms.accuracy, 4),
         )
         iterations.append(it)
         db.add(it)
@@ -848,6 +943,7 @@ def _run_one_round(
 
     # Per-sample overall accuracy (avg of module accuracies for that sample)
     # 仅有效样本 —— 被剔除样本不产生 0 分记录（原因在 rnd.eval_quality）。
+    per_sample_accuracy: dict[str, float] = {}
     for sid in valid_sample_ids:
         sid_str = str(sid)
         sample_accs = []
@@ -864,53 +960,146 @@ def _run_one_round(
     rnd.per_sample_accuracy = per_sample_accuracy
 
     # ── Held-out validation gate (ADR-001 P1, flag-gated) ────────────────
-    # Default OFF → `_target_acc` is the all-sample aggregate and overall_accuracy
+    # Default OFF → `target_acc` is the all-sample aggregate and overall_accuracy
     # is unchanged → byte-identical behavior. When ON, optimize on a TRAIN split
     # but score/select versions on a held-out VAL split (the trailing noise
     # samples), so a round's improvement must GENERALIZE — the existing monotonic
     # `_best_evaluated_version` then picks the best-on-val version (zero extra OCR).
-    _target_acc = {it.module_key: (it.aggregate_accuracy or 0.0) for it in iterations}
-    _train_set = {str(s) for s in valid_sample_ids}  # 有效样本；held-out 时再切分
-    from app.core.config import get_settings as _get_settings
-    _s = _get_settings()
-    if getattr(_s, "SKILL_HELDOUT_GATE", False) and len(valid_sample_ids) >= 8 and iterations:
+    target_acc = {it.module_key: (it.aggregate_accuracy or 0.0) for it in iterations}
+    train_set = {str(s) for s in valid_sample_ids}  # 有效样本；held-out 时再切分
+    if getattr(settings, "SKILL_HELDOUT_GATE", False) and len(valid_sample_ids) >= 8 and iterations:
         from app.ocr_optimizer.skilltrain import heldout
-        _val_set = {str(v) for v in heldout.val_ids(valid_sample_ids, frac=_s.SKILL_HELDOUT_VAL_FRAC)}
-        _train_set = {str(s) for s in valid_sample_ids} - _val_set
-        _overall_val, _target_acc = heldout.split_accuracy(iterations, _val_set)
-        rnd.overall_accuracy = _overall_val  # version selection on held-out val
+        val_set = {str(v) for v in heldout.val_ids(valid_sample_ids, frac=settings.SKILL_HELDOUT_VAL_FRAC)}
+        train_set = {str(s) for s in valid_sample_ids} - val_set
+        overall_val, target_acc = heldout.split_accuracy(iterations, val_set)
+        rnd.overall_accuracy = overall_val  # version selection on held-out val
         logger.info(
             "round %d: held-out gate ON — val_acc=%.4f (%d val / %d train)",
-            round_num, _overall_val, len(_val_set), len(valid_sample_ids) - len(_val_set),
+            round_num, overall_val, len(val_set), len(valid_sample_ids) - len(val_set),
         )
+    return iterations, target_acc, train_set
 
-    # ── Round-start early stop (design v4) ───────────────────────────────
-    # If the OCR+eval at the start of this round already matches GT on
-    # EVERY field across EVERY sample, the previous prompt is already
-    # correct — no need to mutate it. Skip steps 3-5, reuse the current
-    # version as the round's "next" version (idempotent).
-    if rnd.overall_accuracy >= 0.999:
-        logger.info(
-            "round %d: round-start eval shows %.2f%% — skipping all mutations",
-            round_num, rnd.overall_accuracy * 100,
+
+def _typed_optimize(
+    out: dict,
+    mod: OcrModule,
+    it: OcrModuleIteration,
+    result: dict,
+    *,
+    rej_buffer: Any,
+    provider_spec: str,
+    provider_model: str | None,
+) -> None:
+    """ADR-002: turn the LLM's `edits` into a bounded rule-section update.
+    filter(rejected) → aggregate → clip(top-L) → apply_edits → verify the
+    body+rules combo. On accept: out['new_rules']; on reject: buffer the edits."""
+    from app.ocr_optimizer.service import composer as _comp
+    from app.ocr_optimizer.skilltrain.apply import build_rule_update
+
+    severity = 1.0 - float(getattr(it, "aggregate_accuracy", 0.0) or 0.0)
+    new_rules, clipped = build_rule_update(
+        getattr(mod, "rule_edits_text", "") or "", result["edits"],
+        target_default=mod.module_key, rej_buffer=rej_buffer, severity=severity,
+    )
+    if not clipped:
+        return
+    rendered = _comp._render_rule_edits(new_rules)
+    combined = mod.ocr_prompt or ""
+    if rendered:
+        combined = f"{combined}\n\n{_comp._RULE_EDITS_HEADER}\n{rendered}"
+    proposed = dict(result)
+    proposed["new_ocr_prompt"] = combined  # verify the body+rules combo
+    verdict = module_optimizer.verify_module_fix(
+        module=mod, iteration=it, proposed=proposed,
+        processor_spec=provider_spec, model_name=provider_model,
+    )
+    out["llm_calls"] += 1
+    if verdict.get("verdict") == "reject":
+        out["rejected"] = result
+        out["verdict"] = verdict
+        out["rejected_edits"] = clipped
+    else:
+        out["result"] = result
+        out["new_rules"] = new_rules
+        out["accepted_edits"] = clipped
+
+
+def _optimize_and_verify(
+    mod: OcrModule,
+    it: OcrModuleIteration,
+    *,
+    histories: dict[str, list],
+    provider_spec: str,
+    provider_model: str | None,
+    typed: bool,
+    meta_hint: str,
+    uf_for: Any,
+    rej_buffer: Any,
+) -> dict:
+    """纯 LLM（无 DB），可在工作线程跑。返回供主线程串行应用的结果。
+    单字段任何异常都吞掉（返回空结果）——绝不让一个字段拖垮整轮。"""
+    out = {"mod": mod, "it": it, "result": None, "rejected": None, "verdict": None,
+           "llm_calls": 0, "new_rules": None, "accepted_edits": None, "rejected_edits": None}
+    try:
+        result = module_optimizer.optimize_module(
+            module=mod, iteration=it, history=histories.get(mod.module_key, []),
+            processor_spec=provider_spec, model_name=provider_model,
+            meta_hint=meta_hint, user_feedback=uf_for(mod),
         )
-        rnd.phase = RoundPhase.completed.value
-        rnd.next_version_id = current_version.id
-        rnd.duration_ms = int(time.time() * 1000) - start_ms
-        rnd.completed_at = datetime.now(timezone.utc)
-        db.commit()
-        db.refresh(rnd)
-        return rnd
+        out["llm_calls"] += 1
+        if typed and result and result.get("edits"):
+            _typed_optimize(out, mod, it, result,
+                            rej_buffer=rej_buffer,
+                            provider_spec=provider_spec,
+                            provider_model=provider_model)
+        elif result and (result.get("new_ocr_prompt") or result.get("new_description")):
+            # 批次6 保留性守护：整体重写丢弃客户反馈内容 → 直接 reject
+            # （不浪费判官 LLM 调用）。红线⑤「累积不覆盖」的 round 路径闸门。
+            if result.get("new_ocr_prompt") and not \
+                    module_optimizer.customer_feedback_preserved(
+                        mod.ocr_prompt, result["new_ocr_prompt"]):
+                out["rejected"] = result
+                out["verdict"] = {
+                    "verdict": "reject",
+                    "reasoning": "rewrite drops customer feedback lines (保留性守护)",
+                }
+                return out
+            verdict = module_optimizer.verify_module_fix(
+                module=mod, iteration=it, proposed=result,
+                processor_spec=provider_spec, model_name=provider_model,
+            )
+            out["llm_calls"] += 1
+            if verdict.get("verdict") == "reject":
+                out["rejected"] = result
+                out["verdict"] = verdict
+                result = None
+            out["result"] = result
+        else:
+            out["result"] = result
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("module optimize failed for %s: %s", mod.module_key, exc)
+    return out
 
-    rnd.phase = RoundPhase.optimizing.value
-    db.commit()
 
-    # ── Step 3: Per-module optimizer (skip modules already at 1.0) ───────
-    # 性能：每个未达标字段串行调 optimize_module + verify_module_fix（各 1 次
-    # LLM）曾是迭代慢的最大头（30 字段 × 2 × 3 轮 = 180 次串行 LLM ≈ 30 分钟）。
-    # 各字段完全独立 → 用线程池并发跑纯 LLM 部分；DB 写回仍在主线程串行
-    # （SQLAlchemy session 非线程安全）。session 配 expire_on_commit=False，
-    # 工作线程读已加载的 ORM 属性安全。
+def _optimize_failing_modules(
+    db: Session,
+    *,
+    run: OcrOptimizationRun,
+    round_num: int,
+    modules: list[OcrModule],
+    iterations: list[OcrModuleIteration],
+    target_acc: dict[str, float],
+    train_set: set[str],
+    locked: set[str],
+    settings: Any,
+    metrics: dict,
+) -> dict[str, dict]:
+    """Step 3（_run_one_round 拆分）：对未达标字段并发跑 optimizer+判官，
+    把 accept 的变更收进 `updates`（供 Step 5 组装），reject 的记注释保旧
+    prompt。性能：各字段完全独立 → 线程池并发纯 LLM 部分；DB 写回主线程
+    串行（SQLAlchemy session 非线程安全；session 配 expire_on_commit=False，
+    工作线程读已加载 ORM 属性安全）。
+    """
     provider_spec = _split_provider(run.llm_provider)[0]
     provider_model = _split_provider(run.llm_provider)[1]
     updates: dict[str, dict] = {}
@@ -930,7 +1119,7 @@ def _run_one_round(
             or ""
         )
 
-    _typed = getattr(_s, "SKILL_TYPED_EDITS", False)
+    _typed = getattr(settings, "SKILL_TYPED_EDITS", False)
     _rej_buffer = None
     _round_accepted_ops: list[str] = []
     _round_rejected_ops: list[str] = []
@@ -939,28 +1128,23 @@ def _run_one_round(
         from app.ocr_optimizer.skilltrain.buffer import RejectedEditBuffer
         _rej_buffer = RejectedEditBuffer.from_list((run.metrics or {}).get("rejected_edits"))
         # P-D: meta-memory hint from PRIOR rounds (gated by SKILL_META_MEMORY).
-        if getattr(_s, "SKILL_META_MEMORY", False):
+        if getattr(settings, "SKILL_META_MEMORY", False):
             from app.ocr_optimizer.skilltrain import meta_skill
             _meta_hint = meta_skill.render_meta_hint((run.metrics or {}).get("meta_memory") or {})
 
-    # Country-locked fields are EXCLUDED from optimization: they're still
-    # evaluated (measured) above, but their recognition spec is governed by
-    # Part 1 and must not enter the Part-2 modifiable/reflection scope. The
-    # composition step additionally PINS them back to the country spec.
-    _locked = field_constraints.locked_fields_for_api(db, run.api_definition_id)
-    # Optimize modules under target on the TRAIN split (`_target_acc`); with the
+    # Optimize modules under target on the TRAIN split (`target_acc`); with the
     # held-out gate OFF this equals the all-sample aggregate (unchanged behavior).
     targets = [(mod, it) for mod, it in zip(modules, iterations)
-               if _target_acc.get(it.module_key, it.aggregate_accuracy or 0.0) < 1.0
-               and field_constraints.field_leaf(mod.json_path) not in _locked]
+               if target_acc.get(it.module_key, it.aggregate_accuracy or 0.0) < 1.0
+               and field_constraints.field_leaf(mod.json_path) not in locked]
 
     # Edit discipline (ADR-001 P1, flag-gated): only optimize modules whose error
     # is SYSTEMATIC (defect, not a one-off lapse), and clip to the top-L by
     # severity (learning-rate) so a round makes a bounded step. Default OFF →
     # targets unchanged.
-    if getattr(_s, "SKILL_EDIT_DISCIPLINE", False) and iterations:
+    if getattr(settings, "SKILL_EDIT_DISCIPLINE", False) and iterations:
         from app.ocr_optimizer.skilltrain import targeting
-        _keep = targeting.disciplined_targets(iterations, _target_acc, train_ids=_train_set)
+        _keep = targeting.disciplined_targets(iterations, target_acc, train_ids=train_set)
         _before = len(targets)
         targets = [(m, it) for m, it in targets if it.module_key in _keep]
         if len(targets) != _before:
@@ -976,90 +1160,22 @@ def _run_one_round(
         )
         histories[mod.module_key] = [x for x in h if x.get("round_num") != round_num]
 
-    def _typed_optimize(out, mod, it, result) -> None:
-        """ADR-002: turn the LLM's `edits` into a bounded rule-section update.
-        filter(rejected) → aggregate → clip(top-L) → apply_edits → verify the
-        body+rules combo. On accept: out['new_rules']; on reject: buffer the edits."""
-        from app.ocr_optimizer.service import composer as _comp
-        from app.ocr_optimizer.skilltrain.apply import build_rule_update
-
-        severity = 1.0 - float(getattr(it, "aggregate_accuracy", 0.0) or 0.0)
-        new_rules, clipped = build_rule_update(
-            getattr(mod, "rule_edits_text", "") or "", result["edits"],
-            target_default=mod.module_key, rej_buffer=_rej_buffer, severity=severity,
+    def _one(mod, it) -> dict:
+        return _optimize_and_verify(
+            mod, it, histories=histories,
+            provider_spec=provider_spec, provider_model=provider_model,
+            typed=_typed, meta_hint=_meta_hint, uf_for=_uf_for,
+            rej_buffer=_rej_buffer,
         )
-        if not clipped:
-            return
-        rendered = _comp._render_rule_edits(new_rules)
-        combined = mod.ocr_prompt or ""
-        if rendered:
-            combined = f"{combined}\n\n{_comp._RULE_EDITS_HEADER}\n{rendered}"
-        proposed = dict(result)
-        proposed["new_ocr_prompt"] = combined  # verify the body+rules combo
-        verdict = module_optimizer.verify_module_fix(
-            module=mod, iteration=it, proposed=proposed,
-            processor_spec=provider_spec, model_name=provider_model,
-        )
-        out["llm_calls"] += 1
-        if verdict.get("verdict") == "reject":
-            out["rejected"] = result
-            out["verdict"] = verdict
-            out["rejected_edits"] = clipped
-        else:
-            out["result"] = result
-            out["new_rules"] = new_rules
-            out["accepted_edits"] = clipped
-
-    def _optimize_and_verify(mod, it) -> dict:
-        """纯 LLM（无 DB），可在工作线程跑。返回供主线程串行应用的结果。
-        单字段任何异常都吞掉（返回空结果）——绝不让一个字段拖垮整轮。"""
-        out = {"mod": mod, "it": it, "result": None, "rejected": None, "verdict": None,
-               "llm_calls": 0, "new_rules": None, "accepted_edits": None, "rejected_edits": None}
-        try:
-            result = module_optimizer.optimize_module(
-                module=mod, iteration=it, history=histories.get(mod.module_key, []),
-                processor_spec=provider_spec, model_name=provider_model,
-                meta_hint=_meta_hint, user_feedback=_uf_for(mod),
-            )
-            out["llm_calls"] += 1
-            if _typed and result and result.get("edits"):
-                _typed_optimize(out, mod, it, result)   # sets out fields itself
-            elif result and (result.get("new_ocr_prompt") or result.get("new_description")):
-                # 批次6 保留性守护：整体重写丢弃客户反馈内容 → 直接 reject
-                # （不浪费判官 LLM 调用）。红线⑤「累积不覆盖」的 round 路径闸门。
-                if result.get("new_ocr_prompt") and not \
-                        module_optimizer.customer_feedback_preserved(
-                            mod.ocr_prompt, result["new_ocr_prompt"]):
-                    out["rejected"] = result
-                    out["verdict"] = {
-                        "verdict": "reject",
-                        "reasoning": "rewrite drops customer feedback lines (保留性守护)",
-                    }
-                    return out
-                verdict = module_optimizer.verify_module_fix(
-                    module=mod, iteration=it, proposed=result,
-                    processor_spec=provider_spec, model_name=provider_model,
-                )
-                out["llm_calls"] += 1
-                if verdict.get("verdict") == "reject":
-                    out["rejected"] = result
-                    out["verdict"] = verdict
-                    result = None
-                out["result"] = result
-            else:
-                out["result"] = result
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("module optimize failed for %s: %s", mod.module_key, exc)
-        return out
 
     if targets:
         from concurrent.futures import ThreadPoolExecutor
         workers = min(_MODULE_OPT_CONCURRENCY, len(targets))
         if workers <= 1:
-            applied = [_optimize_and_verify(mod, it) for mod, it in targets]
+            applied = [_one(mod, it) for mod, it in targets]
         else:
             with ThreadPoolExecutor(max_workers=workers) as ex:
-                applied = list(ex.map(lambda mi: _optimize_and_verify(*mi), targets))
+                applied = list(ex.map(lambda mi: _one(*mi), targets))
     else:
         applied = []
 
@@ -1129,35 +1245,29 @@ def _run_one_round(
         )
         run.metrics = m
         db.commit()
+    return updates
 
-    # ── Step 4: Meta optimizer (1 LLM call) ──────────────────────────────
-    # When `enable_meta=False` (the customer-iteration path) we skip
-    # add/remove/rename entirely — the customer's module set is locked at
-    # fork time and only failing fields' prompts may be refined.
-    if enable_meta:
-        meta = meta_optimizer.run_meta_optimization(
-            api_def=api_def,
-            modules=modules,
-            iterations=iterations,
-            ocr_outputs=ocr_outputs,
-            ground_truths=ground_truths,
-            processor_spec=_split_provider(run.llm_provider)[0],
-            model_name=_split_provider(run.llm_provider)[1],
-        )
-        if meta.get("rationale") and not meta["rationale"].startswith(("no unclaimed", "meta optimizer skipped")):
-            metrics["total_llm_calls"] += 1
-    else:
-        meta = {
-            "add_modules": [],
-            "remove_module_keys": [],
-            "rename": [],
-            "rationale": "meta disabled (customer-iteration mode — modules locked at fork)",
-        }
-    rnd.meta_decision = meta
-    rnd.phase = RoundPhase.composing.value
-    db.commit()
 
-    # ── Step 5: Compose next version ─────────────────────────────────────
+def _compose_next_version(
+    db: Session,
+    *,
+    run: OcrOptimizationRun,
+    rnd: OcrOptimizationRound,
+    round_num: int,
+    current_version: OcrPromptVersion,
+    modules: list[OcrModule],
+    iterations: list[OcrModuleIteration],
+    meta: dict,
+    updates: dict[str, dict],
+    locked: set[str],
+    settings: Any,
+    start_ms: int,
+) -> OcrOptimizationRound:
+    """Step 5（_run_one_round 拆分）：模块保全守护 + 克隆 + compose。
+
+    compose 失败 → 复用 current_version（红线③：合法「无变化」信号），
+    该轮标 failed 但 job 不挂。返回完成态的 rnd。
+    """
     requested_removes = set(meta.get("remove_module_keys") or [])
     all_keys = {m.module_key for m in modules}
     # ── Module preservation guard ────────────────────────────────────────
@@ -1177,7 +1287,7 @@ def _run_one_round(
     # Country-locked modules must never be removed by meta either.
     _locked_keys = {
         m.module_key for m in modules
-        if field_constraints.field_leaf(m.json_path) in _locked
+        if field_constraints.field_leaf(m.json_path) in locked
     }
     blocked_removes = requested_removes & (well_performing | _locked_keys)
     safe_removes = requested_removes - well_performing - _locked_keys
@@ -1253,7 +1363,7 @@ def _run_one_round(
         # deterministically from each field's cross-round accuracy trajectory.
         # Flag-gated; not stored in any module body → step edits can't touch it.
         _guardian = None
-        if getattr(_s, "SKILL_SLOW_UPDATE", False):
+        if getattr(settings, "SKILL_SLOW_UPDATE", False):
             from app.ocr_optimizer.skilltrain import slow_update as _su
             _guardian = (
                 _su.render_guardian_block(

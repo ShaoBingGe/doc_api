@@ -176,138 +176,13 @@ def _update_job(db: Session, job: CustomizeJob, **kwargs) -> None:
     db.refresh(job)
 
 
-def _build_cross_doc_context_for_diffs(
-    db: Session,
-    api_def_id: uuid.UUID,
-    diffs: list[dict],
-) -> dict[str, list[dict]]:
-    """Phase 14b — collect each diff's field-name across every confirmed
-    sample of the ApiDef.
-
-    For each diff (edit/add/rename), produce a list of {doc_id, doc_filename,
-    value, is_corrected, bbox} for every annotation matching either the
-    original_name or corrected_name. The reflection agent uses this to
-    compare values/formatting across the 3 invoices.
-    """
-    from app.models.annotation import Annotation as _Annotation
-    from app.models.document import Document as _Document
-
-    api_def = db.get(ApiDefinition, api_def_id)
-    if not api_def:
-        return {}
-    sample_ids = (api_def.config or {}).get("sample_document_ids") or []
-    if not sample_ids:
-        return {}
-
-    # Collect the field names we care about (both old and new forms)
-    field_names: set[str] = set()
-    for d in diffs:
-        for k in ("original_name", "corrected_name"):
-            v = (d.get(k) or "").strip()
-            if v and "[" not in v and "." not in v:
-                field_names.add(v)
-    if not field_names:
-        return {}
-
-    # Resolve docs once
-    doc_uuids: list[uuid.UUID] = []
-    for s in sample_ids:
-        try:
-            doc_uuids.append(uuid.UUID(str(s)))
-        except Exception:  # noqa: BLE001
-            continue
-    if not doc_uuids:
-        return {}
-
-    docs = db.query(_Document).filter(_Document.id.in_(doc_uuids)).all()
-    doc_by_id = {d.id: d for d in docs}
-
-    out: dict[str, list[dict]] = {f: [] for f in field_names}
-    rows = (
-        db.query(_Annotation)
-        .filter(
-            _Annotation.document_id.in_(doc_uuids),
-            _Annotation.field_name.in_(field_names),
-        )
-        .all()
-    )
-    for ann in rows:
-        doc = doc_by_id.get(ann.document_id)
-        out[ann.field_name].append({
-            "doc_id": str(ann.document_id),
-            "doc_filename": (doc.filename if doc else None) or str(ann.document_id),
-            "value": ann.field_value,
-            "is_corrected": bool(ann.is_corrected),
-            "bbox": ann.bounding_box,
-        })
-
-    # Phase 15 — dedup duplicate values within each field's sample list.
-    # If two docs show the same (value, is_corrected) tuple, we collapse
-    # them and annotate "× N docs" so the LLM doesn't see the same data
-    # point repeated. Preserves the first occurrence's doc_filename + bbox.
-    deduped: dict[str, list[dict]] = {}
-    for field, samples in out.items():
-        if not samples:
-            continue
-        # Key by (value, is_corrected) — bbox usually varies across docs
-        # even when value is identical, so we keep the first one seen.
-        by_key: dict[tuple, dict] = {}
-        for s in samples:
-            key = (
-                # repr handles None / strings / numbers consistently
-                repr(s.get("value")),
-                bool(s.get("is_corrected")),
-            )
-            if key in by_key:
-                by_key[key]["dup_count"] = by_key[key].get("dup_count", 1) + 1
-                # accumulate doc filenames for transparency
-                other_files = by_key[key].setdefault("dup_doc_filenames", [])
-                other_files.append(s.get("doc_filename"))
-            else:
-                by_key[key] = dict(s)
-        deduped[field] = list(by_key.values())
-    return deduped
-
-
-def _build_sample_outputs(db: Session, api_def_id: uuid.UUID) -> dict[str, dict]:
-    """收集 ApiDef 每个样本最新一次 OCR 的完整 structured_data。
-
-    供反思层做「全文检索」（edit_intent.search_value_in_outputs）：客户填写
-    的正确值若出现在输出 JSON 的其他字段下，说明当前规则抓错了来源——检索
-    命中路径直接揭示真实锚点。键用文件名（比 UUID 对 LLM 可读）。
-    """
-    from app.models.document import Document as _Document, ProcessingResult as _PR
-
-    api_def = db.get(ApiDefinition, api_def_id)
-    if not api_def:
-        return {}
-    sample_ids: list[uuid.UUID] = []
-    for s in (api_def.config or {}).get("sample_document_ids") or []:
-        try:
-            sample_ids.append(uuid.UUID(str(s)))
-        except Exception:  # noqa: BLE001
-            continue
-    if not sample_ids:
-        return {}
-
-    docs = db.query(_Document).filter(_Document.id.in_(sample_ids)).all()
-    out: dict[str, dict] = {}
-    for doc in docs:
-        pr = (
-            db.query(_PR)
-            .filter(_PR.document_id == doc.id)
-            .order_by(_PR.version.desc())
-            .first()
-        )
-        data = pr.structured_data if pr else None
-        if data is None:
-            continue
-        label = doc.filename or str(doc.id)
-        # 同名文件去重：后缀编号，保证每个样本都进语料
-        if label in out:
-            label = f"{label}#{str(doc.id)[:6]}"
-        out[label] = data
-    return out
+# ── 反思语料收集 ─────────────────────────────────────────────────────────────
+# customer_iteration 拆分第二刀：纯读 DB 的证据语料构建移至
+# reflection_context.py。facade 重导出，调用方零改动。
+from .reflection_context import (  # noqa: E402,F401 — facade re-export
+    _build_cross_doc_context_for_diffs,
+    _build_sample_outputs,
+)
 
 
 # (C4 cleanup) — _mirror_source_samples_to_fork removed.
@@ -1528,147 +1403,17 @@ def _format_round_phase_detail(
         return base
 
 
-def _latest_round_version(db: Session, run_id: uuid.UUID) -> uuid.UUID | None:
-    from ..models import OcrOptimizationRound
-    r = (
-        db.query(OcrOptimizationRound)
-        .filter(OcrOptimizationRound.run_id == run_id)
-        .order_by(OcrOptimizationRound.round_num.desc())
-        .first()
-    )
-    return r.next_version_id if r and r.next_version_id else None
-
-
-def _confirm_version_accuracy(db: Session, run, version_id: uuid.UUID) -> float | None:
-    """Phase-4a「终轮确认评估」: OCR the run's confirmed samples with `version_id`'s
-    composed_prompt and return its overall accuracy (fuzzy, same scoring path as
-    the rounds). Lets the monotonic guard ALSO consider the last round's
-    un-evaluated output, so a genuine final-round gain isn't discarded.
-
-    Costs ONE OCR pass. Read-only (no version/round writes). Returns None on any
-    failure (caller then keeps the best already-evaluated version → still
-    monotonic). Builds on align_for_path (real accuracy).
-    """
-    from app.models.api_definition import ApiDefinition
-    from . import ground_truth
-    from .ocr_runner import run_ocr_on_samples
-    from ..eval.harness import module_specs_from_orm, score_outputs
-
-    version = db.get(OcrPromptVersion, version_id)
-    if not version or not version.composed_prompt:
-        return None
-    api_def = db.get(ApiDefinition, run.api_definition_id)
-    if not api_def:
-        return None
-    modules = (
-        db.query(OcrModule)
-        .filter(OcrModule.prompt_version_id == version_id)
-        .order_by(OcrModule.order_index)
-        .all()
-    )
-    if not modules:
-        return None
-
-    # Confirmed samples + GT (same gate as the run).
-    raw = run.sample_document_ids or []
-    sample_ids: list[uuid.UUID] = []
-    gts: dict[str, dict] = {}
-    for sid in raw:
-        try:
-            suid = uuid.UUID(str(sid))
-        except (ValueError, TypeError):
-            continue
-        gt = ground_truth.build(db, suid)
-        if gt:
-            sample_ids.append(suid)
-            gts[str(suid)] = gt
-    if not sample_ids:
-        return None
-
-    from app.processors.factory import ProcessorFactory as _PF
-    _conf_proc, _conf_model = _PF.resolve_spec(
-        api_def.processor_type, api_def.model_name
-    )
-    # 批次2：降级到 mock 的确认评估不可信 → 返回 None（保守保留已评估最优版）。
-    if _PF.is_degraded_to_mock(_conf_proc, api_def.processor_type):
-        logger.warning("final-confirmation degraded to mock — skipping (keep best evaluated)")
-        return None
-    outputs = run_ocr_on_samples(
-        db,
-        sample_document_ids=sample_ids,
-        composed_prompt=version.composed_prompt,
-        composed_schema=version.composed_schema,
-        processor_spec=_conf_proc,
-        model_name=_conf_model,
-    )
-    # 批次2：传输/解析失败的样本剔除；剩余有效样本太少 → 无法确认（None）。
-    from .ocr_runner import invalid_output_reason
-    invalid = {sid: r for sid, out in outputs.items()
-               if (r := invalid_output_reason(out))}
-    if invalid:
-        logger.warning("final-confirmation: excluding invalid samples %s", invalid)
-        outputs = {sid: out for sid, out in outputs.items() if sid not in invalid}
-        gts = {sid: gt for sid, gt in gts.items() if sid not in invalid}
-    if len(outputs) < min(2, len(sample_ids)):
-        return None
-    report = score_outputs(module_specs_from_orm(modules), outputs, gts)
-    return report.overall_accuracy
-
-
-def _best_evaluated_version(db: Session, run_id: uuid.UUID) -> tuple[uuid.UUID | None, float]:
-    """Monotonic guard (CLAUDE.md §④): pick the version with the HIGHEST
-    *evaluated* accuracy across the run, so finalize never activates a version
-    we haven't confirmed.
-
-    Each round records `overall_accuracy` for the version it EVALUATED at entry
-    (`round.prompt_version_id` = that round's INPUT version): round 1 → starting
-    version, round N → v(N-1). So the map covers {starting … v(N-1)} — every
-    version EXCEPT the last round's un-evaluated output. Returning the argmax
-    guarantees the activated version's accuracy >= the starting version's
-    (round-over-round non-decrease), at ZERO extra OCR cost.
-
-    Tradeoff (intentional, safe): the very last round's output is un-evaluated,
-    so it is NOT a candidate — we never activate an unconfirmed version. (To
-    also capture a final-round gain, a one-pass confirmation eval could be
-    added later.)
-    """
-    from ..models import OcrOptimizationRound
-    rounds = (
-        db.query(OcrOptimizationRound)
-        .filter(OcrOptimizationRound.run_id == run_id)
-        .order_by(OcrOptimizationRound.round_num)
-        .all()
-    )
-    best_id: uuid.UUID | None = None
-    best_acc = -1.0
-    for r in rounds:
-        if r.overall_accuracy is None or not r.prompt_version_id:
-            continue  # 评测无效轮（批次2）不参与
-        acc = r.overall_accuracy
-        # 批次6 平局带：切换到更晚的版本要求提升超过「半个量化步长」
-        # （1/(2·样本数·字段数)）。LLM OCR 单次采样天然抖动，观测分差小于
-        # 一个字段一次翻转的一半基本是噪声——持平保早版（更少变更=更稳）。
-        band = _tie_band(r)
-        if best_id is None or acc > best_acc + band:
-            best_acc, best_id = acc, r.prompt_version_id
-        elif acc > best_acc:
-            best_acc = acc  # 记录观测高值但不切版本（差异在噪声带内）
-    return best_id, best_acc
-
-
-def _tie_band(rnd) -> float:
-    """半个量化步长：0.5 / (有效样本数 × 字段数)；信息不足时保守 0.005。"""
-    try:
-        n_samples = len(rnd.per_sample_accuracy or {}) or None
-        if n_samples is None:
-            q = rnd.eval_quality or {}
-            n_samples = q.get("valid_sample_count") or None
-        n_modules = len(rnd.iterations or []) or None
-        if n_samples and n_modules:
-            return 0.5 / (n_samples * n_modules)
-    except Exception:  # noqa: BLE001
-        pass
-    return 0.005
+# ── Version selection / 单调守护 ─────────────────────────────────────────────
+# customer_iteration 拆分第一刀（结构审查 1.1）：红线④「准确率永不下降」的
+# 实现移至 version_selection.py（可单测打靶）。这里保留 facade 重导出，
+# 管线内部与既有测试（test_monotonic_finalize / test_stability_guards /
+# test_eval_validity）零改动。
+from .version_selection import (  # noqa: E402,F401 — facade re-export
+    _best_evaluated_version,
+    _confirm_version_accuracy,
+    _latest_round_version,
+    _tie_band,
+)
 
 
 # ── Forking ──────────────────────────────────────────────────────────────────

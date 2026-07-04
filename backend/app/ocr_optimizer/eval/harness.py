@@ -185,8 +185,11 @@ def score_outputs(
                 matched, acc, diff = evaluator.compare(
                     ocr_sliced, gt_sliced, spec.schema_fragment,
                 )
+                # expected/got 同 strict 分支：模糊评分的消费方（_run_one_round
+                # 的 OcrModuleIteration → optimizer 失败样本上下文）需要切片。
                 per_sample.append({
                     "doc_id": d, "accuracy": acc, "matched": matched, "diff": diff,
+                    "expected": gt_sliced, "got": ocr_sliced,
                 })
 
         # In strict mode a module with no tested samples (GT empty everywhere)
