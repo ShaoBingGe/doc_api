@@ -52,6 +52,58 @@ def get_active_version(db: Session, api_definition_id: uuid.UUID) -> OcrPromptVe
     )
 
 
+# ── 存量维护（批次1 后续）──────────────────────────────────────────────────
+
+def backfill_composed_schema_root_shape(db: Session) -> int:
+    """幂等回填：修复早于「composer 根形状修复」组装的存量版本。
+
+    这些版本的模块 json_path 是 `$[*].x` 家族，但 composed_schema 根被旧
+    composer 拼成了 object——严格执行 response_schema 的模型（Gemini）会
+    输出 dict，slicer 全 None，整轮/生产提取全字段假 0 分（A/B 实测
+    0.00 → 0.725）。qwen 链路忽略 response_schema 故无感。
+
+    只重组 composed_schema（response_schema 硬约束），不动 composed_prompt
+    与模块行；archived 版本不动（审计资产，不再被调用）。返回修复条数。
+    """
+    from . import composer
+
+    versions = (
+        db.query(OcrPromptVersion)
+        .filter(OcrPromptVersion.status != PromptVersionStatus.archived.value)
+        .all()
+    )
+    fixed = 0
+    for v in versions:
+        mods = (
+            db.query(OcrModule)
+            .filter(OcrModule.prompt_version_id == v.id)
+            .order_by(OcrModule.order_index)
+            .all()
+        )
+        if not mods:
+            continue
+        array_family = any(
+            (m.json_path or "").strip().startswith("$[") for m in mods
+        )
+        root_type = str((v.composed_schema or {}).get("type") or "").lower()
+        if not array_family or root_type == "array":
+            continue
+        try:
+            v.composed_schema = composer.assemble_schema(mods)
+            fixed += 1
+        except ValueError as exc:
+            logger.warning(
+                "backfill_composed_schema_root_shape: version %s skipped (%s)",
+                v.id, exc,
+            )
+    if fixed:
+        db.commit()
+        logger.info(
+            "backfill_composed_schema_root_shape: recomposed %d version(s)", fixed,
+        )
+    return fixed
+
+
 # ── Version queries ───────────────────────────────────────────────────────────
 
 def list_versions(db: Session, api_definition_id: uuid.UUID) -> list[OcrPromptVersion]:

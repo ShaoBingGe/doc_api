@@ -57,6 +57,21 @@ async def lifespan(app: FastAPI):
     except Exception:
         import logging
         logging.getLogger(__name__).exception("bootstrap_super_admin failed on boot")
+    # Idempotent 存量回填（批次1 后续）：旧 composer 组装的 object 根
+    # composed_schema → 重组为数组根，否则 Gemini 链路全字段假 0 分。
+    try:
+        from app.core.database import SessionLocal as _SL
+        from app.ocr_optimizer.service.persistence import (
+            backfill_composed_schema_root_shape,
+        )
+        _db2 = _SL()
+        try:
+            backfill_composed_schema_root_shape(_db2)
+        finally:
+            _db2.close()
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("composed_schema backfill failed on boot")
     # Reap any customize jobs that were stuck in transient states when the
     # process died (no progress for >STALE_OPTIMIZING_MIN minutes). Failures
     # here are non-fatal; we log and continue.
