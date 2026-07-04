@@ -102,3 +102,27 @@ api/v1 ──► app/services ──► app/ocr_optimizer/service ──► proc
 （`_flatten_hierarchical` / `_normalize_structured_data` / `_rewrite_structured_data_keys`
 等 ~480 行零 I/O 代码）拆成 `extraction_pipeline.py`——反向依赖即可归零，
 `app/models/__init__.py` ↔ `ocr_optimizer/__init__.py` 的懒加载破环 hack 也可拆除。
+
+## 七、迭代引擎的模块拆分（结构审查 1.1，2026-07 落地）
+
+`customer_iteration.py` 曾是 2449 行的巨模块（9 个职责块混住）；已按职责
+facade 式拆出以下模块（`customer_iteration` 保留重导出，调用方/测试零改动）：
+
+| 模块 | 职责 | 为何独立 |
+|---|---|---|
+| `version_selection.py` | 单调守护（红线④）：`_best_evaluated_version` / `_confirm_version_accuracy` / `_tie_band` | 「准确率永不下降」的实现，必须能被单测直接打靶 |
+| `reflection_context.py` | 反思语料：跨样本对照 + 全文检索输出（纯读 DB） | 与迭代主逻辑无关的证据收集 |
+| `doc_sync.py` | 定制/迭代后文档同步（Phase 23.3 rename sweep + Phase 25 re-OCR） | 纯 DB / 文档同步 |
+| `customize_fork.py` | 版本 bump / 模块克隆 / 新增字段 LLM 扩展（约 770 行，最大一块） | fork 构造逻辑，不驱动迭代 |
+
+`run_orchestrator._run_one_round`（曾 600 行单函数）已按 Step 切成
+`_evaluate_round` / `_optimize_failing_modules` / `_compose_next_version` +
+提出的 `_optimize_and_verify` / `_typed_optimize`（原嵌套闭包，可单测）。
+
+**评分单一事实源**：轮内评分不再手写循环，统一走 `eval/harness.score_outputs`
+（此前 orchestrator 与 harness 各写一份刻意相同的评分逻辑，改评分要两边同步）。
+
+**刻意留在 `customer_iteration`**（拆出反而增加循环依赖，收益低）：
+样本门禁常量（`MIN_SAMPLES_FOR_ITERATION` / `required_samples()` / 置信度阈值，
+被流水线/job 状态机/resume 到处共享）、job 状态机（`submit`/`run`/`resume`/`reap`
+与 `_execute_pipeline` 深度纠缠）。
