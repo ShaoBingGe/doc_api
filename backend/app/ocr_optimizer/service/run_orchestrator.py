@@ -117,6 +117,7 @@ def start_optimization(
     db.refresh(run)
 
     try:
+        metrics_acc = dict(run.metrics or {})
         rnd = _run_one_round(
             db,
             run=run,
@@ -125,13 +126,13 @@ def start_optimization(
             current_version=starting_version,
             sample_ids=sample_ids,
             ground_truths=ground_truths,
-            metrics=dict(run.metrics or {}),
+            metrics=metrics_acc,
             enable_meta=enable_meta,
         )
         run.rounds_completed = 1
         run.current_round_num = 1
         run.status = RunStatus.paused_for_review.value
-        run.metrics = _accumulate_metrics(run.metrics, rnd)
+        run.metrics = _accumulate_metrics(run.metrics, metrics_acc)
         db.commit()
         db.refresh(run)
     except Exception as exc:
@@ -220,6 +221,7 @@ def advance_round(
 
     next_round_num = run.current_round_num + 1
     try:
+        metrics_acc = dict(run.metrics or {})
         rnd = _run_one_round(
             db,
             run=run,
@@ -228,13 +230,13 @@ def advance_round(
             current_version=starting_version,
             sample_ids=sample_ids,
             ground_truths=ground_truths,
-            metrics=dict(run.metrics or {}),
+            metrics=metrics_acc,
             enable_meta=enable_meta,
         )
         run.rounds_completed = next_round_num
         run.current_round_num = next_round_num
         run.status = RunStatus.paused_for_review.value
-        run.metrics = _accumulate_metrics(run.metrics, rnd)
+        run.metrics = _accumulate_metrics(run.metrics, metrics_acc)
         db.commit()
         db.refresh(run)
     except Exception as exc:
@@ -453,14 +455,6 @@ def abort_run(db: Session, run_id: uuid.UUID) -> OcrOptimizationRun:
     return run
 
 
-# Legacy alias — keep `optimize()` callable as "start_optimization", returning
-# a Run that is paused_for_review after Round 1. Callers should migrate to
-# start_optimization explicitly.
-def optimize(*args, **kwargs):
-    """Deprecated. Use start_optimization. Now runs one round and pauses."""
-    return start_optimization(*args, **kwargs)
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Internal helpers
 # ──────────────────────────────────────────────────────────────────────────────
@@ -598,12 +592,19 @@ def _next_round_version(db: Session, api_definition_id: uuid.UUID) -> int:
     return nxt
 
 
-def _accumulate_metrics(prev: dict | None, rnd: OcrOptimizationRound) -> dict:
-    """Merge per-round metrics into the Run-level accumulator."""
+def _accumulate_metrics(prev: dict | None, counters: dict | None) -> dict:
+    """把本轮计数（_run_one_round 就地累加的 metrics dict）合并回 Run 级
+    metrics。只按计数键合并——run.metrics 在轮内还承载 rejected_edits /
+    meta_memory 等键（typed-edit 路径直写），不能整体覆盖。
+
+    结构审查修正：此前这是个假装干活的 no-op（只 dict(prev) 返回、从不读
+    第二个参数），_run_one_round 累加的 total_ocr_calls/total_llm_calls
+    从未落回 run.metrics。
+    """
     out = dict(prev or {})
-    # _run_one_round writes its incremental counts into `metrics` dict passed in.
-    # We just re-read what's been committed (the orchestrator is single-threaded
-    # so a shallow merge from current is fine).
+    for k in ("total_ocr_calls", "total_llm_calls"):
+        if counters and k in counters:
+            out[k] = counters[k]
     return out
 
 

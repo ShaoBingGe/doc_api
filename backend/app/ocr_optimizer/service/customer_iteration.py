@@ -57,7 +57,6 @@ logger = logging.getLogger(__name__)
 # ── Constants ────────────────────────────────────────────────────────────────
 
 MIN_SAMPLES_FOR_ITERATION = 3
-MAX_SAMPLES_HINT = 10  # informational only; messaging caps the suggestion at 9 new uploads
 
 
 def required_samples() -> int:
@@ -190,11 +189,10 @@ def _build_cross_doc_context_for_diffs(
     original_name or corrected_name. The reflection agent uses this to
     compare values/formatting across the 3 invoices.
     """
-    from app.models.api_definition import ApiDefinition as _ApiDef
     from app.models.annotation import Annotation as _Annotation
     from app.models.document import Document as _Document
 
-    api_def = db.get(_ApiDef, api_def_id)
+    api_def = db.get(ApiDefinition, api_def_id)
     if not api_def:
         return {}
     sample_ids = (api_def.config or {}).get("sample_document_ids") or []
@@ -278,10 +276,9 @@ def _build_sample_outputs(db: Session, api_def_id: uuid.UUID) -> dict[str, dict]
     的正确值若出现在输出 JSON 的其他字段下，说明当前规则抓错了来源——检索
     命中路径直接揭示真实锚点。键用文件名（比 UUID 对 LLM 可读）。
     """
-    from app.models.api_definition import ApiDefinition as _ApiDef
     from app.models.document import Document as _Document, ProcessingResult as _PR
 
-    api_def = db.get(_ApiDef, api_def_id)
+    api_def = db.get(ApiDefinition, api_def_id)
     if not api_def:
         return {}
     sample_ids: list[uuid.UUID] = []
@@ -474,10 +471,9 @@ def count_confirmed_samples(db: Session, api_definition_id: uuid.UUID) -> tuple[
     or source=manual). "total" = raw count of sample_document_ids. Used by
     both the waiting-banner progress UI and the auto-resume gate.
     """
-    from app.models.api_definition import ApiDefinition as _ApiDef
     from app.ocr_optimizer.service.ground_truth import has_ground_truth
 
-    api = db.get(_ApiDef, api_definition_id)
+    api = db.get(ApiDefinition, api_definition_id)
     if not api:
         return 0, 0
     ids = (api.config or {}).get("sample_document_ids") or []
@@ -584,7 +580,6 @@ def retry_ocr_on_sample(
 
     Returns: {document_id, status, annotations_created, error?}
     """
-    from app.models.api_definition import ApiDefinition
     from app.models.annotation import Annotation
     from app.models.document import Document, DocumentStatus
     from app.schemas.document import ReprocessRequest
@@ -2115,7 +2110,8 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
         new_prompt = src.ocr_prompt
         suffix = patch.get("__prompt_suffix")
         if suffix:
-            new_prompt = (src.ocr_prompt or "").rstrip() + "\n\n# 客户反馈补充\n" + suffix.strip()
+            from .feedback_blocks import append_feedback
+            new_prompt = append_feedback(src.ocr_prompt, suffix)
 
     # Phase 8 — copy source ocr_suggestions and append reflection entry
     # (when there was a customer edit on this module). Unchanged modules
@@ -2278,10 +2274,10 @@ def _extract_removed_rules(*, rationale: str, src_prompt: str) -> list[str]:
 
 
 def _snake(camel: str) -> str:
-    """billFromName → bill_from_name. Keep snake-cased input unchanged."""
-    import re as _re
-    s1 = _re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", camel)
-    return _re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
+    """billFromName → bill_from_name（结构审查 F4：与 _to_snake 二合一——
+    此前两份实现对含非字母数字字符的字段名产出不同 module_key，同一
+    rename/add 流可能命中不同模块行）。"""
+    return _to_snake(camel)
 
 
 _NEW_FIELD_LLM_SYSTEM = (

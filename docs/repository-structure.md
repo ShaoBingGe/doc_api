@@ -50,7 +50,8 @@ _REPO_ROOT.glob("*_invoice_prompt.yaml")              # MY/JP...
 _REPO_ROOT / f"{country.upper()}_invoice_prompt.yaml" # 单个加载
 ```
 - **后果**：国家模板**必须**放在仓库根，且文件名严格 `<COUNTRY>_invoice_prompt.yaml`（`.bak` / `_templet` 等不匹配、不会被加载）。
-- **部署**：服务器镜像到 `/opt/docapi/<COUNTRY>_invoice_prompt.yaml`（与 `backend/` 同级）。
+- **部署**：服务器镜像到 `/opt/docapi/<COUNTRY>_invoice_prompt.yaml`（与 `backend/` 同级）；
+  或设 `COUNTRY_TEMPLATE_DIR` 环境变量直接指定模板目录（backend 单独打包时不必复刻仓库层级）。
 - **移动代价**：搬到 `templates/` 需同时改 `parents[4]`、服务器布局、rsync 目标 → 风险 > 收益，**当前不动**。
 
 ---
@@ -72,3 +73,32 @@ _REPO_ROOT / f"{country.upper()}_invoice_prompt.yaml" # 单个加载
 ## 五、`archive/`
 
 被取代但保留出处的源工件（不参与运行时），见 [archive/README.md](../archive/README.md)。
+
+---
+
+## 六、服务层依赖方向（app/services ↔ app/ocr_optimizer）
+
+**目标方向**（新代码必须遵守）：
+
+```
+api/v1 ──► app/services ──► app/ocr_optimizer/service ──► processors
+                │                     │
+                └──── app/models ◄────┘
+```
+
+- `app/services`（文档/标注/租户等通用服务）**可以** import `ocr_optimizer`；
+- `ocr_optimizer` **不得**新增对 `app/services` 的依赖——它是被编排的引擎层，
+  不该反过来了解上层业务服务。
+
+**现存反向依赖（已知技术债，靠函数内延迟 import 苟着，勿再扩大）**：
+
+| ocr_optimizer 侧 | 依赖的 services | 原因 |
+|---|---|---|
+| `customer_iteration`（8 处）、`run_orchestrator`、`field_constraints` | `pending_edits_service`（overlay） | overlay（客户字段草稿）本质是优化域概念，却住在 services |
+| `customer_iteration` | `document_service._rewrite_structured_data_keys` 等 | re-OCR / 数据同步借用了文档服务的纯函数 |
+
+**还债方向**（择机做，不阻塞特性）：把 overlay 读写抽成两侧都可依赖的中立
+域模块（如 `app/domain/overlay.py`），`document_service` 的 OCR 后处理纯函数
+（`_flatten_hierarchical` / `_normalize_structured_data` / `_rewrite_structured_data_keys`
+等 ~480 行零 I/O 代码）拆成 `extraction_pipeline.py`——反向依赖即可归零，
+`app/models/__init__.py` ↔ `ocr_optimizer/__init__.py` 的懒加载破环 hack 也可拆除。

@@ -135,7 +135,7 @@ def get_pending_edits(
 
     See backend/app/services/pending_edits_service.py for the shape.
     """
-    svc._get_or_404(db, api_def_id, user)  # access guard
+    svc.get_or_404(db, api_def_id, user)  # access guard
     return pending_edits_service.get_overlay(db, api_def_id)
 
 
@@ -148,7 +148,7 @@ def clear_pending_edits(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ) -> dict:
-    svc._get_or_404(db, api_def_id, user)  # access guard
+    svc.get_or_404(db, api_def_id, user)  # access guard
     pending_edits_service.clear_overlay(db, api_def_id)
     return {"ok": True}
 
@@ -184,7 +184,7 @@ def commit_draft_to_overlay(
     badges, cascade rename, OCR overlay enhancement all fire from this
     single committed source.
     """
-    svc._get_or_404(db, api_def_id, user)  # access guard
+    svc.get_or_404(db, api_def_id, user)  # access guard
 
     old_name = (body.get("old_name") or "").strip()
     new_name = (body.get("new_name") or "").strip()
@@ -426,7 +426,7 @@ def list_samples_review_status(
     from app.ocr_optimizer.service import customer_iteration as ci
     from app.ocr_optimizer.service.ground_truth import has_ground_truth
 
-    api = svc._get_or_404(db, api_def_id, user)
+    api = svc.get_or_404(db, api_def_id, user)
     ids: list[str] = (api.config or {}).get("sample_document_ids") or []
     per_doc = [
         {
@@ -473,7 +473,7 @@ def confirm_sample_gt(
 ) -> dict:
     from app.ocr_optimizer.service import customer_iteration as ci
 
-    svc._get_or_404(db, api_def_id, user)
+    svc.get_or_404(db, api_def_id, user)
     confirmed = bool(body.get("confirmed", True))
     out = ci.set_sample_gt_confirmed(db, document_id, confirmed=confirmed)
     # Auto-resume if this confirmation just crossed the threshold
@@ -493,7 +493,7 @@ def retry_sample_ocr(
 ) -> dict:
     from app.ocr_optimizer.service import customer_iteration as ci
 
-    svc._get_or_404(db, api_def_id, user)
+    svc.get_or_404(db, api_def_id, user)
     return ci.retry_ocr_on_sample(
         db, api_definition_id=api_def_id, document_id=document_id,
     )
@@ -531,7 +531,7 @@ def customize_api_definition(
     api_code），源 API（含已发布的）保持原样继续对外服务；
     省略或 false：在原 API 上原地 bump 新版本（api_code 不变，Phase 19 行为）。
     """
-    svc._get_or_404(db, api_def_id, user)  # access guard
+    svc.get_or_404(db, api_def_id, user)  # access guard
 
     diffs = body.get("diffs") or []
     if not isinstance(diffs, list) or not diffs:
@@ -604,7 +604,7 @@ def get_active_customize_job(
     """Used by the frontend on workspace load: if there's an in-flight job
     (queued / waiting_for_samples / reflecting / forking / optimizing /
     failed), return it so the customize banner can be rehydrated."""
-    svc._get_or_404(db, api_def_id, user)  # access guard
+    svc.get_or_404(db, api_def_id, user)  # access guard
     job = customer_iteration.find_latest_active_job_for_api(db, api_def_id)
     if not job:
         return None

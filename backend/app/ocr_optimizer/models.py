@@ -4,7 +4,7 @@ SQLAlchemy ORM models for the OCR prompt optimizer subsystem.
 Tables (see docs/ocr-optimizer-design.md §5):
   - ocr_prompt_versions     — a snapshot of the full modular prompt for an API
   - ocr_modules             — individual modules within a version
-  - ocr_optimization_runs   — one manual `optimize()` invocation
+  - ocr_optimization_runs   — one manual `start_optimization()` invocation
   - ocr_optimization_rounds — one round within a run
   - ocr_module_iterations   — per-module per-round learning trail
 """

@@ -203,6 +203,8 @@ def draft_skill(
     """
     from app.core.config import get_settings
 
+    # 有意直调（不走 llm_failover 失败链）：技能起草是管理员离线操作，
+    # 指定 provider 不可用时宁可显式失败，也不要静默降级产出 mock 草稿。
     from .llm_call import llm_text_completion
 
     system, user = build_draft_prompt(country, field, sample_feedback)

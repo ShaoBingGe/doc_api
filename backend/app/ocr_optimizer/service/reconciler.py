@@ -23,11 +23,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from .feedback_blocks import MARKER as _FEEDBACK_MARKER  # 唯一常量源（结构审查 F2）
 from .llm_failover import llm_text_completion_failover
 
 logger = logging.getLogger(__name__)
-
-_FEEDBACK_MARKER = "# 客户反馈补充"
 
 _RECONCILER_SYSTEM = (
     "你是 OCR 字段 prompt 的「协调器 / 统筹器」。给你一个字段当前的 prompt（可能在多轮迭代里"
@@ -92,16 +91,10 @@ _TOPIC_TOKENS = ["前缀", "后缀", "小数", "千分位", "大小写", "括号
 
 
 def _feedback_lines(prompt: str) -> list[str]:
-    """抽取 prompt 中全部反馈块的内容行（去块头/空行）。"""
-    if not prompt or _FEEDBACK_MARKER not in prompt:
-        return []
-    lines: list[str] = []
-    for seg in prompt.split(_FEEDBACK_MARKER)[1:]:
-        for raw in seg.splitlines():
-            t = raw.strip().lstrip("-• ").strip()
-            if t and not t.startswith("（") and not t.startswith("("):
-                lines.append(t)
-    return lines
+    """抽取 prompt 中全部反馈块的内容行——委托 feedback_blocks 的共享判定
+    （与保留性守护同源，防两套「什么算实质反馈行」的定义漂移互咬）。"""
+    from .feedback_blocks import iter_substantive_lines
+    return iter_substantive_lines(prompt)
 
 
 def has_contradiction(current_prompt: str | None, new_suggestions: list[str]) -> bool:

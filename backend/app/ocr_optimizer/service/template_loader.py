@@ -22,9 +22,16 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-# Repo root: backend/app/ocr_optimizer/service/template_loader.py
-#            └─ parents[4] = repo root
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+# 国家模板目录（<COUNTRY>_invoice_prompt.yaml 所在处）。
+# 默认按仓库布局推导（parents[4] = repo root）；backend 单独打包部署时目录
+# 层级不同会静默找不到模板（结构审查 F11）——用 COUNTRY_TEMPLATE_DIR 环境
+# 变量显式覆盖，不必复刻仓库目录结构。
+import os as _os
+
+_REPO_ROOT = Path(
+    _os.environ.get("COUNTRY_TEMPLATE_DIR")
+    or Path(__file__).resolve().parents[4]
+)
 
 # Default replacement for the `{tax_categories_text}` placeholder in
 # yaml.prompt_format. Per design §6.4 / Q tax_categories.
@@ -174,10 +181,9 @@ def decompose_country_template(country: str) -> dict[str, Any]:
     # field name (json_path leaf), matching `locked_fields` in the yaml.
     locked = {str(x) for x in (data.get("locked_fields") or []) if x}
     if locked:
+        from .field_constraints import field_leaf  # 唯一实现（结构审查 F1）
         for mod in modules:
-            leaf = (mod.get("json_path") or "").split(".")[-1]
-            leaf = leaf.replace("[*]", "").replace("[", "").replace("]", "").strip()
-            mod["locked"] = leaf in locked
+            mod["locked"] = field_leaf(mod.get("json_path") or "") in locked
 
     return {
         "country": country.upper(),

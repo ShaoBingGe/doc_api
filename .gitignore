@@ -58,6 +58,16 @@ label-studio-ml-backend/
 # Test artifacts / 本地测试样本（含真实发票 PII + 体积大，勿入库；
 # 与 golden_set 同策略：原始扫描不入库，仅保留 README 说明角色）
 testing/
+MY-test/
+
+# 根目录散件：真实票据 PDF（PII）与未接线的模板草稿
+# （newMY*.yaml 不匹配 template_loader 的 *_invoice_prompt.yaml glob，
+#   不会被加载——正式模板请按 <COUNTRY>_invoice_prompt.yaml 命名）
+/*.pdf
+/newMY*.yaml
+
+# 会话记忆（个人工作区文件，不入库）
+memory/
 
 # Golden eval set: keep GT answer key + manifest + exporter in git, but NOT the
 # raw invoice scans (PII + binary + regenerable via build_golden_set.py).

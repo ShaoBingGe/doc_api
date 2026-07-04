@@ -8,8 +8,8 @@ modules. See docs/ocr-optimizer-design.md for the full design.
 Public entry points:
   - `get_active_composed_prompt(db, api_def_id) -> str | None`
       Called by extract_service to fetch the active prompt for production OCR.
-  - `optimize(db, api_def_id, ...) -> dict`
-      Manual trigger for one optimization Run.
+  - `start_optimization(db, api_def_id, ...) -> OcrOptimizationRun`
+      Manual trigger for one optimization Run (Round 1, then paused_for_review).
   - `init_version(db, api_def_id, ...) -> dict`
       Auto-decompose response_schema into initial modules.
 """

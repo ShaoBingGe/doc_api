@@ -19,6 +19,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from .feedback_blocks import MARKER as _FEEDBACK_HEADER  # 唯一常量源（结构审查 F2）
+from .feedback_blocks import iter_substantive_lines as _feedback_substantive_lines
+
+# 走失败链（别名易误读为 llm_call 的直调版）；判官 fail-closed 语义由
+# verify_module_fix 的结果解析层保证，与是否降级无关。
 from .llm_failover import llm_text_completion_failover as llm_text_completion
 
 logger = logging.getLogger(__name__)
@@ -233,9 +238,6 @@ def optimize_module(
 # 采纳未经审查的变更。轮次级兜底（入口 eval + 单调守护）仍在，但不再是
 # 唯一防线。唯一保留的默认 accept：无失败样本可验（无需审查）。
 
-_FEEDBACK_HEADER = "# 客户反馈补充"
-
-
 def customer_feedback_preserved(old_prompt: str | None, new_prompt: str | None) -> bool:
     """批次6 保留性守护（红线⑤「累积不覆盖」的 round 路径 enforcement）：
 
@@ -251,12 +253,9 @@ def customer_feedback_preserved(old_prompt: str | None, new_prompt: str | None) 
     new = new_prompt or ""
     if _FEEDBACK_HEADER not in old:
         return True
-    lines: list[str] = []
-    for seg in old.split(_FEEDBACK_HEADER)[1:]:
-        for raw in seg.splitlines():
-            t = raw.strip().lstrip("-• ").strip()
-            if len(t) >= 6 and not t.startswith("（"):
-                lines.append(t)
+    # 共享实质行判定（feedback_blocks）；此处额外过滤超短行（<6 字符的
+    # 列表残渣不构成可守护的反馈内容）。
+    lines = [t for t in _feedback_substantive_lines(old) if len(t) >= 6]
     if not lines:
         return True
     surviving = sum(1 for t in lines if t in new)

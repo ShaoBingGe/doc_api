@@ -145,8 +145,16 @@ def locked_fields_for_api(db: Session, api_def_id: uuid.UUID) -> set[str]:
 
 
 def field_leaf(json_path: str) -> str:
-    """Public leaf-name helper for callers outside this module."""
-    return _leaf(json_path)
+    """leaf 字段名提取的**唯一**实现（结构审查 F1：此前全仓 9 处内联拷贝）。
+    `$[*].invoiceNumber` / `$.invoiceNumber` / `invoiceNumber[*]` → `invoiceNumber`。"""
+    if not json_path:
+        return ""
+    leaf = json_path.split(".")[-1]
+    return leaf.replace("[*]", "").replace("[", "").replace("]", "").strip()
+
+
+# 内部旧名别名（同文件历史引用），新代码一律用 field_leaf
+_leaf = field_leaf
 
 
 def pin_locked_modules(
@@ -192,14 +200,6 @@ def pin_locked_modules(
 
 
 # ── Value-level normalization (the "stripping must take effect" guarantee) ────
-
-def _leaf(json_path: str) -> str:
-    """invoiceNumber leaf name from a json_path like $[*].invoiceNumber."""
-    if not json_path:
-        return ""
-    leaf = json_path.split(".")[-1]
-    return leaf.replace("[*]", "").replace("[", "").replace("]", "").strip()
-
 
 def normalize_value(value: Any, c: dict) -> Any:
     """Deterministically apply a constraint to a single scalar value.

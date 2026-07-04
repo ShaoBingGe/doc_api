@@ -29,6 +29,7 @@ import json
 import re
 from typing import Iterable
 
+from .feedback_blocks import MARKER as _FEEDBACK_HEADER  # 唯一常量源（结构审查 F2）
 from .output_contract import render_output_contract
 
 
@@ -362,7 +363,6 @@ def _render_module_body(m) -> str:
     return body
 
 
-_FEEDBACK_HEADER = "# 客户反馈补充"
 _SKILL_BLOCK_HEADER = "# 技能库补充（可复用规则）"
 _RULE_EDITS_HEADER = "# 规则补充（迭代沉淀）"
 _FIELD_RULE_HEADER = "# 结构化字段规则（反思沉淀）"

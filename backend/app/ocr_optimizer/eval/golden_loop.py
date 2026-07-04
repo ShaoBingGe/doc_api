@@ -132,10 +132,8 @@ def sample_batch(
 
 
 def _leaf(json_path: str | None) -> str:
-    if not json_path:
-        return ""
-    leaf = json_path.split(".")[-1]
-    return leaf.replace("[*]", "").replace("[", "").replace("]", "").strip()
+    from ..service.field_constraints import field_leaf  # 唯一实现（结构审查 F1）
+    return field_leaf(json_path or "")
 
 
 def _scalar(sliced: Any) -> Any:

@@ -181,11 +181,13 @@ def list_api_definitions(
 # ── Get ───────────────────────────────────────────────────────────────────────
 
 def get_api_definition(db: Session, api_def_id: uuid.UUID, user=None) -> ApiDefinitionResponse:
-    api_def = _get_or_404(db, api_def_id, user)
+    api_def = get_or_404(db, api_def_id, user)
     return _to_response(api_def)
 
 
-def _get_or_404(db: Session, api_def_id: uuid.UUID, user=None) -> ApiDefinition:
+def get_or_404(db: Session, api_def_id: uuid.UUID, user=None) -> ApiDefinition:
+    """取 ApiDefinition 并做 404/租户越权守卫。路由层的标准访问入口
+    （结构审查 F7：此前叫 _get_or_404，私有名却被路由层 8 处跨层引用）。"""
     api_def = db.get(ApiDefinition, api_def_id)
     if not api_def:
         raise NotFoundError(f"ApiDefinition {api_def_id} not found")
@@ -193,6 +195,10 @@ def _get_or_404(db: Session, api_def_id: uuid.UUID, user=None) -> ApiDefinition:
         from app.core.deps import assert_can_access
         assert_can_access(api_def, user)
     return api_def
+
+
+# 旧私有名别名（渐进迁移）——新代码一律用 get_or_404
+_get_or_404 = get_or_404
 
 
 def get_api_def_by_code(db: Session, api_code: str) -> ApiDefinition:
@@ -210,7 +216,7 @@ def update_api_definition(
     body: UpdateApiDefinitionRequest,
     user=None,
 ) -> ApiDefinitionResponse:
-    api_def = _get_or_404(db, api_def_id, user)
+    api_def = get_or_404(db, api_def_id, user)
 
     if body.name is not None:
         api_def.name = body.name
@@ -239,7 +245,7 @@ def update_api_status(
 ) -> ApiDefinitionResponse:
     if body.action not in _VALID_ACTIONS:
         raise ValidationError(f"action must be one of {_VALID_ACTIONS}")
-    api_def = _get_or_404(db, api_def_id, user)
+    api_def = get_or_404(db, api_def_id, user)
     api_def.status = _STATUS_MAP[body.action]
     db.commit()
     db.refresh(api_def)
@@ -249,7 +255,7 @@ def update_api_status(
 # ── Delete ────────────────────────────────────────────────────────────────────
 
 def delete_api_definition(db: Session, api_def_id: uuid.UUID, user=None) -> None:
-    api_def = _get_or_404(db, api_def_id, user)
+    api_def = get_or_404(db, api_def_id, user)
     db.delete(api_def)
     db.commit()
 
@@ -268,7 +274,7 @@ def list_sample_documents(db: Session, api_def_id: uuid.UUID, user=None) -> list
 
     from app.models.document import Document
 
-    api_def = _get_or_404(db, api_def_id, user)
+    api_def = get_or_404(db, api_def_id, user)
     cfg = dict(api_def.config or {})
     ids: list[str] = list(cfg.get("sample_document_ids") or [])
     if not ids:
@@ -327,7 +333,7 @@ def add_sample_document(
         upload_document,
     )
 
-    _get_or_404(db, api_def_id, user)  # 404 / access guard
+    get_or_404(db, api_def_id, user)  # 404 / access guard
     doc = upload_document(
         db,
         filename=filename,
@@ -365,7 +371,7 @@ def remove_sample_document(
     """Drop a Document from the sample set (does NOT delete the Document itself)."""
     from sqlalchemy.orm.attributes import flag_modified
 
-    api_def = _get_or_404(db, api_def_id, user)
+    api_def = get_or_404(db, api_def_id, user)
     cfg = dict(api_def.config or {})
     ids: list[str] = list(cfg.get("sample_document_ids") or [])
     sid = str(document_id)
@@ -387,7 +393,7 @@ def get_stats(db: Session, api_def_id: uuid.UUID, user=None) -> ApiStatsResponse
     Usage statistics from UsageRecord table.
     Prototype returns zeros until UsageRecord is populated.
     """
-    _get_or_404(db, api_def_id, user)
+    get_or_404(db, api_def_id, user)
     # TODO: aggregate from UsageRecord when that model is added
     return ApiStatsResponse()
 
@@ -440,7 +446,7 @@ def _active_composed_schema(db: Session, api_def_id: uuid.UUID) -> dict | None:
 
 
 def get_api_docs(db: Session, api_def_id: uuid.UUID, user=None) -> ApiDocsResponse:
-    api_def = _get_or_404(db, api_def_id, user)
+    api_def = get_or_404(db, api_def_id, user)
     # 真实返回结构以 active 版本的 composed_schema 为准（response_schema 可能是
     # 创建时的旧快照）；提取字段速览供调用方对照。
     composed = _active_composed_schema(db, api_def.id)

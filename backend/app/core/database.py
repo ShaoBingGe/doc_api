@@ -68,12 +68,20 @@ def create_tables() -> None:
     Base.metadata.create_all(bind=engine)
 
 
-def ensure_customize_job_columns() -> None:
-    """Idempotent add of `customize_jobs.options` (JSON) for pre-existing DBs.
+def _ensure_column(
+    table: str,
+    column: str,
+    *,
+    sqlite_type: str,
+    pg_type: str | None = None,
+    ddl_suffix: str = "",
+) -> None:
+    """Idempotent「缺列则 ALTER ADD」原型迁移模板（结构审查 F3：此前四个
+    ensure_* 函数各复制一份 30 行的 PRAGMA/information_schema 查列样板）。
 
-    Same prototype-only pattern as ensure_tenant_columns: `create_all` never
-    ALTERs, so DBs created before the save-as-new feature lack the column.
-    JSON is stored as TEXT in SQLite; nullable so old rows need no backfill.
+    `create_all` never ALTERs——每个后加的 ORM 列都需要一条声明。生产
+    （PostgreSQL）应换真迁移工具；本模板 prototype-only，每次启动幂等执行。
+    永不抛异常（启动路径，失败仅记日志）。
     """
     from sqlalchemy import text
 
@@ -81,7 +89,8 @@ def ensure_customize_job_columns() -> None:
         is_sqlite = settings.DATABASE_URL.startswith("sqlite")
         try:
             if is_sqlite:
-                cols = {row[1] for row in conn.execute(text('PRAGMA table_info("customize_jobs")'))}
+                cols = {row[1] for row in conn.execute(
+                    text(f'PRAGMA table_info("{table}")'))}
             else:
                 cols = {
                     row[0]
@@ -90,122 +99,45 @@ def ensure_customize_job_columns() -> None:
                             "SELECT column_name FROM information_schema.columns "
                             "WHERE table_name = :t"
                         ),
-                        {"t": "customize_jobs"},
+                        {"t": table},
                     )
                 }
-            if cols and "options" not in cols:
-                col_type = "TEXT" if is_sqlite else "JSON"
-                conn.execute(text(f'ALTER TABLE "customize_jobs" ADD COLUMN options {col_type}'))
+            if cols and column not in cols:
+                col_type = sqlite_type if is_sqlite else (pg_type or sqlite_type)
+                ddl = f'ALTER TABLE "{table}" ADD COLUMN {column} {col_type}'
+                if ddl_suffix:
+                    ddl += f" {ddl_suffix}"
+                conn.execute(text(ddl))
         except Exception:
             import logging
-            logging.getLogger(__name__).exception("ensure_customize_job_columns failed")
+            logging.getLogger(__name__).exception(
+                "_ensure_column failed for %s.%s", table, column,
+            )
+
+
+def ensure_customize_job_columns() -> None:
+    """customize_jobs.options（JSON，save-as-new 特性）。"""
+    _ensure_column("customize_jobs", "options", sqlite_type="TEXT", pg_type="JSON")
 
 
 def ensure_ocr_module_columns() -> None:
-    """Idempotent add of `ocr_modules.rule_edits_text` (TEXT, ADR-002).
-
-    存量缺口：该列随 ADR-002 加入 ORM 但从未配 ensure 迁移——任何早于
-    ADR-002 建的库，ORM 一查 ocr_modules 就 OperationalError。
-    """
-    from sqlalchemy import text
-
-    with engine.begin() as conn:
-        is_sqlite = settings.DATABASE_URL.startswith("sqlite")
-        try:
-            if is_sqlite:
-                cols = {row[1] for row in conn.execute(
-                    text('PRAGMA table_info("ocr_modules")'))}
-            else:
-                cols = {
-                    row[0]
-                    for row in conn.execute(
-                        text(
-                            "SELECT column_name FROM information_schema.columns "
-                            "WHERE table_name = :t"
-                        ),
-                        {"t": "ocr_modules"},
-                    )
-                }
-            if cols and "rule_edits_text" not in cols:
-                conn.execute(text(
-                    "ALTER TABLE \"ocr_modules\" ADD COLUMN rule_edits_text TEXT "
-                    "NOT NULL DEFAULT ''"
-                ))
-        except Exception:
-            import logging
-            logging.getLogger(__name__).exception("ensure_ocr_module_columns failed")
+    """ocr_modules.rule_edits_text（TEXT，ADR-002 存量缺口）。"""
+    _ensure_column(
+        "ocr_modules", "rule_edits_text",
+        sqlite_type="TEXT", ddl_suffix="NOT NULL DEFAULT ''",
+    )
 
 
 def ensure_round_eval_quality_column() -> None:
-    """Idempotent add of `ocr_optimization_rounds.eval_quality` (JSON).
-
-    批次2（降级/失败样本剔除）新增列：记录该轮评测有效性（剔除样本、
-    降级标记）。与 ensure_customize_job_columns 同款原型迁移模式。
-    """
-    from sqlalchemy import text
-
-    with engine.begin() as conn:
-        is_sqlite = settings.DATABASE_URL.startswith("sqlite")
-        try:
-            if is_sqlite:
-                cols = {row[1] for row in conn.execute(
-                    text('PRAGMA table_info("ocr_optimization_rounds")'))}
-            else:
-                cols = {
-                    row[0]
-                    for row in conn.execute(
-                        text(
-                            "SELECT column_name FROM information_schema.columns "
-                            "WHERE table_name = :t"
-                        ),
-                        {"t": "ocr_optimization_rounds"},
-                    )
-                }
-            if cols and "eval_quality" not in cols:
-                col_type = "TEXT" if is_sqlite else "JSON"
-                conn.execute(text(
-                    f'ALTER TABLE "ocr_optimization_rounds" ADD COLUMN eval_quality {col_type}'
-                ))
-        except Exception:
-            import logging
-            logging.getLogger(__name__).exception("ensure_round_eval_quality_column failed")
+    """ocr_optimization_rounds.eval_quality（JSON，批次2 评测有效性）。"""
+    _ensure_column(
+        "ocr_optimization_rounds", "eval_quality",
+        sqlite_type="TEXT", pg_type="JSON",
+    )
 
 
 def ensure_tenant_columns() -> None:
-    """
-    Idempotent lightweight migration for the prototype SQLite DB.
-
-    `create_all` never ALTERs an existing table, so a freshly-added `tenant_id`
-    column won't appear on a dev DB that predates it. Detect-and-add the column
-    on the data-owning tables. Production (PostgreSQL) should use a real
-    migration tool; this is prototype-only and safe to run on every boot.
-    """
-    from sqlalchemy import text
-
-    tables = ("api_definitions", "documents", "api_keys")
-    with engine.begin() as conn:
-        is_sqlite = settings.DATABASE_URL.startswith("sqlite")
-        for table in tables:
-            try:
-                if is_sqlite:
-                    cols = {row[1] for row in conn.execute(text(f'PRAGMA table_info("{table}")'))}
-                else:  # PostgreSQL / others
-                    cols = {
-                        row[0]
-                        for row in conn.execute(
-                            text(
-                                "SELECT column_name FROM information_schema.columns "
-                                "WHERE table_name = :t"
-                            ),
-                            {"t": table},
-                        )
-                    }
-                if cols and "tenant_id" not in cols:
-                    # SQLite stores UUID columns as CHAR(32); a nullable TEXT
-                    # column accepts them and SQLAlchemy's Uuid type handles I/O.
-                    conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN tenant_id CHAR(32)'))
-            except Exception:
-                import logging
-                logging.getLogger(__name__).exception(
-                    "ensure_tenant_columns failed for table %s", table
-                )
+    """api_definitions / documents / api_keys 补 tenant_id（多租户隔离）。
+    SQLite 用 CHAR(32) 存 UUID；nullable，无需回填。"""
+    for table in ("api_definitions", "documents", "api_keys"):
+        _ensure_column(table, "tenant_id", sqlite_type="CHAR(32)")

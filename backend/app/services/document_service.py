@@ -417,7 +417,10 @@ def _call_processor(
         kwargs["model_name"] = model_name
     processor = ProcessorFactory.create(processor_type, **kwargs)
     instruction = prompt or "Extract all structured data fields from this document."
-    runtime_config = {"schema": schema} if schema else None
+    # processors 消费的键是 "response_schema"（gemini 借此硬约束输出形状）。
+    # 历史键名 "schema" 没有任何 processor 读取，被 extra-ignore 静默吞掉——
+    # 上传识别一直没有 schema 硬约束（结构审查 F12 死参数）。
+    runtime_config = {"response_schema": schema} if schema else None
 
     raw_text = processor.process_document(storage_path, instruction, runtime_config)
     model_name = processor.get_model_version()
