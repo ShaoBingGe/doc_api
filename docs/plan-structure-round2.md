@@ -198,16 +198,26 @@ DarkFieldViewer.tsx    ← 薄入口：主组件(:2423) + re-export，import 方
 
 依赖关系：A0 → A1 → A2 → A3（A3 依赖 A1 的 domain 模块）；B1 → B2；A/B 两线独立可交错。
 
-| # | 步骤 | 预估 | 提交 |
+| # | 步骤 | 状态 | 提交 |
 |---|---|---|---|
-| 1 | A0 依赖方向防回归测试 | 1h | `test(arch): 依赖方向防回归（白名单制）` |
-| 2 | A1 overlay → domain | 0.5-1d | `refactor(domain): overlay 抽中立域模块，ocr_optimizer 反向依赖 -5` |
-| 3 | A2 extraction_pipeline → domain | 0.5d | `refactor(domain): 提取后处理纯函数下沉 + 补单测（反向依赖归零）` |
-| 4 | A3 commit_draft 下沉 | 0.5d | `refactor(api): commit_draft_to_overlay 业务分发下沉 domain` |
-| 5 | B1 api-client wrapper 收敛 | 0.5d | `refactor(frontend): API 调用面收敛到 api-client（消 10 处裸 URL）` |
-| 6 | B2 DarkFieldViewer 拆分 | 1d | `refactor(frontend): DarkFieldViewer 按既有分节拆目录（2431→150 行）` |
+| 1 | A0 依赖方向防回归测试 | ✅ 已完成 | `fa3cabc test(arch): 依赖方向防回归（AST 白名单制）` |
+| 2 | A1 overlay → domain | ✅ 已完成 | `a216dad refactor(domain): overlay 抽 app/domain（反向依赖 -5）` |
+| 3 | A2 extraction_pipeline → domain | ✅ 已完成 | `cb3be2a refactor(domain): 提取后处理纯函数下沉 + 补单测` |
+| 4 | A3 commit_draft 下沉 | ✅ 已完成 | `9d3e807 refactor(api): commit_draft 6-case 分发下沉 apply_draft` |
+| 5 | B1 api-client wrapper 收敛 | ✅ 已完成 | `a060450 refactor(frontend): API 调用面收敛到 api-client（消 11 处裸 URL）` |
+| 6 | B2 DarkFieldViewer 拆分 | ⏸ **待做** | — |
 
-总计 **3.5–4 天**。每步：全量 pytest（backend）/ build+lint+冒烟（frontend）→ 独立提交 → 可随时停在任意步。
+**实际修正**：A2 的「白名单归零」DoD 不可达——`reprocess_document`（编排 OCR）
+是引擎侧 re-OCR 的合法 engine→document 原语，不能下沉，作为**永久例外**保留
+（白名单从 6 类降到 1 类）。A3 的 `apply_draft` 落在 service facade 而非 domain
+（它编排 facade 级操作：locked 注入 + apply_to_active_version 副作用）。
+
+**B2 待做说明**：结构有利（14 组件按 `───` 分节、状态都在 store、组件间引用
+仅 2-4 处），但它是**纯可维护性重组**（零行为变更、零 bug 修复）且**无测试
+兜底**——2431 行 leaf-first 逐组件抽取 + 每步 build 迭代约一天。价值/风险计算下
+适合作为**独立的专注一轮**做，而非附在长会话尾部。按 §2-B2 的 leaf-first
+顺序（TypeSelector/FieldRow/ArrayTable → 组合组件 → views → 薄入口），每 2-3
+组件一次 `npm run build` + 一次提交，可随时停。
 
 ## 4. 风险与回退
 
