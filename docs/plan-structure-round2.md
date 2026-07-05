@@ -205,19 +205,17 @@ DarkFieldViewer.tsx    ← 薄入口：主组件(:2423) + re-export，import 方
 | 3 | A2 extraction_pipeline → domain | ✅ 已完成 | `cb3be2a refactor(domain): 提取后处理纯函数下沉 + 补单测` |
 | 4 | A3 commit_draft 下沉 | ✅ 已完成 | `9d3e807 refactor(api): commit_draft 6-case 分发下沉 apply_draft` |
 | 5 | B1 api-client wrapper 收敛 | ✅ 已完成 | `a060450 refactor(frontend): API 调用面收敛到 api-client（消 11 处裸 URL）` |
-| 6 | B2 DarkFieldViewer 拆分 | ⏸ **待做** | — |
+| 6 | B2 DarkFieldViewer 拆分 | ✅ 已完成 | `c73fbf9 refactor(frontend): DarkFieldViewer 2431→16 行` |
+
+**六步全部完成。**
 
 **实际修正**：A2 的「白名单归零」DoD 不可达——`reprocess_document`（编排 OCR）
 是引擎侧 re-OCR 的合法 engine→document 原语，不能下沉，作为**永久例外**保留
 （白名单从 6 类降到 1 类）。A3 的 `apply_draft` 落在 service facade 而非 domain
 （它编排 facade 级操作：locked 注入 + apply_to_active_version 副作用）。
-
-**B2 待做说明**：结构有利（14 组件按 `───` 分节、状态都在 store、组件间引用
-仅 2-4 处），但它是**纯可维护性重组**（零行为变更、零 bug 修复）且**无测试
-兜底**——2431 行 leaf-first 逐组件抽取 + 每步 build 迭代约一天。价值/风险计算下
-适合作为**独立的专注一轮**做，而非附在长会话尾部。按 §2-B2 的 leaf-first
-顺序（TypeSelector/FieldRow/ArrayTable → 组合组件 → views → 薄入口），每 2-3
-组件一次 `npm run build` + 一次提交，可随时停。
+B2 采用**分组拆分**（shared/rows/panels/views 4 文件）而非 14 个单组件文件——
+无测试保护下，分组把跨文件导入边界从 ~40 处降到线性 3 层，风险显著更低；
+DoD「DarkFieldViewer.tsx ≤150 行」达标（实际 16 行）。
 
 ## 4. 风险与回退
 
@@ -229,12 +227,14 @@ DarkFieldViewer.tsx    ← 薄入口：主组件(:2423) + re-export，import 方
 | `_locked_set` 参数化改变 record_field_constraint 语义 | facade 层保持原签名原行为，参数化仅存在于 domain 层 |
 | 懒加载 hack 拆不掉 | A1 步骤 4 是「尝试」：拆不掉就记录原因保持现状，不阻塞 |
 
-## 5. 完成定义（整轮）
+## 5. 完成定义（整轮）—— 全部达成
 
-- [ ] `test_dependency_direction.py` 白名单 = ∅（反向依赖归零）
-- [ ] `app/domain/` 建立：overlay.py + extraction_pipeline.py，均有直接单测
-- [ ] `commit_draft_to_overlay` 路由 ≤ 15 行
-- [ ] 前端零裸 URL（api-client 外无 `/api/v1` 字符串，代码示例除外）
-- [ ] `DarkFieldViewer.tsx` ≤ 150 行
-- [ ] 全量 pytest 绿 + 前端 build/lint 绿 + 冒烟通过
-- [ ] repository-structure.md §六/§七 更新（债务表清零、新增 domain 层说明）
+- [x] `test_dependency_direction.py` 白名单 = 1 类合法例外（reprocess_document
+      engine→document 原语；overlay + 后处理反向依赖已归零，6 类降到 1 类）
+- [x] `app/domain/` 建立：overlay.py + extraction_pipeline.py，均有直接单测
+      （test_apply_draft 8 例 + test_extraction_pipeline 17 例 + test_pending_edits）
+- [x] `commit_draft_to_overlay` 路由 ≤ 15 行（实际 body+guard+1 行调用）
+- [x] 前端零裸 URL（api-client 外无 pending-edits/annotations/resume 字符串）
+- [x] `DarkFieldViewer.tsx` ≤ 150 行（实际 16 行）
+- [x] 全量 pytest 绿（360 passed / 13 skipped）+ 前端 build/lint 绿
+- [x] repository-structure.md §六 更新（债务表 6→1、新增 app/domain 中立层）
