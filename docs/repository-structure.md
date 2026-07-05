@@ -78,30 +78,34 @@ _REPO_ROOT / f"{country.upper()}_invoice_prompt.yaml" # 单个加载
 
 ## 六、服务层依赖方向（app/services ↔ app/ocr_optimizer）
 
-**目标方向**（新代码必须遵守）：
+**目标方向**（新代码必须遵守，`tests/test_dependency_direction.py` AST 守护）：
 
 ```
 api/v1 ──► app/services ──► app/ocr_optimizer/service ──► processors
                 │                     │
+                ├──── app/domain ◄────┤   ← 中立叶子层（overlay / extraction_pipeline）
                 └──── app/models ◄────┘
 ```
 
-- `app/services`（文档/标注/租户等通用服务）**可以** import `ocr_optimizer`；
-- `ocr_optimizer` **不得**新增对 `app/services` 的依赖——它是被编排的引擎层，
-  不该反过来了解上层业务服务。
+- `app/domain`（overlay 数据读写、OCR 后处理纯函数）是**中立叶子**：只依赖
+  `app/models` + `app/core` + 标准库，两侧都可依赖，本身不 import 任何上层；
+- `app/services` **可以** import `ocr_optimizer`；
+- `ocr_optimizer` **不得**新增对 `app/services` 的依赖——它是被编排的引擎层。
+  引擎需要 overlay / 后处理纯函数时，import `app/domain`（而非 services）。
 
-**现存反向依赖（已知技术债，靠函数内延迟 import 苟着，勿再扩大）**：
+**现存反向依赖（2026-07 A0-A3 还债后仅剩 1 类合法例外）**：
 
-| ocr_optimizer 侧 | 依赖的 services | 原因 |
+| ocr_optimizer 侧 | 依赖的 services | 状态 |
 |---|---|---|
-| `customer_iteration`（8 处）、`run_orchestrator`、`field_constraints` | `pending_edits_service`（overlay） | overlay（客户字段草稿）本质是优化域概念，却住在 services |
-| `customer_iteration` | `document_service._rewrite_structured_data_keys` 等 | re-OCR / 数据同步借用了文档服务的纯函数 |
+| `doc_sync`、`customer_iteration` | `document_service.reprocess_document` | **永久例外**：编排 OCR 的 engine→document 原语（引擎侧 re-OCR 经它），非纯数据/知识借用。下沉它等于把整条提取管线搬出 document_service，方向反而更乱。 |
 
-**还债方向**（择机做，不阻塞特性）：把 overlay 读写抽成两侧都可依赖的中立
-域模块（如 `app/domain/overlay.py`），`document_service` 的 OCR 后处理纯函数
-（`_flatten_hierarchical` / `_normalize_structured_data` / `_rewrite_structured_data_keys`
-等 ~480 行零 I/O 代码）拆成 `extraction_pipeline.py`——反向依赖即可归零，
-`app/models/__init__.py` ↔ `ocr_optimizer/__init__.py` 的懒加载破环 hack 也可拆除。
+overlay（5 处）+ 后处理纯函数已分别下沉 `app/domain/overlay.py` /
+`app/domain/extraction_pipeline.py`，反向依赖从 6 类降到 1 类。白名单
+（`ALLOWED_REVERSE`）精确登记这唯一例外，新增越界即测试红。
+
+**未动**：`app/models/__init__.py` ↔ `ocr_optimizer/__init__.py` 的懒加载破环
+hack 是 ORM 表注册的冷启动循环（CLI `-m` 运行需要），与 overlay/后处理下沉
+正交——A1-A2 未触及也无从拆除，保持现状。
 
 ## 七、迭代引擎的模块拆分（结构审查 1.1，2026-07 落地）
 
