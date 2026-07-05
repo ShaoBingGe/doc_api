@@ -1,5 +1,8 @@
 import { create } from 'zustand'
-import apiClient, { OCR_TIMEOUT, updateAnnotation, deleteAnnotation, reprocessDocument } from '../lib/api-client'
+import apiClient, {
+  OCR_TIMEOUT, updateAnnotation, deleteAnnotation, reprocessDocument,
+  commitDraftToOverlay, getPendingEdits,
+} from '../lib/api-client'
 import { toast } from '../lib/toast'
 
 export type WorkspaceStep = 'annotate' | 'configure' | 'test' | 'publish'
@@ -1144,8 +1147,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     if (Object.keys(payload).length === 0) return
 
     try {
-      await apiClient.post(
-        `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
+      await commitDraftToOverlay(apiDefinitionId,
         payload,
       )
       // Refresh overlay + reload doc so cascade-renamed annotations
@@ -1173,16 +1175,14 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const valChanged = String(d.originalValue ?? '') !== d.correctedValue
       // Rename branch
       if (oldN && newN && oldN !== newN) {
-        tasks.push(apiClient.post(
-          `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
+        tasks.push(commitDraftToOverlay(apiDefinitionId,
           { old_name: oldN, new_name: newN },
         ))
       }
       // Value modification branch (per-doc)
       const docIdForMod = d.documentId ?? selectedDocId
       if (valChanged && docIdForMod) {
-        tasks.push(apiClient.post(
-          `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
+        tasks.push(commitDraftToOverlay(apiDefinitionId,
           {
             modification: {
               document_id: docIdForMod,
@@ -1196,8 +1196,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     for (const d of addFieldDrafts) {
       const newN = (d.correctedName || '').trim()
       if (!newN) continue
-      tasks.push(apiClient.post(
-        `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
+      tasks.push(commitDraftToOverlay(apiDefinitionId,
         {
           new_name: newN,
           field_type: d.correctedFormat || 'string',
@@ -1224,8 +1223,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     const id = get().apiDefinitionId
     if (!id || !fieldName) return
     try {
-      await apiClient.post(
-        `/api/v1/api-definitions/${id}/pending-edits/commit-draft`,
+      await commitDraftToOverlay(id,
         { field_feedback: { field_name: fieldName, text } },
       )
     } catch (err) {
@@ -1237,9 +1235,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     const id = get().apiDefinitionId
     if (!id) return
     try {
-      const res = await apiClient.get(
-        `/api/v1/api-definitions/${id}/pending-edits`,
-      )
+      const res = await getPendingEdits(id)
       const d = (res.data || {}) as {
         added_fields?: Array<{
           field_name: string
@@ -1280,8 +1276,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     const ann = annotations.find((a) => a.id === targetId)
     if (!ann) return
     try {
-      await apiClient.post(
-        `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
+      await commitDraftToOverlay(apiDefinitionId,
         { deleted: true, field_name: ann.label },
       )
       // Drop locally + close the editor pane if it was showing this field.

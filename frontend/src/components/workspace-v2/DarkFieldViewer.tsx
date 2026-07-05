@@ -23,7 +23,9 @@ import { cn } from '../../lib/utils'
 import NoiseSampleModal from './NoiseSampleModal'
 import { useWorkspaceStore, type Annotation, type CustomizeJobStatus, type FieldEditDraft, type ProcessingResult } from '../../stores/workspace-store'
 import { toast } from '../../lib/toast'
-import apiClient from '../../lib/api-client'
+import {
+  commitDraftToOverlay, clearPendingEdits, saveDocumentAnnotation, resumeCustomizeJob,
+} from '../../lib/api-client'
 
 const FORMAT_OPTIONS = ['string', 'number', 'date', 'boolean', 'array'] as const
 
@@ -944,7 +946,7 @@ function MissingFieldsList({
         field_type: 'string',
         source: 'manual' as const,
       }
-      await apiClient.post(`/api/v1/documents/${docId}/annotations`, payload)
+      await saveDocumentAnnotation(docId, payload)
       // Refresh document so the new annotation shows in the main list
       await useWorkspaceStore.getState().loadDocument(docId)
       await useWorkspaceStore.getState().loadPendingEdits()
@@ -982,10 +984,7 @@ function MissingFieldsList({
     )) return
     setDeletingNames((s) => new Set(s).add(name))
     try {
-      await apiClient.post(
-        `/api/v1/api-definitions/${apiDefinitionId}/pending-edits/commit-draft`,
-        { deleted: true, field_name: name },
-      )
+      await commitDraftToOverlay(apiDefinitionId, { deleted: true, field_name: name })
       await useWorkspaceStore.getState().loadPendingEdits()
       await useWorkspaceStore.getState().loadRequiredFields()
       // Drop the draft (if any) for this name
@@ -1335,7 +1334,7 @@ function WaitingForSamplesBanner({
                   return
                 }
                 try {
-                  await apiClient.post(`/api/v1/api-definitions/customize-jobs/${jobId}/resume`)
+                  await resumeCustomizeJob(jobId)
                   toast.success('已触发反思 + 3 轮优化')
                   // Immediate refresh so the banner flips without waiting
                   // for the 10s waiting_for_samples polling cadence.
@@ -1355,7 +1354,7 @@ function WaitingForSamplesBanner({
               if (!apiDefinitionId) return
               if (!confirm('清理后本工作区将不再显示"已重命名/已新增/已修改/已删除"标识。继续？')) return
               try {
-                await apiClient.delete(`/api/v1/api-definitions/${apiDefinitionId}/pending-edits`)
+                await clearPendingEdits(apiDefinitionId)
                 await useWorkspaceStore.getState().loadPendingEdits()
                 toast.success('已清理本工作区的变更标识')
               } catch {

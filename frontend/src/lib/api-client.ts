@@ -191,6 +191,35 @@ export function fetchUsageStats(range?: string) {
   return apiClient.get('/api/v1/usage/stats', { params: { range: range ?? '7d' } })
 }
 
+// ── Pending-edits overlay (workspace draft) ─────────────────────────────────
+// 结构第二轮 B1：收敛此前散落在 workspace-store / DarkFieldViewer 的裸 URL
+// 调用——端点只在这里出现一次，改路由/加 header 只改一处。
+
+/** 把工作区草稿（rename / add / modification / delete / field_constraint /
+ *  field_feedback）提交到 overlay。body 见后端 apply_draft。 */
+export function commitDraftToOverlay(apiDefId: string, body: Record<string, unknown>) {
+  return apiClient.post(`/api/v1/api-definitions/${apiDefId}/pending-edits/commit-draft`, body)
+}
+
+export function getPendingEdits(apiDefId: string) {
+  return apiClient.get(`/api/v1/api-definitions/${apiDefId}/pending-edits`)
+}
+
+/** 清空本工作区的 overlay 变更标识（已重命名/新增/修改/删除）。 */
+export function clearPendingEdits(apiDefId: string) {
+  return apiClient.delete(`/api/v1/api-definitions/${apiDefId}/pending-edits`)
+}
+
+/** 在某文档上手动新增一条标注（manual source）。 */
+export function saveDocumentAnnotation(docId: string, payload: Record<string, unknown>) {
+  return apiClient.post(`/api/v1/documents/${docId}/annotations`, payload)
+}
+
+/** 样本齐了之后手动触发 waiting_for_samples 定制 job 的反思 + 3 轮优化。 */
+export function resumeCustomizeJob(jobId: string) {
+  return apiClient.post(`/api/v1/api-definitions/customize-jobs/${jobId}/resume`)
+}
+
 // ── OCR Optimizer (modular) ─────────────────────────────────────────────────
 
 export function initOcrOptimizer(
