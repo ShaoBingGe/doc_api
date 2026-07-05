@@ -183,80 +183,13 @@ def commit_draft_to_overlay(
     that draft edits become visible across all samples immediately —
     badges, cascade rename, OCR overlay enhancement all fire from this
     single committed source.
+
+    结构第二轮 A3：6-case 分发逻辑下沉 pending_edits_service.apply_draft
+    （它编排 facade 级操作：locked 注入 + apply_to_active_version 副作用）。
+    路由只留 access guard + 一行调用。
     """
     svc.get_or_404(db, api_def_id, user)  # access guard
-
-    old_name = (body.get("old_name") or "").strip()
-    new_name = (body.get("new_name") or "").strip()
-    field_type = body.get("field_type") or "string"
-    description = body.get("description") or ""
-
-    out: dict = {}
-
-    # Case 1: pure rename (old != new, both present)
-    if old_name and new_name and old_name != new_name:
-        out["renames"] = pending_edits_service.record_rename(
-            db, api_def_id, old_name, new_name,
-        )["renames"]
-        pending_edits_service.cascade_rename_annotations(
-            db, api_def_id, old_name, new_name,
-        )
-
-    # Case 2: add new field (no old_name; new_name + value/desc)
-    elif new_name and not old_name:
-        pending_edits_service.record_added_field(
-            db, api_def_id,
-            field_name=new_name,
-            field_type=field_type,
-            description=description,
-            added_at_doc_id=None,
-            default_value=body.get("added_value"),
-        )
-
-    # Case 3: value modification (modification block present)
-    mod = body.get("modification") or {}
-    if mod.get("document_id") and mod.get("field_name") is not None:
-        pending_edits_service.record_modification(
-            db, api_def_id,
-            document_id=uuid.UUID(str(mod["document_id"])),
-            field_name=str(mod["field_name"]),
-            new_value=mod.get("value"),
-        )
-
-    # Case 4 (Phase 11a): field deletion — cascades across all docs
-    if body.get("deleted") and body.get("field_name"):
-        overlay, n = pending_edits_service.record_deleted_field(
-            db, api_def_id, str(body["field_name"]),
-        )
-        out["deleted_annotation_rows"] = n
-
-    # Case 5: explicit per-field type/format override (customer override).
-    # Persisted sticky and enforced through every optimization round +
-    # overriding the country template's Part 1. Shape:
-    #   {"field_constraint": {"field_name": "invoiceNumber", "type": "number",
-    #     "strip_chars": [" ","-","_","*"], "strip_non_numeric": true,
-    #     "locked": true, "note": "..."}}
-    fc = body.get("field_constraint") or {}
-    if fc.get("field_name"):
-        pending_edits_service.record_field_constraint(
-            db, api_def_id,
-            field_name=str(fc["field_name"]),
-            field_type=fc.get("type"),
-            strip_chars=fc.get("strip_chars"),
-            strip_non_numeric=fc.get("strip_non_numeric"),
-            locked=bool(fc.get("locked", True)),
-            note=fc.get("note"),
-        )
-
-    # Case 6: per-field free-text USER FEEDBACK (reflection hint, NOT final prompt).
-    #   {"field_feedback": {"field_name": "currency", "text": "..."}}
-    ff = body.get("field_feedback") or {}
-    if ff.get("field_name"):
-        pending_edits_service.record_field_feedback(
-            db, api_def_id, str(ff["field_name"]), ff.get("text"),
-        )
-
-    return pending_edits_service.get_overlay(db, api_def_id)
+    return pending_edits_service.apply_draft(db, api_def_id, body)
 
 
 @router.get(

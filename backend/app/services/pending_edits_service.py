@@ -233,6 +233,93 @@ def compute_required_field_set(db: Session, api_def_id: uuid.UUID) -> list[str]:
 _ANNOTATION_WRAPPER_KEYS = {"id", "keyName", "value", "confidence", "bbox", "bounding_box"}
 
 
+def apply_draft(
+    db: Session,
+    api_def_id: uuid.UUID,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist a workspace FieldEditorPanel draft into the overlay (design v8
+    Phase 10). Dispatches the body's present operations to the record_* helpers
+    (which inject country-lock + run engine side-effects), then returns the
+    resulting overlay.
+
+    结构第二轮 A3：从 api/v1/api_defs.commit_draft_to_overlay 下沉的 6-case
+    分发——它编排的是 facade 级操作（record_rename 注入 locked、
+    record_field_constraint 的 apply_to_active_version 副作用），故住在
+    service 层而非 domain（domain 保持纯数据、不知 locked / 副作用）。
+    路由只剩 access guard + 一行调用。
+
+    Body shape (all keys optional, only present operations apply):
+        {
+            "old_name": "billFromName",         # rename / value mod
+            "new_name": "supplierName",          # rename / add
+            "field_type": "string", "description": "...",
+            "added_value": "...",                # add intent
+            "modification": {"document_id", "field_name", "value"},
+            "deleted": true, "field_name": "...",            # delete
+            "field_constraint": {"field_name", "type", "strip_chars",
+                                 "strip_non_numeric", "locked", "note"},
+            "field_feedback": {"field_name", "text"},
+        }
+    """
+    old_name = (body.get("old_name") or "").strip()
+    new_name = (body.get("new_name") or "").strip()
+    field_type = body.get("field_type") or "string"
+    description = body.get("description") or ""
+
+    # Case 1: pure rename (old != new, both present)
+    if old_name and new_name and old_name != new_name:
+        record_rename(db, api_def_id, old_name, new_name)
+        cascade_rename_annotations(db, api_def_id, old_name, new_name)
+
+    # Case 2: add new field (no old_name; new_name + value/desc)
+    elif new_name and not old_name:
+        record_added_field(
+            db, api_def_id,
+            field_name=new_name,
+            field_type=field_type,
+            description=description,
+            added_at_doc_id=None,
+            default_value=body.get("added_value"),
+        )
+
+    # Case 3: value modification (modification block present)
+    mod = body.get("modification") or {}
+    if mod.get("document_id") and mod.get("field_name") is not None:
+        record_modification(
+            db, api_def_id,
+            document_id=uuid.UUID(str(mod["document_id"])),
+            field_name=str(mod["field_name"]),
+            new_value=mod.get("value"),
+        )
+
+    # Case 4 (Phase 11a): field deletion — cascades across all docs
+    if body.get("deleted") and body.get("field_name"):
+        record_deleted_field(db, api_def_id, str(body["field_name"]))
+
+    # Case 5: explicit per-field type/format override (customer override).
+    # Persisted sticky and enforced through every optimization round +
+    # overriding the country template's Part 1.
+    fc = body.get("field_constraint") or {}
+    if fc.get("field_name"):
+        record_field_constraint(
+            db, api_def_id,
+            field_name=str(fc["field_name"]),
+            field_type=fc.get("type"),
+            strip_chars=fc.get("strip_chars"),
+            strip_non_numeric=fc.get("strip_non_numeric"),
+            locked=bool(fc.get("locked", True)),
+            note=fc.get("note"),
+        )
+
+    # Case 6: per-field free-text USER FEEDBACK (reflection hint, NOT final prompt).
+    ff = body.get("field_feedback") or {}
+    if ff.get("field_name"):
+        record_field_feedback(db, api_def_id, str(ff["field_name"]), ff.get("text"))
+
+    return get_overlay(db, api_def_id)
+
+
 def _observed_top_level_keys_from_confirmed(
     db: Session,
     api_def_id: uuid.UUID,
