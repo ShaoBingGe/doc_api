@@ -39,8 +39,8 @@ def _rewrite_all_docs_structured_data(
     """
     if not renames:
         return 0
+    from app.domain.extraction_pipeline import rewrite_structured_data_keys as _rewrite_structured_data_keys
     from app.models.document import Document as _Document, ProcessingResult as _PR
-    from app.services.document_service import _rewrite_structured_data_keys
 
     doc_ids = [d.id for d in db.query(_Document.id)
                .filter(_Document.api_definition_id == api_def_id).all()]

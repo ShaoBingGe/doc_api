@@ -27,13 +27,17 @@ from pathlib import Path
 # 还债时逐条删除——A1 消 pending_edits_service（4 文件），A2 消
 # document_service（doc_sync + customer_iteration 的 reprocess）。
 ALLOWED_REVERSE: dict[str, set[str]] = {
-    # A1 已消 pending_edits_service（overlay 抽 app/domain）——剩 document_service
-    # 反向依赖待 A2（提取后处理纯函数下沉 domain）消除。
+    # A1 消 pending_edits_service（overlay 抽 domain）；A2 消
+    # _rewrite_structured_data_keys（后处理纯函数下沉 extraction_pipeline）。
+    # 剩下的 document_service 依赖只有 reprocess_document —— 它是编排 OCR
+    # 的原语，引擎侧 re-OCR（doc_sync Phase 25 / customer_iteration fork sweep）
+    # 合法地请求文档层「重新提取」，不属于纯数据/知识借用。这是**永久例外**
+    # （下沉它等于把整条 OCR 提取管线搬出 document_service，方向反而更乱）。
     "app/ocr_optimizer/service/doc_sync.py": {
-        "app.services.document_service",
+        "app.services.document_service",  # reprocess_document（合法 engine→document 原语）
     },
     "app/ocr_optimizer/service/customer_iteration.py": {
-        "app.services.document_service",
+        "app.services.document_service",  # reprocess_document（同上）
     },
 }
 
