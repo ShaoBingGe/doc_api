@@ -27,20 +27,12 @@ from pathlib import Path
 # 还债时逐条删除——A1 消 pending_edits_service（4 文件），A2 消
 # document_service（doc_sync + customer_iteration 的 reprocess）。
 ALLOWED_REVERSE: dict[str, set[str]] = {
+    # A1 已消 pending_edits_service（overlay 抽 app/domain）——剩 document_service
+    # 反向依赖待 A2（提取后处理纯函数下沉 domain）消除。
     "app/ocr_optimizer/service/doc_sync.py": {
         "app.services.document_service",
     },
-    "app/ocr_optimizer/service/field_constraints.py": {
-        "app.services.pending_edits_service",
-    },
-    "app/ocr_optimizer/service/customize_fork.py": {
-        "app.services.pending_edits_service",
-    },
-    "app/ocr_optimizer/service/run_orchestrator.py": {
-        "app.services.pending_edits_service",
-    },
     "app/ocr_optimizer/service/customer_iteration.py": {
-        "app.services.pending_edits_service",
         "app.services.document_service",
     },
 }

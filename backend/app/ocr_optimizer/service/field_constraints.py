@@ -110,7 +110,7 @@ def load(db: Session, api_def_id: uuid.UUID) -> dict[str, dict]:
     customer-override). Empty dict if none.
     """
     try:
-        from app.services import pending_edits_service
+        from app.domain import overlay as pending_edits_service
         overlay = pending_edits_service.get_overlay(db, api_def_id)
     except Exception:  # noqa: BLE001
         return {}

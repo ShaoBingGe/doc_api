@@ -879,7 +879,7 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
     # source the whole time, so the rename + structured_data emission
     # line up naturally after this single cascade pass.
     try:
-        from app.services import pending_edits_service as _pes_rename
+        from app.domain import overlay as _pes_rename
         for d in diffs:
             if d.get("kind") != "edit":
                 continue
@@ -912,7 +912,7 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
     #   (3) modules_by_key — keeps the reflector's "sibling examples"
     #       context clean.
     try:
-        from app.services import pending_edits_service as _pes
+        from app.domain import overlay as _pes
         overlay_for_delete = _pes.get_overlay(db, src_id)
         deleted_field_names = set(overlay_for_delete.get("deleted_fields") or [])
     except Exception as _exc:  # noqa: BLE001
@@ -1021,7 +1021,7 @@ def _execute_pipeline(db: Session, job: CustomizeJob) -> None:
     # this, OCR results captured pre-rename keep showing
     # "billFromName" while the new active modules emit "salerCompany".
     try:
-        from app.services import pending_edits_service as _pes_sweep
+        from app.domain import overlay as _pes_sweep
         _post_overlay = _pes_sweep.get_overlay(db, src_api.id)
         _sweep_renames = dict(_post_overlay.get("renames") or {})
         if _sweep_renames:

@@ -161,7 +161,7 @@ def _fork_api_definition(
     # invoked directly (tests, future codepaths) and guarantees deleted
     # fields never sneak into the new version.
     try:
-        from app.services import pending_edits_service as _pes_del
+        from app.domain import overlay as _pes_del
         _fork_deleted = set(
             (_pes_del.get_overlay(db, src_api.id).get("deleted_fields") or [])
         )
@@ -187,7 +187,7 @@ def _fork_api_definition(
     # version's modules even when the customize-submit codepath sent
     # a diff with corrected_name == original_name (or no diff at all).
     try:
-        from app.services import pending_edits_service as _pes_fork
+        from app.domain import overlay as _pes_fork
         _fork_overlay = _pes_fork.get_overlay(db, src_api.id)
     except Exception:  # noqa: BLE001
         _fork_overlay = {}

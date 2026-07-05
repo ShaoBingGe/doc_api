@@ -1108,7 +1108,7 @@ def _optimize_failing_modules(
     # section instead of rewriting ocr_prompt. Rejected edits persist across rounds
     # so the optimizer doesn't re-propose them. Default OFF → none of this runs.
     # Per-field USER FEEDBACK (overlay) → injected as reflection context per module.
-    from app.services import pending_edits_service as _pes
+    from app.domain import overlay as _pes
     _field_feedback = (_pes.get_overlay(db, run.api_definition_id) or {}).get("field_feedback") or {}
 
     def _uf_for(mod) -> str:
