@@ -178,7 +178,12 @@ schema_fragment = {                          # fragment 即 items schema（compo
 
 依赖：P0 → P1 → P2 → P3（P2/P3 可换序；P3 的行级编辑不依赖 P2）。
 
-### P0 · 后端地基：带列新增数组（~1d）
+> **进度**：P0 ✅（`353b78d`）、P1 ✅（`c5b8cae`）已完成；P2/P3 待做。
+> 论断 #1/#3 已关死——客户可从 UI 创建带列明细表，response_schema 对行结构
+> 有完整约束。P1 的「空表预览」（步 4）作次要 polish 延后（AddFieldList 的
+> 列编辑器已提供保存前的可视反馈，保存+OCR 后 ArrayTable 出现）。
+
+### P0 · 后端地基：带列新增数组（~1d）✅
 
 | 步 | 文件 | 改动 |
 |---|---|---|
@@ -192,7 +197,7 @@ schema_fragment = {                          # fragment 即 items schema（compo
 **DoD**：POST customize 带 `columns` 的 add diff → 新版本含正确数组模块，
 response_schema 对行结构有完整约束（论断 #1、#3 关死）。
 
-### P1 · 前端新增数组交互（~1d）
+### P1 · 前端新增数组交互（~1d）✅
 
 | 步 | 文件 | 改动 |
 |---|---|---|
