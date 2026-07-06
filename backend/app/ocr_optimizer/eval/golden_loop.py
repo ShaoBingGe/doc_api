@@ -194,7 +194,11 @@ def golden_strict_check(
     if limit > 0:
         items = items[:limit]
     sample_ids = [uuid.UUID(did) for did, _ in items]
-    gts = {did: g["gt"] for did, g in items}
+    # 键形态统一：golden manifest 的 doc_id 是无连字符 hex，而
+    # run_ocr_on_samples 返回带连字符的 str(UUID) —— 不规整会导致
+    # score_outputs 里 ocr_outputs.get(doc_id) 恒 None、strict 全 0
+    # （L0.1 抓到的存量 bug：黄金 CLI 此前从未产出过真实分数）。
+    gts = {str(uuid.UUID(did)): g["gt"] for did, g in items}
     report = evaluate_prompt(
         db,
         modules=modules,
@@ -232,7 +236,8 @@ def golden_strict_batch(
     core_modules = [m for m in modules if _leaf(m.json_path) in core]
     golden = load_golden(country)
     sample_ids = [uuid.UUID(d) for d in batch["doc_ids"]]
-    gts = {d: golden[d]["gt"] for d in batch["doc_ids"]}
+    # 同上：hex → 带连字符 str(UUID)，与 run_ocr_on_samples 的输出键对齐。
+    gts = {str(uuid.UUID(d)): golden[d]["gt"] for d in batch["doc_ids"]}
     report = evaluate_prompt(
         db,
         modules=core_modules,
