@@ -94,15 +94,22 @@ class Settings(BaseSettings):
     # module body → step edits can't touch it. Default OFF → composer unchanged.
     SKILL_SLOW_UPDATE: bool = False
     # P3 meta-memory: accumulate accepted/rejected edit-op stats into run.metrics
-    # and (when ON) surface a proposal-bias hint to the optimizer. Default OFF →
-    # stats are still recorded (cheap, additive) but no optimizer behavior change.
-    SKILL_META_MEMORY: bool = False
+    # and (when ON) surface a proposal-bias hint to the optimizer.
+    # 2026-07-07 默认开启（随 SKILL_TYPED_EDITS 一起灰度通过）：L1.3 二号灰度
+    # 实测 27 次 hint 注入、hint 文本有意义（"replace 拒绝率 67% → 优先 append"）、
+    # 准确率单调不降。fail-safe：无 typed 记忆时 hint 为空、零行为变化。
+    SKILL_META_MEMORY: bool = True
     # ADR-002: optimizer emits TYPED bounded edits (append/replace/delete on a
     # per-field rule section) instead of wholesale-rewriting ocr_prompt. Enables
-    # aggregate/clip/buffer/classify/meta wiring. Default OFF → wholesale-rewrite
-    # path unchanged (byte-identical). The frozen ocr_prompt body is never
-    # rewritten when ON; edits evolve a separate rule section.
-    SKILL_TYPED_EDITS: bool = False
+    # aggregate/clip/buffer/classify/meta wiring. The ocr_prompt body is a HARD
+    # frozen invariant when ON (typed mode without edits skips the field, never
+    # falls back to wholesale rewrite — L1.3 fix f6907ea).
+    # 2026-07-07 默认开启（ADR-002 §9.3 达成）：两次真实灰度通过——
+    # L1（my-invoice-abf4f0 · gemini）+ L1.3（my-invoice-11ec4a-c1 · qwen），
+    # 两 provider 五指标全过（正文逐字节冻结 PASS、准确率单调、verifier
+    # unavailable=0、edit_ops buffer 过滤生效）。回退：置 False 即字节级等价
+    # 回旧整段重写路径（规则段为加性载体，关闭即不渲染）。
+    SKILL_TYPED_EDITS: bool = True
 
     # ── Security ──────────────────────────────────────────────────────────
     SECRET_KEY: str = "CHANGE-ME-IN-PRODUCTION-32-bytes!!"
