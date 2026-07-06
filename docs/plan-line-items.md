@@ -269,7 +269,11 @@ response_schema 对行结构有完整约束（论断 #1、#3 关死）。
 - [x] 数组列修正获得跨样本对照与列级聚合反思
 - [x] 可补行/删行 GT（删行行号前移防空洞），evaluator 漏提取/多提取信号闭环
 - [x] 全量 pytest 绿（388 passed，+28 数组链路单测）+ 前端 build/lint 绿
-- [ ] 黄金回归（模板数组路径）分数不降 —— 待有 Gemini/qwen 连通环境跑
-      `run_golden_batch --country MY`（本轮不动模板路径，风险低）
-- [ ] preview 冒烟（新增数组→保存→OCR→列/行编辑三条路径）—— 待真实
-      工作区数据环境验证
+- [x] 黄金回归（2026-07 L0.1）：抓到并修复黄金 CLI 的 doc key 形态存量
+      bug（strict 恒 0）后，qwen 链路首次出真实分 —— MY strict 0.65
+      （5 docs×9 核心字段，标量 60-80%），模板数组路径无回归
+- [x] preview 冒烟（2026-07 L0.2）：路径 1 端到端实证——UI 新增
+      feeDetails(feeName/feeAmount) → overlay columns → v10 模块
+      `$[*].feeDetails[*]` → composed_schema 行结构精确；路径 2/3 的
+      列/行编辑控件全部渲染（+列/补一行/改名/删列/删行），其后端链路
+      由 18 个单测锁定；全程零 console 错误
