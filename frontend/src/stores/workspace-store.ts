@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import apiClient, {
   OCR_TIMEOUT, updateAnnotation, deleteAnnotation, reprocessDocument,
-  commitDraftToOverlay, getPendingEdits, submitCustomizeDiffs,
+  commitDraftToOverlay, getPendingEdits, submitCustomizeDiffs, saveDocumentAnnotation,
 } from '../lib/api-client'
 import { toast } from '../lib/toast'
 
@@ -215,6 +215,11 @@ interface WorkspaceStore {
     name: string,
     extra?: { newName?: string; colType?: string },
   ) => Promise<void>
+  /** 多行明细 P3 — 行级 GT：当前文档补一行（manual 标注即 GT，OCR 漏行时
+   * evaluator 的漏提取信号据此驱动优化）。values: {列名: 值}，空值列跳过。 */
+  addArrayRow: (arrayField: string, nextIndex: number, values: Record<string, string>) => Promise<void>
+  /** 多行明细 P3 — 行级 GT：删当前文档的一行（后续行号自动前移，防 GT 空洞）。 */
+  deleteArrayRow: (arrayField: string, rowIndex: number) => Promise<void>
 
   /** Phase 13 — canonical field set the customer wants on every sample.
    * Computed by the backend as:
@@ -1275,6 +1280,51 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     } catch (err) {
       console.error('commitArrayColumn failed', err)
       toast.error('列操作失败')
+    }
+  },
+
+  addArrayRow: async (arrayField: string, nextIndex: number, values: Record<string, string>) => {
+    const { selectedDocId } = get()
+    if (!selectedDocId || !arrayField) return
+    const entries = Object.entries(values).filter(([, v]) => v.trim())
+    if (entries.length === 0) {
+      toast.info('至少填一列的值')
+      return
+    }
+    try {
+      // 逐列建 manual 标注（manual source 即 GT）——OCR 漏了这一行时，
+      // evaluator 的「漏提取」信号据此驱动下一轮优化补行。
+      for (const [col, v] of entries) {
+        await saveDocumentAnnotation(selectedDocId, {
+          field_name: `${arrayField}[${nextIndex}].${col}`,
+          field_value: v.trim(),
+          field_type: 'string',
+          source: 'manual' as const,
+        })
+      }
+      await get().loadDocument(selectedDocId)
+      toast.success(`已补第 ${nextIndex + 1} 行（计入本文档 GT）`)
+    } catch (err) {
+      console.error('addArrayRow failed', err)
+      toast.error('补行失败')
+    }
+  },
+
+  deleteArrayRow: async (arrayField: string, rowIndex: number) => {
+    const { apiDefinitionId, selectedDocId } = get()
+    if (!apiDefinitionId || !selectedDocId || !arrayField) return
+    try {
+      await commitDraftToOverlay(apiDefinitionId, {
+        array_row: {
+          op: 'delete', document_id: selectedDocId,
+          array: arrayField, index: rowIndex,
+        },
+      })
+      await get().loadDocument(selectedDocId)
+      toast.success(`已删除第 ${rowIndex + 1} 行（后续行号已前移）`)
+    } catch (err) {
+      console.error('deleteArrayRow failed', err)
+      toast.error('删行失败')
     }
   },
 

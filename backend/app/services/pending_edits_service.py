@@ -365,6 +365,17 @@ def apply_draft(
             col_type=(str(ac["type"]) if ac.get("type") else None),
         )
 
+    # Case 8（多行明细 P3）: 行级 GT 删除（单文档、删行+后续行号前移）。
+    #   {"array_row": {"op": "delete", "document_id": "...",
+    #     "array": "detailOfGoodsOrServices", "index": 2}}
+    ar = body.get("array_row") or {}
+    if (ar.get("op") == "delete" and ar.get("document_id")
+            and ar.get("array") and ar.get("index") is not None):
+        _overlay.delete_array_row(
+            db, uuid.UUID(str(ar["document_id"])),
+            str(ar["array"]), int(ar["index"]),
+        )
+
     return get_overlay(db, api_def_id)
 
 

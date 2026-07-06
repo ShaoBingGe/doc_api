@@ -437,6 +437,49 @@ def cascade_rename_array_column(
     return n
 
 
+def delete_array_row(
+    db: Session, document_id: uuid.UUID, array_field: str, row_idx: int,
+) -> int:
+    """行级 GT 编辑（多行明细 P3）：删除**单个文档**上数组的第 row_idx 行
+    （该行全部列的标注），并把后续行号整体前移一位。
+
+    重排是必须的：GT rebuild（ground_truth._insert 自动 grow）对缺失 idx
+    产生空 dict {}，会给 evaluator 的数组内容对齐制造幻影空行。
+    返回删除的标注行数。行是 per-doc 数据，不进 overlay、不动 schema。
+    """
+    if row_idx < 0:
+        return 0
+    rows = (
+        db.query(Annotation)
+        .filter(
+            Annotation.document_id == document_id,
+            Annotation.field_name.like(f"{array_field}[%"),
+        )
+        .all()
+    )
+    pat = re.compile(rf"^{re.escape(array_field)}\[(\d+)\]\.(.+)$")
+    deleted = 0
+    renumbered = 0
+    for ann in rows:
+        m = pat.match(ann.field_name or "")
+        if not m:
+            continue
+        idx = int(m.group(1))
+        if idx == row_idx:
+            db.delete(ann)
+            deleted += 1
+        elif idx > row_idx:
+            ann.field_name = f"{array_field}[{idx - 1}].{m.group(2)}"
+            renumbered += 1
+    db.commit()
+    if deleted:
+        logger.info(
+            "Deleted array row %s[%d] on doc %s: %d annotations removed, %d renumbered",
+            array_field, row_idx, document_id, deleted, renumbered,
+        )
+    return deleted
+
+
 def delete_array_column_annotations(
     db: Session, api_def_id: uuid.UUID, array_field: str, col: str,
 ) -> int:

@@ -43,6 +43,9 @@ logger = logging.getLogger(__name__)
 # fork 阶段 reconciler / add-field 扩展的 LLM 并发度（纯文本长 prompt 调用）。
 _FORK_LLM_CONCURRENCY = 6
 
+# 数组单元格标注名形态：`{arr}[N].{col}`（多行明细 P3 按列聚合用）
+_CELL_NAME_RE = re.compile(r"^([A-Za-z0-9_]+)\[\d+\]\.([A-Za-z0-9_]+)$")
+
 
 def _fork_api_definition(
     db: Session,
@@ -332,7 +335,15 @@ def _fork_api_definition(
             field_label = d.get("original_name") or d.get("corrected_name") or ""
             corrected_value = d.get("corrected_value")
             if corrected_value:
-                if field_label and "[" in field_label:
+                _cell_m = _CELL_NAME_RE.match(field_label) if field_label else None
+                if _cell_m:
+                    # 多行明细 P3：数组单元格修正**按列聚合**（循环后统一渲染
+                    # 为「列 X：N 处修正」），而非逐 cell 一条孤立文本——
+                    # 同列多处修正是同一条列规则的证据，不是 N 条独立反馈。
+                    existing.setdefault("__cell_fixes", {}).setdefault(
+                        _cell_m.group(2), [],
+                    ).append((d.get("original_value"), corrected_value))
+                elif field_label and "[" in field_label:
                     suffix_parts.append(
                         f"客户在样本上修正 `{field_label}` 的值为：{corrected_value}"
                     )
@@ -358,6 +369,28 @@ def _fork_api_definition(
             if (on in _added_already_in_specs) or (cn in _added_already_in_specs):
                 continue
             add_specs.append((d, rk))
+
+    # 多行明细 P3 — 数组单元格修正的列级聚合渲染：同列 N 处修正合成一条
+    # 列级反馈（含原值→正值对照），追加到该模块的 __prompt_suffix。
+    for _mk, _patch in edits_by_key.items():
+        cell_fixes = _patch.pop("__cell_fixes", None)
+        if not cell_fixes:
+            continue
+        lines: list[str] = []
+        for _col, pairs in cell_fixes.items():
+            shown = "; ".join(
+                f"{'' if ov is None else ov} → {cv}" for ov, cv in pairs[:5]
+            )
+            more = f"（另有 {len(pairs) - 5} 处）" if len(pairs) > 5 else ""
+            lines.append(
+                f"列 `{_col}`：客户修正 {len(pairs)} 处 —— {shown}{more}。"
+                f"请归纳该列的取值/格式规则（对整列生效，勿只贴合单行）。"
+            )
+        merged = "\n".join(lines)
+        _patch["__prompt_suffix"] = (
+            (_patch.get("__prompt_suffix", "")
+             + ("\n" if _patch.get("__prompt_suffix") else "") + merged).strip()
+        )
 
     from . import reconciler as _reconciler
 

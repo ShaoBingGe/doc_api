@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+import re as _re
 import uuid
 
 from sqlalchemy.orm import Session
@@ -45,14 +46,25 @@ def _build_cross_doc_context_for_diffs(
     if not sample_ids:
         return {}
 
-    # Collect the field names we care about (both old and new forms)
+    # Collect the field names we care about (both old and new forms).
+    # 多行明细 P3：数组单元格名（arr[N].col）不再跳过——解析出 (arr, col)，
+    # 为该**列**收集全部样本、全部行的值作跨样本对照（历史缺陷：含 [/. 的
+    # 名字直接 skip，数组列的修正拿不到任何跨样本语料，反思凭单 cell 猜）。
     field_names: set[str] = set()
+    array_cols: dict[str, tuple[str, str]] = {}   # diff 原名 → (arr, col)
+    _cell_re = _re.compile(r"^([A-Za-z0-9_]+)\[\d+\]\.([A-Za-z0-9_]+)$")
     for d in diffs:
         for k in ("original_name", "corrected_name"):
             v = (d.get(k) or "").strip()
-            if v and "[" not in v and "." not in v:
+            if not v:
+                continue
+            if "[" not in v and "." not in v:
                 field_names.add(v)
-    if not field_names:
+            else:
+                m = _cell_re.match(v)
+                if m:
+                    array_cols[v] = (m.group(1), m.group(2))
+    if not field_names and not array_cols:
         return {}
 
     # Resolve docs once
@@ -86,6 +98,33 @@ def _build_cross_doc_context_for_diffs(
             "is_corrected": bool(ann.is_corrected),
             "bbox": ann.bounding_box,
         })
+
+    # 多行明细 P3 — 数组列的跨样本收集：对每个 (arr, col)，取全部样本中
+    # `arr[N].col` 的所有行值（LIKE 初筛 + 正则精确复核防同前缀误伤），
+    # 语料按 diff 的原始 cell 名（arr[0].qty）挂载——反思器按 diff 名查找。
+    # 走同一 dedup（同值行跨行/跨样本折叠为 × N），避免长表撑爆 prompt。
+    for diff_name, (arr, col) in array_cols.items():
+        col_rows = (
+            db.query(_Annotation)
+            .filter(
+                _Annotation.document_id.in_(doc_uuids),
+                _Annotation.field_name.like(f"{arr}[%"),
+            )
+            .all()
+        )
+        pat = _re.compile(rf"^{_re.escape(arr)}\[\d+\]\.{_re.escape(col)}$")
+        bucket = out.setdefault(diff_name, [])
+        for ann in col_rows:
+            if not pat.match(ann.field_name or ""):
+                continue
+            doc = doc_by_id.get(ann.document_id)
+            bucket.append({
+                "doc_id": str(ann.document_id),
+                "doc_filename": (doc.filename if doc else None) or str(ann.document_id),
+                "value": ann.field_value,
+                "is_corrected": bool(ann.is_corrected),
+                "bbox": ann.bounding_box,
+            })
 
     # Phase 15 — dedup duplicate values within each field's sample list.
     # If two docs show the same (value, is_corrected) tuple, we collapse

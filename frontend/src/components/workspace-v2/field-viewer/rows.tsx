@@ -388,6 +388,18 @@ export function ArrayTable({
   // 多行明细 P2 — 列级结构编辑（改名/删列/加列，全部样本级联生效）。
   // 只对顶层数组开放（`$[*].arr[*]` 模块）；嵌套路径（含 [ 或 .）不支持。
   const commitArrayColumn = useWorkspaceStore((s) => s.commitArrayColumn)
+  // 多行明细 P3 — 行级 GT（补行=manual 标注即 GT；删行=后端删+行号前移）。
+  const addArrayRow = useWorkspaceStore((s) => s.addArrayRow)
+  const deleteArrayRow = useWorkspaceStore((s) => s.deleteArrayRow)
+  const [addingRow, setAddingRow] = useState(false)
+  const [newRowValues, setNewRowValues] = useState<Record<string, string>>({})
+  const commitAddRow = () => {
+    const nextIdx = sortedIndices.length ? Math.max(...sortedIndices) + 1 : 0
+    setAddingRow(false)
+    const vals = newRowValues
+    setNewRowValues({})
+    void addArrayRow(group.arrayPath, nextIdx, vals)
+  }
   const canEditColumns = !!group.arrayPath
     && !group.arrayPath.includes('[') && !group.arrayPath.includes('.')
   const [renamingCol, setRenamingCol] = useState<string | null>(null)
@@ -631,10 +643,72 @@ export function ArrayTable({
                         </td>
                       )
                     })}
-                    {canEditColumns && <td className="border-b border-white/5" />}
+                    {canEditColumns && (
+                      <td className="border-b border-white/5 text-center group/row">
+                        <button
+                          onClick={() => {
+                            if (confirm(`删除第 ${idx + 1} 行？该行全部列的标注将移除，后续行号前移。`)) {
+                              void deleteArrayRow(group.arrayPath, idx)
+                            }
+                          }}
+                          className="p-0.5 rounded text-gray-600 hover:text-red-400 hover:bg-red-500/10 opacity-40 hover:opacity-100 transition-opacity"
+                          title="删除此行（本文档 GT）"
+                        >
+                          <X className="w-3 h-3 inline" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 )
               })}
+              {/* 多行明细 P3 — 表底补行（OCR 漏行时人工补 GT） */}
+              {canEditColumns && (
+                <tr className="bg-cyan-500/5">
+                  {addingRow ? (
+                    <>
+                      <td className="px-2 py-1.5 text-cyan-400/70 sticky left-0 bg-[#2a2a32] z-10">
+                        +
+                      </td>
+                      {group.columns.map((col) => (
+                        <td key={col} className="px-2 py-1">
+                          <input
+                            value={newRowValues[col] || ''}
+                            onChange={(e) => setNewRowValues((s) => ({ ...s, [col]: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitAddRow()
+                              if (e.key === 'Escape') { setAddingRow(false); setNewRowValues({}) }
+                            }}
+                            placeholder={col}
+                            className="w-full bg-transparent border-b border-cyan-500/30 focus:border-cyan-400 text-gray-200 outline-none px-0.5 py-0.5 text-xs"
+                          />
+                        </td>
+                      ))}
+                      <td className="px-2 py-1 text-center whitespace-nowrap">
+                        <button onClick={commitAddRow} className="p-0.5 text-emerald-400" title="确认补行（Enter）">
+                          <Check className="w-3 h-3 inline" />
+                        </button>
+                        <button
+                          onClick={() => { setAddingRow(false); setNewRowValues({}) }}
+                          className="p-0.5 text-gray-500"
+                          title="取消（Esc）"
+                        >
+                          <X className="w-3 h-3 inline" />
+                        </button>
+                      </td>
+                    </>
+                  ) : (
+                    <td colSpan={group.columns.length + 2} className="px-2 py-1.5">
+                      <button
+                        onClick={() => setAddingRow(true)}
+                        className="text-cyan-400/70 hover:text-cyan-300 text-[11px]"
+                        title="OCR 漏了一行？人工补一行作为本文档 GT，下一轮优化据此改进行完整性"
+                      >
+                        + 补一行
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
