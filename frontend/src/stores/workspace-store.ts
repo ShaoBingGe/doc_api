@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import apiClient, {
   OCR_TIMEOUT, updateAnnotation, deleteAnnotation, reprocessDocument,
-  commitDraftToOverlay, getPendingEdits,
+  commitDraftToOverlay, getPendingEdits, submitCustomizeDiffs,
 } from '../lib/api-client'
 import { toast } from '../lib/toast'
 
@@ -75,6 +75,9 @@ export interface FieldEditDraft {
   correctedValue: string
   originalFormat?: string
   correctedFormat: string
+  /** 多行明细（line-items P1）：correctedFormat==='array' 时定义数组每行的列
+   * （列名 + 类型）。空数组 = 裸值数组（每行单值）。仅 kind==='add' 有意义。 */
+  columns?: Array<{ name: string; type: string }>
   /** Free-text USER FEEDBACK for this field — saved to overlay.field_feedback and
    * injected as reflection context next optimization (NOT the final prompt). */
   feedback?: string
@@ -1014,6 +1017,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         corrected_value: d.correctedValue,
         original_format: d.originalFormat ?? null,
         corrected_format: d.correctedFormat,
+        // 多行明细（P1）：新增数组字段带列定义（直传 diff 路径，与 overlay 种子化并行）
+        ...(d.kind === 'add' && d.correctedFormat === 'array' && d.columns?.length
+          ? { columns: d.columns.filter((c) => c.name.trim()) }
+          : {}),
       })),
     }
     if (opts?.saveAsNew) {
@@ -1022,10 +1029,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
     set({ customizeSubmitting: true })
     try {
-      const res = await apiClient.post(
-        `/api/v1/api-definitions/${apiDefinitionId}/customize`,
-        payload,
-      )
+      const res = await submitCustomizeDiffs(apiDefinitionId, payload)
       const jobId = res.data?.job_id as string
       if (!jobId) throw new Error('No job_id returned')
       set({
@@ -1196,13 +1200,16 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     for (const d of addFieldDrafts) {
       const newN = (d.correctedName || '').trim()
       if (!newN) continue
-      tasks.push(commitDraftToOverlay(apiDefinitionId,
-        {
-          new_name: newN,
-          field_type: d.correctedFormat || 'string',
-          added_value: d.correctedValue || null,
-        },
-      ))
+      const body: Record<string, unknown> = {
+        new_name: newN,
+        field_type: d.correctedFormat || 'string',
+        added_value: d.correctedValue || null,
+      }
+      // 多行明细（P1）：array 类型带列定义
+      if (d.correctedFormat === 'array' && d.columns?.length) {
+        body.columns = d.columns.filter((c) => c.name.trim())
+      }
+      tasks.push(commitDraftToOverlay(apiDefinitionId, body))
     }
     if (tasks.length === 0) return
     try {

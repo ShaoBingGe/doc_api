@@ -220,6 +220,11 @@ export function resumeCustomizeJob(jobId: string) {
   return apiClient.post(`/api/v1/api-definitions/customize-jobs/${jobId}/resume`)
 }
 
+/** 提交字段编辑 diffs，触发定制 job（反思 + 3 轮迭代）。 */
+export function submitCustomizeDiffs(apiDefId: string, payload: Record<string, unknown>) {
+  return apiClient.post(`/api/v1/api-definitions/${apiDefId}/customize`, payload)
+}
+
 // ── OCR Optimizer (modular) ─────────────────────────────────────────────────
 
 export function initOcrOptimizer(

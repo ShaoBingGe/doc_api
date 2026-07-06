@@ -556,6 +556,66 @@ export function AddFieldList() {
                     </button>
                   </td>
                 </tr>
+                {/* 多行明细（P1）：array 格式 → 定义每行的列（列名 + 类型）。
+                    空 = 裸值数组（每行单值）。 */}
+                {row.correctedFormat === 'array' && (
+                  <tr>
+                    <td className="border-b border-white/5" />
+                    <td colSpan={4} className="px-2 pb-2 border-b border-white/5">
+                      <div className="rounded bg-cyan-500/5 border border-cyan-500/15 p-2">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-[11px] text-cyan-300/80">明细表列定义（每行的字段）</span>
+                          <button
+                            onClick={() => updateAddDraft(idx, {
+                              columns: [...(row.columns || []), { name: '', type: 'string' }],
+                            })}
+                            className="text-[11px] text-cyan-400 hover:text-cyan-300 flex items-center gap-0.5"
+                          >
+                            <Plus className="w-3 h-3" /> 加一列
+                          </button>
+                        </div>
+                        {(row.columns || []).length === 0 && (
+                          <div className="text-[11px] text-gray-500">未定义列 → 每行为单值数组</div>
+                        )}
+                        {(row.columns || []).map((col, ci) => (
+                          <div key={ci} className="flex items-center gap-2 mb-1">
+                            <input
+                              value={col.name}
+                              onChange={(e) => {
+                                const cols = [...(row.columns || [])]
+                                cols[ci] = { ...cols[ci], name: e.target.value }
+                                updateAddDraft(idx, { columns: cols })
+                              }}
+                              placeholder="列名"
+                              className="flex-1 bg-transparent border-b border-white/10 focus:border-cyan-400 text-gray-200 outline-none px-1 py-0.5 text-xs"
+                            />
+                            <select
+                              value={col.type}
+                              onChange={(e) => {
+                                const cols = [...(row.columns || [])]
+                                cols[ci] = { ...cols[ci], type: e.target.value }
+                                updateAddDraft(idx, { columns: cols })
+                              }}
+                              className="w-20 bg-[#1e1e24] border border-white/10 focus:border-cyan-400 rounded text-gray-200 outline-none px-1 py-0.5 text-xs"
+                            >
+                              {['string', 'number', 'date', 'boolean'].map((t) => (
+                                <option key={t} value={t}>{t}</option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => updateAddDraft(idx, {
+                                columns: (row.columns || []).filter((_, i) => i !== ci),
+                              })}
+                              className="p-0.5 rounded text-gray-500 hover:text-red-400 hover:bg-red-500/10"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                )}
                 {/* 反馈提示行（在字段行下方）— 输入后自动保存，喂给迭代优化 */}
                 <tr>
                   <td className="border-b border-white/5" />
