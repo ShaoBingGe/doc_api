@@ -237,6 +237,10 @@ def _fork_api_definition(
             "corrected_name": name,
             "corrected_format": (f.get("type") or "string"),
         }
+        # 多行明细（P0）：把 overlay 记的列定义带进 synth diff，
+        # _module_from_add_diff 的 array 分支据此生成 items schema。
+        if f.get("columns"):
+            synth["columns"] = f["columns"]
         # Reflection for adds is keyed by module_key in the reflector
         add_specs.append((synth, synth["module_key"]))
         _added_already_in_specs.add(name)
@@ -701,6 +705,33 @@ def _llm_expand_new_field(
     return None
 
 
+def _sanitize_add_columns(columns: Any) -> list[dict[str, str]]:
+    """规整新增数组字段的列定义为 [{name, type}]（去空/去重）。domain 层已做
+    一次，这里对直传 diff（非经 overlay）再兜一次，保证 array 分支健壮。"""
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    if not isinstance(columns, list):
+        return out
+    for c in columns:
+        if not isinstance(c, dict):
+            continue
+        name = str(c.get("name") or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append({"name": name, "type": str(c.get("type") or "string").strip() or "string"})
+    return out
+
+
+def _col_schema(col_type: str, type_map: dict[str, str]) -> dict:
+    """把列类型映射为 items 里单列的 schema fragment。"""
+    t = (col_type or "string").lower()
+    frag = {"type": type_map.get(t, "STRING")}
+    if t == "date":
+        frag["format"] = "date"
+    return frag
+
+
 def _module_from_add_diff(
     diff: dict, *, new_version_id: uuid.UUID, order_index: int, reflection_outputs,
     sibling_examples: str = "", processor_spec: str = "gemini",
@@ -720,24 +751,58 @@ def _module_from_add_diff(
         "number": "NUMBER", "integer": "INTEGER",
         "date": "STRING", "boolean": "BOOLEAN", "array": "ARRAY",
     }
-    schema_type = type_map.get(format_str, "STRING")
-    schema_fragment: dict = {"type": schema_type}
-    if format_str == "date":
-        schema_fragment["format"] = "date"
 
-    # Static skeleton (used as fallback)
-    corrected_value_hint = ""
-    if diff.get("corrected_value"):
-        corrected_value_hint = f"客户提供的样例值：{diff['corrected_value']}"
-    ocr_prompt = (
-        f"你负责从文档中识别「{new_name}」字段。\n\n"
-        f"输出位置（json_path）：$[*].{new_name}\n"
-        f"该字段类型：{schema_type}\n\n"
-        f"# 识别规则\n"
-        f"{corrected_value_hint}\n\n"
-        f"# 输出要求\n"
-        f"找不到时输出 null。"
-    )
+    # ── 多行明细分支（P0）───────────────────────────────────────────────────
+    # format=array 时不走标量路径，改镜像 template_loader._build_array_module：
+    # json_path=$[*].{name}[*]（record 下的数组），schema_fragment 即 items
+    # schema（composer 尾随 [*] 注入 items）。有列 → items 为 object+properties；
+    # 无列 → items 为 STRING（裸值数组，好过现状「ARRAY 无 items 零约束」）。
+    if format_str == "array":
+        is_array = True
+        schema_type = "ARRAY"
+        json_path = f"$[*].{new_name}[*]"
+        columns = _sanitize_add_columns(diff.get("columns"))
+        if columns:
+            schema_fragment = {
+                "type": "OBJECT",
+                "properties": {
+                    c["name"]: _col_schema(c["type"], type_map) for c in columns
+                },
+            }
+            column_list = ", ".join(c["name"] for c in columns)
+        else:
+            schema_fragment = {"type": "STRING"}
+            column_list = "（未定义列，每行为单值）"
+        ocr_prompt = (
+            f"你负责从文档中识别「{new_name}」（数组类字段 / 多行明细）。\n\n"
+            f"输出位置（json_path）：{json_path}\n"
+            f"该字段类型：ARRAY[{'OBJECT' if columns else 'STRING'}]\n\n"
+            f"# 识别规则\n"
+            f"客户新增的明细表字段 — 待优化器结合样本学习表定位与行切割。\n\n"
+            f"# 输出形式\n"
+            f"JSON 数组，每行一个{'对象，含字段：' + column_list if columns else '单值'}\n\n"
+            f"# 输出要求\n"
+            f"找不到对应行时输出空数组 []。"
+        )
+    else:
+        is_array = False
+        json_path = f"$[*].{new_name}"
+        schema_type = type_map.get(format_str, "STRING")
+        schema_fragment = {"type": schema_type}
+        if format_str == "date":
+            schema_fragment["format"] = "date"
+        corrected_value_hint = ""
+        if diff.get("corrected_value"):
+            corrected_value_hint = f"客户提供的样例值：{diff['corrected_value']}"
+        ocr_prompt = (
+            f"你负责从文档中识别「{new_name}」字段。\n\n"
+            f"输出位置（json_path）：{json_path}\n"
+            f"该字段类型：{schema_type}\n\n"
+            f"# 识别规则\n"
+            f"{corrected_value_hint}\n\n"
+            f"# 输出要求\n"
+            f"找不到时输出 null。"
+        )
     description = f"客户新增字段：{new_name}"
     ocr_suggestions = {
         "semantics": "客户新增 — 待优化器学习",
@@ -770,7 +835,9 @@ def _module_from_add_diff(
             if isinstance(out, dict):
                 if isinstance(out.get("ocr_prompt"), str) and out["ocr_prompt"].strip():
                     ocr_prompt = out["ocr_prompt"]
-                if isinstance(out.get("schema_fragment"), dict):
+                # 多行明细（P0）：array 分支的 items schema 由客户列定义拍板，
+                # 不让 new_field skill 的标量 fragment 覆盖（否则丢列约束）。
+                if not is_array and isinstance(out.get("schema_fragment"), dict):
                     schema_fragment = out["schema_fragment"]
                 if isinstance(out.get("module_key"), str) and out["module_key"]:
                     module_key = _to_snake(out["module_key"])
@@ -783,7 +850,7 @@ def _module_from_add_diff(
         module_key=module_key,
         display_name=new_name,
         description=description,
-        json_path=f"$[*].{new_name}",
+        json_path=json_path,
         schema_fragment=schema_fragment,
         ocr_suggestions=ocr_suggestions,
         ocr_prompt=ocr_prompt,

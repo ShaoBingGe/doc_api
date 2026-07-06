@@ -62,11 +62,14 @@ async def lifespan(app: FastAPI):
     try:
         from app.core.database import SessionLocal as _SL
         from app.ocr_optimizer.service.persistence import (
+            backfill_bare_array_module_items,
             backfill_composed_schema_root_shape,
         )
         _db2 = _SL()
         try:
             backfill_composed_schema_root_shape(_db2)
+            # 多行明细 P0：给存量「ARRAY 无 items」的客户数组模块补 items。
+            backfill_bare_array_module_items(_db2)
         finally:
             _db2.close()
     except Exception:

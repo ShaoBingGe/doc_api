@@ -104,6 +104,50 @@ def backfill_composed_schema_root_shape(db: Session) -> int:
     return fixed
 
 
+def backfill_bare_array_module_items(db: Session) -> int:
+    """幂等回填（多行明细 P0）：此前客户新增的数组字段 schema_fragment 是
+    `{"type":"ARRAY"}` 无 items —— response_schema 对行结构零约束，模型自由
+    发挥。给这类模块补 `items={"type":"STRING"}`（裸值数组），并重组该版本的
+    composed_schema。只动非 archived 版本；有 items 的不碰。返回修复模块数。
+    """
+    from . import composer
+
+    mods = (
+        db.query(OcrModule)
+        .join(OcrPromptVersion, OcrModule.prompt_version_id == OcrPromptVersion.id)
+        .filter(OcrPromptVersion.status != PromptVersionStatus.archived.value)
+        .all()
+    )
+    touched_versions: set = set()
+    fixed = 0
+    for m in mods:
+        frag = m.schema_fragment or {}
+        if not isinstance(frag, dict):
+            continue
+        if str(frag.get("type") or "").upper() == "ARRAY" and not frag.get("items"):
+            m.schema_fragment = {**frag, "items": {"type": "STRING"}}
+            touched_versions.add(m.prompt_version_id)
+            fixed += 1
+    if fixed:
+        db.flush()
+        for vid in touched_versions:
+            vmods = (
+                db.query(OcrModule)
+                .filter(OcrModule.prompt_version_id == vid)
+                .order_by(OcrModule.order_index)
+                .all()
+            )
+            v = db.get(OcrPromptVersion, vid)
+            if v and vmods:
+                try:
+                    v.composed_schema = composer.assemble_schema(vmods)
+                except ValueError as exc:
+                    logger.warning("backfill_bare_array_module_items: version %s skipped (%s)", vid, exc)
+        db.commit()
+        logger.info("backfill_bare_array_module_items: fixed %d bare-array module(s)", fixed)
+    return fixed
+
+
 # ── Version queries ───────────────────────────────────────────────────────────
 
 def list_versions(db: Session, api_definition_id: uuid.UUID) -> list[OcrPromptVersion]:

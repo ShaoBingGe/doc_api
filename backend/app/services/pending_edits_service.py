@@ -105,10 +105,13 @@ def record_added_field(
     description: str | None = None,
     added_at_doc_id: uuid.UUID | None = None,
     default_value: Any = None,
+    *,
+    columns: Any = None,
 ) -> dict[str, Any]:
     return _overlay.record_added_field(
         db, api_def_id, field_name, field_type, description,
         added_at_doc_id, default_value,
+        columns=columns,
         country_locked=_locked_set(db, api_def_id),
     )
 
@@ -272,7 +275,8 @@ def apply_draft(
         record_rename(db, api_def_id, old_name, new_name)
         cascade_rename_annotations(db, api_def_id, old_name, new_name)
 
-    # Case 2: add new field (no old_name; new_name + value/desc)
+    # Case 2: add new field (no old_name; new_name + value/desc).
+    # columns（多行明细，plan-line-items P0）：field_type='array' 时定义每行列。
     elif new_name and not old_name:
         record_added_field(
             db, api_def_id,
@@ -281,6 +285,7 @@ def apply_draft(
             description=description,
             added_at_doc_id=None,
             default_value=body.get("added_value"),
+            columns=body.get("columns"),
         )
 
     # Case 3: value modification (modification block present)

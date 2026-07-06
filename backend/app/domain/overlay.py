@@ -199,6 +199,27 @@ def record_rename(
     return overlay
 
 
+def _sanitize_columns(columns: Any) -> list[dict[str, str]]:
+    """规整客户新增数组字段的列定义为 [{name, type}]。
+
+    只接受非空 name；type 缺省 string。非法输入静默丢弃（永不阻塞新增）。
+    列表为空时返回 [] —— 表示「裸值数组」（items 为标量），而非无约束数组。
+    """
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    if not isinstance(columns, list):
+        return out
+    for c in columns:
+        if not isinstance(c, dict):
+            continue
+        name = str(c.get("name") or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append({"name": name, "type": str(c.get("type") or "string").strip() or "string"})
+    return out
+
+
 def record_added_field(
     db: Session,
     api_def_id: uuid.UUID,
@@ -208,9 +229,15 @@ def record_added_field(
     added_at_doc_id: uuid.UUID | None = None,
     default_value: Any = None,
     *,
+    columns: Any = None,
     country_locked: Collection[str] = frozenset(),
 ) -> dict[str, Any]:
-    """Register a new field. No-op if already present."""
+    """Register a new field. No-op if already present.
+
+    `columns`（多行明细支持，plan-line-items P0）：仅当 field_type='array' 时
+    有意义——`[{name, type}, …]` 定义数组每行对象的列。存进 added_fields 条目，
+    由 customize_fork._module_from_add_diff 生成 items schema 与列感知 prompt。
+    非 array 字段忽略该参数。"""
     api_def = db.get(ApiDefinition, api_def_id)
     if not api_def:
         raise NotFoundError(f"ApiDefinition {api_def_id} not found")
@@ -224,16 +251,20 @@ def record_added_field(
     if field_name in existing_names:
         return overlay
 
-    overlay["added_fields"].append({
+    entry: dict[str, Any] = {
         "field_name": field_name,
         "type": field_type or "string",
         "description": description or "",
         "added_at_doc_id": str(added_at_doc_id) if added_at_doc_id else None,
         "default_value": default_value,
-    })
+    }
+    if (field_type or "").lower() == "array":
+        entry["columns"] = _sanitize_columns(columns)
+    overlay["added_fields"].append(entry)
     _save_overlay(db, api_def, overlay)
     db.commit()
-    logger.info("Recorded added field on ApiDef %s: %r", api_def_id, field_name)
+    logger.info("Recorded added field on ApiDef %s: %r (columns=%s)",
+                api_def_id, field_name, entry.get("columns"))
     return overlay
 
 
