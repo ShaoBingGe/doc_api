@@ -195,10 +195,16 @@ frontend/src/lib/api-client.ts     # OcrSkill 类型 + fetch/create/delete/attac
   受保护守护段（pin/caution），compose 时拼入、step 编辑碰不到；**`meta_skill` 已接线**（经 ADR-002：
   优化器改产 typed edits → accept/reject op 累计进 `run.metrics.meta_memory` → `render_meta_hint` 注入下轮
   optimize prompt，flag `SKILL_META_MEMORY` 门控）。
-- **ADR-002 typed-edit 优化器** 🔶（flag `SKILL_TYPED_EDITS` 默认 OFF）：优化器产类型化有界 edit
-  （append/replace/delete）演化每字段「规则段」`OcrModule.rule_edits_text`、**正文 `ocr_prompt` 冻结**，
-  经 filter(被拒缓冲)→aggregate→clip→apply→verify。整轮集成测试通过（零 token）。详见
-  [ADR-002](./ADR-002-typed-edits-meta-skill.md)；真实 OCR 灰度待 greenlight。
+- **ADR-002 typed-edit 优化器** ✅ **真实灰度通过**（2026-07-07 L1，flag `SKILL_TYPED_EDITS` 仍默认 OFF）：
+  优化器产类型化有界 edit（append/replace/delete）演化每字段「规则段」`OcrModule.rule_edits_text`、
+  **正文 `ocr_prompt` 冻结**，经 filter(被拒缓冲)→aggregate→clip→apply→verify。
+  **灰度证据**（my-invoice-abf4f0 · gemini · 真实 3 轮，期间 Gemini 两次断连仍安全）：
+  ① edit_ops accepted 32 / rejected 5，被拒 buffer 下轮过滤生效；② 准确率单调
+  0.5461→0.5748→0.5905，三轮全有效；③ rule_edits_text 跨轮跨模块演化 26 次（有界）；
+  ④ **round 链正文逐字节冻结 PASS**；⑤ verifier rejects=2 其中 unavailable=0
+  （fail-closed 判官无误杀）。64 LLM calls / 3 轮，无异常增幅。
+  **剩余 greenlight 项**（用户拍板）：二号 API 灰度 + `SKILL_META_MEMORY` 叠加验证 →
+  置 `SKILL_TYPED_EDITS=True` 默认开。详见 [ADR-002](./ADR-002-typed-edits-meta-skill.md)。
 - **P5** 🔶 技能洞察已上线（`GET .../ocr-optimizer/skill-insights` + 工作区「洞察」按钮 + `SkillInsightsModal`）：
   每字段轨迹 + 守护徽标（复用 P3 `compute_guardians`）+ 已挂技能，一处显性；生产实跑验证。被拒 edit 展示待 meta 接线。
 

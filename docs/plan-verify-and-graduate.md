@@ -1,6 +1,12 @@
 # 分级开发计划 · 收尾验证 + ADR-002 灰度 + 前端 B3 拆分
 
-> 状态：L0 ✅ 完成（2026-07）｜ L1/L2 待执行
+> 状态：**三级全部完成**（2026-07-07）
+> - L0 ✅ 黄金基线（qwen strict 0.65）+ 冒烟三路径实证 + key 形态存量 bug 修复
+> - L1 ✅ typed-edit 灰度 5 指标全过（单调 0.546→0.590、正文逐字节冻结 PASS、
+>   verifier unavailable=0——且经受了 Gemini 灰度中途两次断连的真实抖动）；
+>   剩余 greenlight 项（用户拍板）：二号 API + META_MEMORY 叠加 → 默认开
+> - L2 ✅ OptimizationProcessPanel 1574→417（`2a89502`）、OcrOptimizer
+>   1058→503（`24e44ba`）
 > L0 成果：黄金 CLI key 形态存量 bug 修复（`8937b13`，修复前 strict 恒 0、
 > 黄金门从未真正工作过）→ qwen strict 0.65 基线建立；preview 冒烟路径 1
 > 端到端实证 + 路径 2/3 控件验证，零 console 错误。
