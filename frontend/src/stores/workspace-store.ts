@@ -208,6 +208,13 @@ interface WorkspaceStore {
   /** Save a field's free-text user feedback to overlay.field_feedback (reflection
    * hint, not the final prompt). Idempotent; empty text clears it. */
   saveFieldFeedback: (fieldName: string, text: string) => Promise<void>
+  /** 多行明细 P2 — 数组列级结构编辑（加/删/改名，全部样本级联生效）。 */
+  commitArrayColumn: (
+    arrayField: string,
+    op: 'add' | 'delete' | 'rename',
+    name: string,
+    extra?: { newName?: string; colType?: string },
+  ) => Promise<void>
 
   /** Phase 13 — canonical field set the customer wants on every sample.
    * Computed by the backend as:
@@ -1235,6 +1242,39 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       )
     } catch (err) {
       console.warn('saveFieldFeedback failed', err)
+    }
+  },
+
+  /** 多行明细 P2 — 数组列级结构编辑（加/删/改名）。后端登记 overlay 并
+   * 级联标注（改名改整列、删除删整列，跨全部样本），随后刷新本地状态。 */
+  commitArrayColumn: async (
+    arrayField: string,
+    op: 'add' | 'delete' | 'rename',
+    name: string,
+    extra?: { newName?: string; colType?: string },
+  ) => {
+    const { apiDefinitionId, selectedDocId } = get()
+    if (!apiDefinitionId || !arrayField || !name) return
+    try {
+      await commitDraftToOverlay(apiDefinitionId, {
+        array_column: {
+          array: arrayField,
+          op,
+          name,
+          ...(extra?.newName ? { new_name: extra.newName } : {}),
+          ...(extra?.colType ? { type: extra.colType } : {}),
+        },
+      })
+      await get().loadPendingEdits()
+      if (selectedDocId) await get().loadDocument(selectedDocId)
+      toast.success(
+        op === 'rename' ? `列已重命名：${name} → ${extra?.newName}`
+        : op === 'delete' ? `列已删除：${name}（全部样本生效）`
+        : `列已新增：${name}（保存生成后识别）`,
+      )
+    } catch (err) {
+      console.error('commitArrayColumn failed', err)
+      toast.error('列操作失败')
     }
   },
 

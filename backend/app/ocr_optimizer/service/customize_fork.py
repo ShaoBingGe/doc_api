@@ -249,6 +249,27 @@ def _fork_api_definition(
             name, synth["module_key"],
         )
 
+    # (c) Seed ARRAY-COLUMN structure edits（多行明细 P2）: for each array
+    # field with column-level edits, stash the spec on the matching array
+    # module (json_path leaf == array field name AND path ends with [*]).
+    _overlay_array_columns: dict = dict(_fork_overlay.get("array_columns") or {})
+    if _overlay_array_columns:
+        for src_m in src_modules:
+            jp = (src_m.json_path or "").strip()
+            if not jp.endswith("[*]"):
+                continue  # 只有数组模块有列
+            leaf = jp.split(".")[-1].replace("[*]", "").replace("[", "").replace("]", "").strip()
+            spec = _overlay_array_columns.get(leaf)
+            if not spec:
+                continue
+            existing = edits_by_key.get(src_m.module_key, {})
+            existing["__array_columns"] = spec
+            edits_by_key[src_m.module_key] = existing
+            logger.info(
+                "line-items P2: overlay seeded array-column edits on module %s (%s): %s",
+                src_m.module_key, leaf, spec,
+            )
+
     # 批次5：反思结果现在按 module_key 合并（reflector 侧），同字段多条 diff
     # 的 fix_suggestions 只能追加一次——历史 bug：每条 diff 都 extend 同一份
     # 合并建议，同一建议在 __prompt_suffix 里重复 N 遍。
@@ -552,6 +573,42 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
         if schema_type.lower() == "date":
             new_schema["format"] = "date"
 
+    # 多行明细 P2 — 数组列级结构编辑应用到 items schema + prompt。
+    # 数组模块的 schema_fragment 即 items schema（json_path 尾随 [*]，
+    # composer 注入 items），列就是 fragment["properties"] 的键。
+    # 应用顺序 renamed → added → deleted（deleted 携带原列名，见 overlay）。
+    array_cols = patch.get("__array_columns")
+    array_col_hint = ""
+    if array_cols and isinstance(src.schema_fragment, dict):
+        new_schema = copy.deepcopy(new_schema or {})
+        props = dict(new_schema.get("properties") or {})
+        col_type_map = {
+            "string": "STRING", "text": "STRING", "number": "NUMBER",
+            "integer": "INTEGER", "date": "STRING", "boolean": "BOOLEAN",
+        }
+        hints: list[str] = []
+        for old, new in (array_cols.get("renamed") or {}).items():
+            if old in props:
+                props[new] = props.pop(old)
+                hints.append(f"列 `{old}` 已重命名为 `{new}`：按原语义识别，输出键用新名。")
+        for c in (array_cols.get("added") or []):
+            cname = (c.get("name") or "").strip()
+            if cname and cname not in props:
+                props[cname] = {"type": col_type_map.get(
+                    (c.get("type") or "string").lower(), "STRING")}
+                hints.append(f"新增列 `{cname}`（{c.get('type') or 'string'}）：每行都需输出该列，找不到时输出 null。")
+        for dcol in (array_cols.get("deleted") or []):
+            if dcol in props:
+                props.pop(dcol)
+                hints.append(f"列 `{dcol}` 已删除：不要再输出该列。")
+        new_schema["properties"] = props
+        if hints:
+            array_col_hint = (
+                "\n\n# 列结构变更（客户定义，以下列集为准）\n"
+                + "\n".join(f"- {h}" for h in hints)
+                + f"\n- 当前列集：{', '.join(props.keys()) or '—'}"
+            )
+
     # Rename propagation (design v8 §3.9):
     # When the diff carried a top-level scalar rename (corrected_name ≠
     # original_name), rewrite module_key + json_path leaf so the fork's
@@ -600,6 +657,11 @@ def _clone_module(src: OcrModule, *, new_version_id: uuid.UUID, patch: dict) -> 
             f"key 必须使用新命名 `{rename_new}`，不要输出旧名 `{rename_old}`。"
         )
         new_prompt = (new_prompt or "").rstrip() + rename_hint
+
+    # 多行明细 P2：列结构变更说明附加到 prompt（schema 已硬约束列集，
+    # 这里让模型明确改名映射与新增列的取值要求）。
+    if array_col_hint:
+        new_prompt = (new_prompt or "").rstrip() + array_col_hint
 
     return OcrModule(
         id=uuid.uuid4(),

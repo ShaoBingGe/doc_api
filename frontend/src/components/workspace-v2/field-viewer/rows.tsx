@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { ChevronDown, ChevronRight, Check, Square, X, Trash2, Lock, Table as TableIcon } from 'lucide-react'
 import { cn } from '../../../lib/utils'
-import { type Annotation, type ProcessingResult, type FieldEditDraft } from '../../../stores/workspace-store'
+import { useWorkspaceStore, type Annotation, type ProcessingResult, type FieldEditDraft } from '../../../stores/workspace-store'
 import { FIELD_TYPES, LOW_CONFIDENCE_THRESHOLD, type ArrayGroup } from './shared'
 
 // ─── Type selector ───────────────────────────────────────────────────────────
@@ -385,6 +385,28 @@ export function ArrayTable({
     () => Array.from(group.rows.keys()).sort((a, b) => a - b),
     [group.rows],
   )
+  // 多行明细 P2 — 列级结构编辑（改名/删列/加列，全部样本级联生效）。
+  // 只对顶层数组开放（`$[*].arr[*]` 模块）；嵌套路径（含 [ 或 .）不支持。
+  const commitArrayColumn = useWorkspaceStore((s) => s.commitArrayColumn)
+  const canEditColumns = !!group.arrayPath
+    && !group.arrayPath.includes('[') && !group.arrayPath.includes('.')
+  const [renamingCol, setRenamingCol] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [addingCol, setAddingCol] = useState(false)
+  const [newColName, setNewColName] = useState('')
+  const [newColType, setNewColType] = useState('string')
+
+  const commitRename = (col: string) => {
+    const nv = renameValue.trim()
+    setRenamingCol(null)
+    if (nv && nv !== col) void commitArrayColumn(group.arrayPath, 'rename', col, { newName: nv })
+  }
+  const commitAdd = () => {
+    const nm = newColName.trim()
+    setAddingCol(false)
+    setNewColName('')
+    if (nm) void commitArrayColumn(group.arrayPath, 'add', nm, { colType: newColType })
+  }
 
   return (
     <div className="bg-[#2a2a32] rounded-lg border border-white/5 overflow-hidden">
@@ -421,11 +443,93 @@ export function ArrayTable({
                 {group.columns.map((col) => (
                   <th
                     key={col}
-                    className="px-2 py-2 text-left font-medium border-b border-white/10 whitespace-nowrap"
+                    className="px-2 py-2 text-left font-medium border-b border-white/10 whitespace-nowrap group/th"
                   >
-                    {col}
+                    {renamingCol === col ? (
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onBlur={() => commitRename(col)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') commitRename(col)
+                          if (e.key === 'Escape') setRenamingCol(null)
+                        }}
+                        className="bg-transparent border-b border-cyan-400 text-gray-200 outline-none w-24 px-0.5"
+                      />
+                    ) : (
+                      <span className="inline-flex items-center gap-1">
+                        {col}
+                        {canEditColumns && (
+                          <span className="opacity-0 group-hover/th:opacity-100 transition-opacity inline-flex items-center gap-0.5">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setRenamingCol(col)
+                                setRenameValue(col)
+                              }}
+                              className="p-0.5 rounded text-gray-500 hover:text-cyan-400 hover:bg-cyan-500/10"
+                              title="重命名此列（全部样本生效）"
+                            >
+                              ✎
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (confirm(`删除列「${col}」？该列在所有样本的数据与识别规则将一并移除。`)) {
+                                  void commitArrayColumn(group.arrayPath, 'delete', col)
+                                }
+                              }}
+                              className="p-0.5 rounded text-gray-500 hover:text-red-400 hover:bg-red-500/10"
+                              title="删除此列（全部样本生效）"
+                            >
+                              <X className="w-3 h-3 inline" />
+                            </button>
+                          </span>
+                        )}
+                      </span>
+                    )}
                   </th>
                 ))}
+                {canEditColumns && (
+                  <th className="px-2 py-2 text-left font-medium border-b border-white/10 whitespace-nowrap w-28">
+                    {addingCol ? (
+                      <span className="inline-flex items-center gap-1">
+                        <input
+                          autoFocus
+                          value={newColName}
+                          onChange={(e) => setNewColName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') commitAdd()
+                            if (e.key === 'Escape') { setAddingCol(false); setNewColName('') }
+                          }}
+                          placeholder="列名"
+                          className="bg-transparent border-b border-cyan-400 text-gray-200 outline-none w-20 px-0.5"
+                        />
+                        <select
+                          value={newColType}
+                          onChange={(e) => setNewColType(e.target.value)}
+                          className="bg-[#1e1e24] border border-white/10 rounded text-gray-200 outline-none text-[10px] px-0.5 py-0.5"
+                        >
+                          {['string', 'number', 'date', 'boolean'].map((t) => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </select>
+                        <button onClick={commitAdd} className="p-0.5 text-emerald-400" title="确认">
+                          <Check className="w-3 h-3 inline" />
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => setAddingCol(true)}
+                        className="text-cyan-400/70 hover:text-cyan-300 text-[11px]"
+                        title="新增一列（保存生成后识别）"
+                      >
+                        + 列
+                      </button>
+                    )}
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -527,6 +631,7 @@ export function ArrayTable({
                         </td>
                       )
                     })}
+                    {canEditColumns && <td className="border-b border-white/5" />}
                   </tr>
                 )
               })}

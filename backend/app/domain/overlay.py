@@ -21,6 +21,7 @@ Shape / 不变量见 `app/services/pending_edits_service.py`（本模块的 faca
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from collections.abc import Collection
 from typing import Any
@@ -53,6 +54,14 @@ def _empty() -> dict[str, Any]:
         # NOT the final prompt — injected as reflection CONTEXT during the next
         # optimization so the optimizer knows what the customer expects.
         "field_feedback": {},
+        # array_columns（多行明细 P2）：既有数组字段的列级结构编辑。
+        # {"<arrayFieldName>": {"added": [{name,type}], "deleted": [name],
+        #   "renamed": {old: new}}}
+        # 独立于顶层 renames/added/deleted 三映射——那些读取方全按「顶层名」
+        # 语义工作，塞 arr[*].col 点路径进去每个读取方都要数组感知，漏一处
+        # 即静默 bug；独立键让读取方（customize_fork 数组模块应用点）显式
+        # opt-in。fork 应用顺序：renamed → added → deleted。
+        "array_columns": {},
     }
 
 
@@ -76,6 +85,15 @@ def _normalize(overlay: dict | None) -> dict[str, Any]:
         str(k): str(v) for k, v in (overlay.get("field_feedback") or {}).items()
         if v is not None
     }
+    for arr, spec in (overlay.get("array_columns") or {}).items():
+        if not isinstance(spec, dict):
+            continue
+        out["array_columns"][str(arr)] = {
+            "added": _sanitize_columns(spec.get("added")),
+            "deleted": [str(x) for x in (spec.get("deleted") or []) if str(x).strip()],
+            "renamed": {str(k): str(v) for k, v in (spec.get("renamed") or {}).items()
+                        if str(k).strip() and str(v).strip()},
+        }
     return out
 
 
@@ -266,6 +284,173 @@ def record_added_field(
     logger.info("Recorded added field on ApiDef %s: %r (columns=%s)",
                 api_def_id, field_name, entry.get("columns"))
     return overlay
+
+
+# ── 数组列级结构编辑（多行明细 P2）───────────────────────────────────────────
+
+
+def record_array_column(
+    db: Session,
+    api_def_id: uuid.UUID,
+    array_field: str,
+    *,
+    op: str,
+    name: str,
+    new_name: str | None = None,
+    col_type: str | None = None,
+    country_locked: Collection[str] = frozenset(),
+) -> dict[str, Any]:
+    """对既有数组字段登记一次列级结构编辑（op: add / delete / rename）。
+
+    语义（fork 应用顺序 renamed → added → deleted，见 _empty 注释）：
+      - add：加入 added（同名幂等）；若列在 deleted 里 → 撤销删除（加回）。
+      - delete：加入 deleted；若列是本次会话新增的（在 added 里）→ 双向抵消
+        （从 added 移除、不进 deleted）；清理指向它的 rename 记录。
+      - rename：链坍缩同顶层 renames（A→B 再 B→C 存 A→C，回环删条目）；
+        若被改名的列是本次新增的 → 直接改 added 条目名，不留 rename 记录。
+
+    `country_locked` 按**数组字段本身**判定（列随表锁）。级联标注由调用方
+    （service facade）在登记成功后执行——本函数只写 overlay。
+    """
+    arr = (array_field or "").strip()
+    col = (name or "").strip()
+    if not arr or not col or op not in ("add", "delete", "rename"):
+        return get_overlay(db, api_def_id)
+
+    api_def = db.get(ApiDefinition, api_def_id)
+    if not api_def:
+        raise NotFoundError(f"ApiDefinition {api_def_id} not found")
+
+    if arr in country_locked:
+        logger.warning("Refused array-column %s on country-locked array: %r", op, arr)
+        return _normalize(api_def.pending_edits)
+
+    overlay = _normalize(api_def.pending_edits)
+    spec = overlay["array_columns"].setdefault(
+        arr, {"added": [], "deleted": [], "renamed": {}},
+    )
+
+    if op == "add":
+        if col in spec["deleted"]:
+            spec["deleted"].remove(col)  # 撤销删除
+        elif all(c["name"] != col for c in spec["added"]):
+            spec["added"].append({
+                "name": col,
+                "type": (col_type or "string").strip() or "string",
+            })
+
+    elif op == "delete":
+        added_names = {c["name"] for c in spec["added"]}
+        if col in added_names:
+            spec["added"] = [c for c in spec["added"] if c["name"] != col]  # 加后删=抵消
+        else:
+            # 删除的可能是「改名后的新名」——deleted 必须携带 schema 里的
+            # 真实原列名（fork 按 renamed→added→deleted 应用，rename 条目
+            # 即将被清理，留新名会让原列在 schema 里删不掉）。链坍缩回原名。
+            orig = col
+            for src, dst in list(spec["renamed"].items()):
+                if dst == col:
+                    orig = src
+                    del spec["renamed"][src]
+                    break
+            if orig not in spec["deleted"]:
+                spec["deleted"].append(orig)
+
+    elif op == "rename":
+        new = (new_name or "").strip()
+        if not new or new == col:
+            return overlay
+        added_names = {c["name"] for c in spec["added"]}
+        if col in added_names:
+            # 本次新增的列改名：直接改条目，不留 rename 记录
+            for c in spec["added"]:
+                if c["name"] == col:
+                    c["name"] = new
+        else:
+            # 链坍缩：A→B 再 B→C 存 A→C；改回原名删条目
+            collapsed_old = col
+            for src, dst in list(spec["renamed"].items()):
+                if dst == col:
+                    collapsed_old = src
+                    del spec["renamed"][src]
+                    break
+            if collapsed_old != new:
+                spec["renamed"][collapsed_old] = new
+
+    # 空 spec 清理（全部操作抵消后不留空壳）
+    if not spec["added"] and not spec["deleted"] and not spec["renamed"]:
+        overlay["array_columns"].pop(arr, None)
+
+    _save_overlay(db, api_def, overlay)
+    db.commit()
+    logger.info(
+        "Recorded array-column %s on ApiDef %s: %s.%s%s",
+        op, api_def_id, arr, col, f" → {new_name}" if op == "rename" else "",
+    )
+    return overlay
+
+
+def _array_cell_annotations(
+    db: Session, api_def_id: uuid.UUID, array_field: str, col: str,
+) -> list[Annotation]:
+    """该 ApiDef 全部文档中，字段名形如 `{arr}[N].{col}` 的标注行。
+
+    LIKE 初筛 + Python 正则精确复核——防止同前缀字段误伤
+    （`items` vs `itemsTotal`、列名 `qty` vs `qtyUnit`）。
+    """
+    doc_ids = [d.id for d in db.query(Document.id).filter(
+        Document.api_definition_id == api_def_id
+    ).all()]
+    if not doc_ids:
+        return []
+    rows = (
+        db.query(Annotation)
+        .filter(
+            Annotation.document_id.in_(doc_ids),
+            Annotation.field_name.like(f"{array_field}[%"),
+        )
+        .all()
+    )
+    pat = re.compile(rf"^{re.escape(array_field)}\[\d+\]\.{re.escape(col)}$")
+    return [a for a in rows if pat.match(a.field_name or "")]
+
+
+def cascade_rename_array_column(
+    db: Session, api_def_id: uuid.UUID, array_field: str,
+    old: str, new: str,
+) -> int:
+    """列改名级联：把 `{arr}[N].{old}` 全部改写为 `{arr}[N].{new}`（整列、
+    跨全部样本）。修正「列改名半失效」缺陷——此前单元格改名只动一行标注、
+    schema 纹丝不动。返回改写行数。"""
+    if not old or not new or old == new:
+        return 0
+    n = 0
+    for ann in _array_cell_annotations(db, api_def_id, array_field, old):
+        prefix = ann.field_name.rsplit(".", 1)[0]  # "{arr}[N]"
+        ann.field_name = f"{prefix}.{new}"
+        n += 1
+    db.commit()
+    logger.info(
+        "Cascaded array-column rename on ApiDef %s: %s.[*].%s → %s touched %d annotations",
+        api_def_id, array_field, old, new, n,
+    )
+    return n
+
+
+def delete_array_column_annotations(
+    db: Session, api_def_id: uuid.UUID, array_field: str, col: str,
+) -> int:
+    """列删除级联：删除 `{arr}[N].{col}` 全部标注行（跨样本）。返回删除行数。"""
+    rows = _array_cell_annotations(db, api_def_id, array_field, col)
+    for ann in rows:
+        db.delete(ann)
+    db.commit()
+    if rows:
+        logger.info(
+            "Deleted array-column annotations on ApiDef %s: %s.[*].%s → %d rows",
+            api_def_id, array_field, col, len(rows),
+        )
+    return len(rows)
 
 
 def record_field_constraint(

@@ -158,10 +158,8 @@ def test_clear_overlay(db_session):
     pending_edits_service.record_added_field(db_session, api_def.id, "extra", "string")
     pending_edits_service.clear_overlay(db_session, api_def.id)
     overlay = pending_edits_service.get_overlay(db_session, api_def.id)
-    assert overlay == {
-        "added_fields": [], "renames": {}, "modifications": {},
-        "deleted_fields": [], "field_constraints": {}, "field_feedback": {},
-    }
+    # 与规范空形状比对（手写 dict 会随 overlay 加键（如 array_columns）而过期）
+    assert overlay == pending_edits_service._empty()
 
 
 # ── Phase 11a: deleted_fields ─────────────────────────────────────────────────

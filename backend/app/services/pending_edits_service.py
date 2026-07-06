@@ -127,6 +127,36 @@ def record_deleted_field(
     )
 
 
+def record_array_column(
+    db: Session,
+    api_def_id: uuid.UUID,
+    array_field: str,
+    *,
+    op: str,
+    name: str,
+    new_name: str | None = None,
+    col_type: str | None = None,
+) -> dict[str, Any]:
+    """数组列级结构编辑（多行明细 P2）：登记 overlay 后立即执行标注级联——
+    rename 改整列（跨样本全部行）、delete 删整列标注（均按**当前**列名匹配，
+    此前的改名级联已把标注改到新名）。加列无既有标注，不需级联；加后删的
+    抵消场景级联是无害 no-op。列随表锁（按数组字段本身判定，预检拒绝）。"""
+    locked = _locked_set(db, api_def_id)
+    if array_field in locked:
+        logger.warning("Refused array-column %s on country-locked array: %r", op, array_field)
+        return get_overlay(db, api_def_id)
+    overlay = _overlay.record_array_column(
+        db, api_def_id, array_field,
+        op=op, name=name, new_name=new_name, col_type=col_type,
+        country_locked=locked,
+    )
+    if op == "rename" and new_name:
+        _overlay.cascade_rename_array_column(db, api_def_id, array_field, name, new_name)
+    elif op == "delete":
+        _overlay.delete_array_column_annotations(db, api_def_id, array_field, name)
+    return overlay
+
+
 def record_field_constraint(
     db: Session,
     api_def_id: uuid.UUID,
@@ -321,6 +351,19 @@ def apply_draft(
     ff = body.get("field_feedback") or {}
     if ff.get("field_name"):
         record_field_feedback(db, api_def_id, str(ff["field_name"]), ff.get("text"))
+
+    # Case 7（多行明细 P2）: 数组列级结构编辑。
+    #   {"array_column": {"array": "detailOfGoodsOrServices", "op": "rename",
+    #     "name": "quantity", "new_name": "qty", "type": "number"}}
+    ac = body.get("array_column") or {}
+    if ac.get("array") and ac.get("op") and ac.get("name"):
+        record_array_column(
+            db, api_def_id, str(ac["array"]),
+            op=str(ac["op"]),
+            name=str(ac["name"]),
+            new_name=(str(ac["new_name"]) if ac.get("new_name") else None),
+            col_type=(str(ac["type"]) if ac.get("type") else None),
+        )
 
     return get_overlay(db, api_def_id)
 
