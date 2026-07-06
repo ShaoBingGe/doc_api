@@ -173,3 +173,50 @@ def test_typed_round_off_uses_wholesale_path(db_session, mock_env, monkeypatch):
     )
     assert (new_mod.rule_edits_text or "") == ""              # no rule section (OFF)
     assert new_mod.ocr_prompt == "REWRITTEN BODY"             # wholesale path applied
+
+
+def test_typed_on_prose_result_never_rewrites_body(db_session, mock_env, monkeypatch):
+    """L1.3 灰度回归：typed 模式下优化器返回 new_ocr_prompt 但**无 edits**
+    （qwen-plus 未遵循 typed schema 时的真实形态）——正文必须冻结，绝不
+    回退整段重写。这是「正文冻结」的硬保证，不依赖 LLM 是否产 edits。"""
+    from app.ocr_optimizer.models import OcrModule
+    from app.ocr_optimizer.service.run_orchestrator import _run_one_round
+
+    monkeypatch.setattr(mock_env, "SKILL_TYPED_EDITS", True, raising=False)
+    api, ver, run, sample_ids, gts = _seed(db_session, n=4)
+
+    from app.ocr_optimizer.service import run_orchestrator as ro
+
+    def fake_ocr(db, *, sample_document_ids, **kw):
+        return {str(sid): {"invoiceNumber": "WRONG"} for sid in sample_document_ids}
+
+    def fake_optimize(*, module, iteration, history, processor_spec, model_name, meta_hint="", user_feedback="", **kw):
+        # 关键：new_ocr_prompt 有值，但 edits 缺失（None）——L1.3 的 qwen 形态
+        return {
+            "aggregate_diff": {"differences_description": "", "differences_reason_analysis": ""},
+            "optimization_suggestion": "", "new_ocr_suggestions": None,
+            "new_description": None, "new_ocr_prompt": "PROSE REWRITE (no edits)",
+            "skill_feedback": "", "edits": None,
+        }
+
+    def fake_verify(*, module, iteration, proposed, processor_spec, model_name):
+        return {"verdict": "accept", "reasoning": ""}
+
+    monkeypatch.setattr(ro.ocr_runner, "run_ocr_on_samples", fake_ocr)
+    monkeypatch.setattr(ro.module_optimizer, "optimize_module", fake_optimize)
+    monkeypatch.setattr(ro.module_optimizer, "verify_module_fix", fake_verify)
+
+    rnd = _run_one_round(
+        db_session, run=run, round_num=1, api_def=api, current_version=ver,
+        sample_ids=sample_ids, ground_truths=gts,
+        metrics={"total_ocr_calls": 0, "total_llm_calls": 0}, enable_meta=False,
+    )
+    new_mod = (
+        db_session.query(OcrModule)
+        .filter(OcrModule.prompt_version_id == rnd.next_version_id,
+                OcrModule.module_key == "invoice_number")
+        .first()
+    )
+    # 正文冻结：既没被整段重写，也没进规则段（LLM 没产 typed edits → 跳过本字段）
+    assert new_mod.ocr_prompt == "find it"
+    assert (new_mod.rule_edits_text or "") == ""

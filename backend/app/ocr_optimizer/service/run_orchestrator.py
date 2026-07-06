@@ -1052,6 +1052,17 @@ def _optimize_and_verify(
                             rej_buffer=rej_buffer,
                             provider_spec=provider_spec,
                             provider_model=provider_model)
+        elif typed and result and (result.get("new_ocr_prompt") or result.get("new_description")):
+            # L1.3 灰度发现：typed 模式的「正文冻结」曾是 provider 依赖的软保证——
+            # 若优化器 LLM（如 qwen-plus）返回 new_ocr_prompt 但**没有 edits
+            # 数组**，会掉进下面的整段重写分支，破坏正文冻结不变式。typed 模式
+            # 是硬承诺：拿不到 typed edits 就**跳过本字段**（保留旧正文+旧规则段），
+            # 绝不回退整段重写。记为无变化，不算 reject（LLM 只是没产结构化输出）。
+            logger.info(
+                "round: typed mode — optimizer for %s returned prose (no edits); "
+                "skipping (body frozen, no wholesale rewrite)", mod.module_key,
+            )
+            out["result"] = None
         elif result and (result.get("new_ocr_prompt") or result.get("new_description")):
             # 批次6 保留性守护：整体重写丢弃客户反馈内容 → 直接 reject
             # （不浪费判官 LLM 调用）。红线⑤「累积不覆盖」的 round 路径闸门。
