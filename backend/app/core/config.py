@@ -85,9 +85,12 @@ class Settings(BaseSettings):
     # modules (defect, not one-off lapse) and clip to the top-L by severity
     # (learning-rate). Default OFF → all under-target modules optimized.
     SKILL_EDIT_DISCIPLINE: bool = False
-    # Render attached OcrSkill content into composed prompts (P2). Default OFF →
-    # skills are stored/managed but not injected (composer unchanged).
-    SKILL_LIBRARY_RENDER: bool = False
+    # Render attached OcrSkill content into composed prompts (P2).
+    # 2026-07-07 默认开启：无挂载时 resolve()→{} 与 OFF 逐字节等价（composer
+    # `(skill_content or {})`），仅管理员显式「挂到字段」后产生增量——挂载本就
+    # 期望生效，OFF 反而让 attach 成静默空操作（晋升→挂载→生效闭环断点）。
+    # 回退：置 False 即不渲染（skill_ids 仅存储）。
+    SKILL_LIBRARY_RENDER: bool = True
     # P3 slow-update: at compose time, render a version-level PROTECTED guardian
     # block (deterministic, from each field's cross-round accuracy trajectory) so
     # stable fields are pinned and volatile ones flagged. Not stored in any

@@ -33,6 +33,7 @@ async def lifespan(app: FastAPI):
         create_tables,
         ensure_customize_job_columns,
         ensure_ocr_module_columns,
+        ensure_ocr_skill_columns,
         ensure_round_eval_quality_column,
         ensure_tenant_columns,
     )
@@ -45,6 +46,8 @@ async def lifespan(app: FastAPI):
     ensure_round_eval_quality_column()
     # Idempotent: add ocr_modules.rule_edits_text (ADR-002 存量缺口) if missing.
     ensure_ocr_module_columns()
+    # Idempotent: add ocr_skills.country (全局技能国家隔离，daace43 存量缺口) if missing.
+    ensure_ocr_skill_columns()
     # Ensure the super admin exists (default admin / 666666). Idempotent.
     try:
         from app.core.database import SessionLocal

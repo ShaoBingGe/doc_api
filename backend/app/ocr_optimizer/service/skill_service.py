@@ -23,7 +23,7 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
-from sqlalchemy import or_
+from sqlalchemy import String, or_
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError, ValidationError
@@ -112,6 +112,31 @@ def delete_skill(db: Session, skill_id: uuid.UUID) -> None:
     sk = get_skill(db, skill_id)
     sk.status = SkillStatus.archived.value
     db.commit()
+    # Mirror of the attach-side CRITICAL note: composed_prompt is a STATIC
+    # snapshot — archiving the skill row alone leaves its content baked into
+    # every version that rendered it. Re-compose those versions so the skill
+    # actually retires (render only picks ACTIVE skills).
+    for vid in _version_ids_referencing_skill(db, skill_id):
+        recompose_version_prompt(db, vid)
+
+
+def _version_ids_referencing_skill(db: Session, skill_id: uuid.UUID) -> list[uuid.UUID]:
+    """Version ids whose modules carry this skill in skill_ids (JSON column):
+    LIKE prefilter + exact python recheck, active modules only."""
+    from ..models import OcrModule
+
+    sid = str(skill_id)
+    rows = (
+        db.query(OcrModule.prompt_version_id, OcrModule.skill_ids)
+        .filter(OcrModule.status == "active", OcrModule.skill_ids.isnot(None))
+        .filter(OcrModule.skill_ids.cast(String).like(f"%{sid}%"))
+        .all()
+    )
+    seen: dict[uuid.UUID, None] = {}
+    for vid, ids in rows:
+        if sid in [str(x) for x in (ids or [])]:
+            seen.setdefault(vid, None)
+    return list(seen)
 
 
 def attach_skill_to_module(

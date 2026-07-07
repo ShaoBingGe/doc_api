@@ -89,3 +89,33 @@ def test_attach_recomposes_prompt_so_skill_actually_renders(db_session, monkeypa
     db_session.refresh(ver)
     assert "千分位取整" in ver.composed_prompt                        # after attach → recomposed
     assert "技能库补充" in ver.composed_prompt
+
+
+def test_delete_skill_recomposes_so_content_retires(db_session, monkeypatch):
+    """attach 侧的镜像回归：composed_prompt 是静态快照——归档技能行本身
+    不会让已烤进 prompt 的内容退场，delete_skill 必须重组引用它的版本。"""
+    from app.core.config import get_settings
+    from app.ocr_optimizer.models import OcrModule, OcrPromptVersion, PromptVersionStatus
+    from app.ocr_optimizer.service import skill_service
+
+    monkeypatch.setattr(get_settings(), "SKILL_LIBRARY_RENDER", True, raising=False)
+    apid = uuid.uuid4()
+    ver = OcrPromptVersion(id=uuid.uuid4(), api_definition_id=apid, version="1",
+                           status=PromptVersionStatus.active.value,
+                           composed_prompt="ORIGINAL", composed_schema={})
+    db_session.add(ver)
+    db_session.add(OcrModule(id=uuid.uuid4(), prompt_version_id=ver.id,
+                             module_key="total_amount", display_name="总额",
+                             json_path="$.totalAmount", ocr_prompt="找总额", description="d",
+                             schema_fragment={"type": "number"}, order_index=1, status="active"))
+    db_session.commit()
+    sk = skill_service.create_skill(db_session, name=f"sk-{uuid.uuid4().hex[:6]}",
+                                    content="临时规则Y须退场", api_def_id=apid)
+    skill_service.attach_skill_to_module(db_session, ver.id, "total_amount", sk.id)
+    db_session.refresh(ver)
+    assert "临时规则Y须退场" in ver.composed_prompt                   # baked in
+
+    skill_service.delete_skill(db_session, sk.id)
+    db_session.refresh(ver)
+    assert "临时规则Y须退场" not in ver.composed_prompt               # retired on delete
+    assert "技能库补充" not in ver.composed_prompt                    # last skill gone → block gone

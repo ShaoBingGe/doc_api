@@ -23,8 +23,8 @@ interface Props {
 type ModuleLite = { module_key: string; display_name: string; skill_ids: string[] }
 
 /** 技能库管理面板（ADR-001 P2 + P4 步骤④）。技能 = 可复用的 prompt 规则片段：
- *  全局（所有 API 共享，需后端启用 SKILL_LIBRARY_RENDER 才注入）/ 私有（仅本 API）。
- *  「挂到字段」把技能 attach 到当前 active 版本的某 module → composer 渲染时注入该字段提示词。 */
+ *  全局（同国 API 共享）/ 私有（仅本 API）。「挂到字段」把技能 attach 到当前
+ *  active 版本的某 module → 立即重组 prompt 注入该字段提示词（SKILL_LIBRARY_RENDER 默认开启）。 */
 export default function SkillLibraryModal({ apiDefinitionId, open, onClose, inline }: Props) {
   const [skills, setSkills] = useState<OcrSkill[]>([])
   const [loading, setLoading] = useState(false)
@@ -155,7 +155,7 @@ export default function SkillLibraryModal({ apiDefinitionId, open, onClose, inli
             </div>
           ) : skills.length === 0 ? (
             <p className="text-xs text-gray-500 text-center py-6">
-              暂无技能。技能是可复用的识别规则片段，挂到字段后（需后端启用渲染）注入 prompt。
+              暂无技能。技能是可复用的识别规则片段，挂到字段后立即注入该字段 prompt。
             </p>
           ) : (
             skills.map((s) => {

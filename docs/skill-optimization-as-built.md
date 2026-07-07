@@ -17,14 +17,17 @@
 | `SKILL_HELDOUT_GATE` | False | **true** | 留出验证门：在 val 子集上判版本好坏，复用既有单调 finalize |
 | `SKILL_NOISE_GATE` | False | **true** | 噪声样本门：迭代前要求 3 锚点 + 9 噪声 = 12 张已确认样本 |
 | `SKILL_EDIT_DISCIPLINE` | False | **true** | 编辑纪律：类型化有界 edit、Clip top-L、缺陷/失误判别、被拒缓冲 |
-| `SKILL_LIBRARY_RENDER` | False | **true** | 技能库渲染：composer 把全局/私有技能拼进 module body |
+| `SKILL_LIBRARY_RENDER` | **True**（2026-07-07 毕业） | **true** | 技能库渲染：composer 把全局/私有技能拼进 module body |
 | `SKILL_HELDOUT_VAL_FRAC` | 0.25 | 0.25 | 留出门 val 占比（数值参数，非开关） |
 
 > 线上核对（2026-06-26）：`ssh 47.121.179.253 grep SKILL_ /opt/docapi/backend/.env` → 四项 `true`；`systemctl is-active docapi.service` → active。
 >
-> **例外（2026-07-07 毕业）**：ADR-002 的 `SKILL_TYPED_EDITS` 与 `SKILL_META_MEMORY`
+> **例外（2026-07-07 毕业）**：①ADR-002 的 `SKILL_TYPED_EDITS` 与 `SKILL_META_MEMORY`
 > 经两次真实灰度通过后**代码默认已改为 `True`**（见 §9 ADR-002 条目）——它们不在
-> 上表内，是独立毕业项；其余四项与 SLOW_UPDATE 仍代码默认 False、线上 .env 显式开。
+> 上表内，是独立毕业项；②`SKILL_LIBRARY_RENDER` 同日毕业默认 `True`：无挂载时
+> `resolve()→{}` 与关闭逐字节等价（实机验证 attach→注入 / delete→退场，prompt 精确
+> 回基线），OFF 反而让「挂到字段」成静默空操作。其余三项与 SLOW_UPDATE 仍代码默认
+> False、线上 .env 显式开。
 
 ---
 
@@ -124,6 +127,10 @@
 - **存储**：`OcrSkill` 表，`api_definition_id` NULL=全局（管理员策展、共享）/ 非空=私有。
 - **渲染**：`skill_render.resolve(db, api_def_id, modules)`（flag 门控）→ `{module_key: 技能正文}`；`composer.assemble_prompt(..., skill_content=)` 追加「# 技能库补充（可复用规则）」块。
 - **CRUD**：`skill_service.py`（list 私有+全局 / create / soft delete / attach_skill_to_module）；`router.py` 已接活原 501 端点。
+- **静态快照一致性**：composed_prompt 不随查询动态渲染——attach 与 **delete 都会重组**引用版本
+  （attach 注入 / delete 退场，`recompose_version_prompt`；2026-07-07 补 delete 侧 + 回归测试）。
+- **存量迁移**：老库缺 `ocr_skills.country` 列（国家隔离 `daace43` 引入）会让技能 CRUD 500——
+  `ensure_ocr_skill_columns()` 启动幂等补列（同 rule_edits_text 模式）。
 - **前端**：`SkillLibraryModal.tsx` + `WorkspaceHeader.tsx`「技能库」按钮；`api-client.ts` 的 `OcrSkill` 类型 + fetch/create/delete/attach。
 - **硬约束**：**优化器被严格禁止写技能**。技能只能由管理员策展或（未来 P4）经 golden_set 门 + 管理员确认晋级。当前全局库为空（待 P4 填充机制）。
 
@@ -193,8 +200,9 @@ frontend/src/lib/api-client.ts     # OcrSkill 类型 + fetch/create/delete/attac
   （仅 1 租户）。**步骤③后端已落地**：`draft`（qwen-plus 起草、不写库）+ `promote`（管理员确认→
   `create_skill(NULL)` 写全局库），draft 生产冒烟通过。技能正文来源拍板 = **LLM 起草 + 管理员编辑确认**。
   **前端已落地**：admin 控制台「技能晋升」tab（`pages/admin/SkillPromotion.tsx`）——候选列表 + 推荐徽标 +
-  反思原文 + LLM 起草/编辑/晋升弹窗。**唯一剩余 = 步骤④ attach-UI**（把晋升的全局技能挂到字段 module 才渲染；
-  后端基建已就绪，`SkillLibraryModal` 缺 attach-to-field 交互）。当前全局技能库仍为空（promote 未在线上触发）。
+  反思原文 + LLM 起草/编辑/晋升弹窗。**步骤④ attach-UI 已落地**（`d591b97`，`SkillLibraryModal`
+  AttachControl 挂到字段 + attach 自动重组 prompt）；**`SKILL_LIBRARY_RENDER` 已默认开启**
+  （2026-07-07，见下）→ 候选→起草→晋升→挂载→生效全链闭合。当前全局技能库仍为空（promote 未在线上触发）。
 - **P3** 🔶 `slow_update` 已接线（`SKILL_SLOW_UPDATE`，默认 OFF）：按每字段跨轮准确率轨迹确定性产出
   受保护守护段（pin/caution），compose 时拼入、step 编辑碰不到；**`meta_skill` 已接线**（经 ADR-002：
   优化器改产 typed edits → accept/reject op 累计进 `run.metrics.meta_memory` → `render_meta_hint` 注入下轮

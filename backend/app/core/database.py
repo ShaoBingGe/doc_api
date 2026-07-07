@@ -128,6 +128,12 @@ def ensure_ocr_module_columns() -> None:
     )
 
 
+def ensure_ocr_skill_columns() -> None:
+    """ocr_skills.country（VARCHAR，全局技能按国家隔离——daace43 存量缺口：
+    老库缺列时技能 CRUD 直接 500）。nullable，NULL=通用全局。"""
+    _ensure_column("ocr_skills", "country", sqlite_type="VARCHAR(8)")
+
+
 def ensure_round_eval_quality_column() -> None:
     """ocr_optimization_rounds.eval_quality（JSON，批次2 评测有效性）。"""
     _ensure_column(
