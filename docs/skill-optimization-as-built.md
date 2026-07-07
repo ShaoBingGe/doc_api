@@ -200,7 +200,7 @@ frontend/src/lib/api-client.ts     # OcrSkill 类型 + fetch/create/delete/attac
   优化器改产 typed edits → accept/reject op 累计进 `run.metrics.meta_memory` → `render_meta_hint` 注入下轮
   optimize prompt，flag `SKILL_META_MEMORY` 门控）。
 - **ADR-002 typed-edit 优化器** ✅ **默认开启**（2026-07-07，`SKILL_TYPED_EDITS=True` +
-  `SKILL_META_MEMORY=True`，commit 待补）：优化器产类型化有界 edit（append/replace/delete）
+  `SKILL_META_MEMORY=True`，commit `d95b0cf`）：优化器产类型化有界 edit（append/replace/delete）
   演化每字段「规则段」`OcrModule.rule_edits_text`、**正文 `ocr_prompt` 硬冻结**
   （拿不到 typed edits 时跳过本字段、绝不整段重写，L1.3 修复 `f6907ea`），
   经 filter(被拒缓冲)→aggregate→clip→apply→verify。
