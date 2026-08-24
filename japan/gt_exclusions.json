@@ -1,0 +1,726 @@
+{
+ "field_level": {
+  "00504-02.pdf": {
+   "0": [
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceType"
+   ],
+   "1": [
+    "billFromComposite",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceType"
+   ]
+  },
+  "7444280070009.pdf": {
+   "0": [
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceType"
+   ],
+   "1": [
+    "billFromComposite",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceType"
+   ]
+  },
+  "00948421（1／2）.pdf": {
+   "0": [
+    "billFromComposite",
+    "billFromCountry",
+    "billFromName",
+    "billToComposite",
+    "billToName",
+    "billToTaxIdentificationNumber",
+    "currency",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "docType",
+    "invoiceDate",
+    "invoiceNumber",
+    "invoiceType",
+    "nameOfInvoice",
+    "page",
+    "paymentDueInDays",
+    "totalAmount",
+    "totalNetAmount",
+    "totalTaxAmount"
+   ],
+   "1": [
+    "billFromComposite",
+    "billFromName",
+    "billFromTaxIdentificationNumber",
+    "billToComposite",
+    "billToName",
+    "currency",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "docType",
+    "invoiceDate",
+    "invoiceNumber",
+    "invoiceType",
+    "nameOfInvoice",
+    "totalAmount",
+    "totalNetAmount",
+    "totalTaxAmount"
+   ],
+   "2": [
+    "billFromCountry",
+    "detailOfGoodsOrServices",
+    "paymentDueInDays"
+   ]
+  },
+  "00948421（2／2）.pdf": {
+   "0": [
+    "billFromComposite",
+    "billFromCountry",
+    "billFromName",
+    "billToComposite",
+    "billToName",
+    "billToTaxIdentificationNumber",
+    "currency",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "docType",
+    "invoiceDate",
+    "invoiceNumber",
+    "invoiceType",
+    "nameOfInvoice",
+    "page",
+    "paymentDueInDays",
+    "totalAmount",
+    "totalNetAmount",
+    "totalTaxAmount"
+   ],
+   "1": [
+    "billFromComposite",
+    "billFromName",
+    "billFromTaxIdentificationNumber",
+    "billToComposite",
+    "billToName",
+    "currency",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "docType",
+    "invoiceDate",
+    "invoiceNumber",
+    "invoiceType",
+    "nameOfInvoice",
+    "totalAmount",
+    "totalNetAmount",
+    "totalTaxAmount"
+   ],
+   "2": [
+    "billFromCountry",
+    "detailOfGoodsOrServices",
+    "paymentDueInDays"
+   ]
+  },
+  "03022.pdf": {
+   "0": [
+    "billFromTaxIdentificationNumber",
+    "billToTaxIdentificationNumber",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ],
+   "1": [
+    "billFromComposite",
+    "billFromName",
+    "billToName",
+    "detailOfGoodsOrServices",
+    "nameOfInvoice"
+   ],
+   "2": [
+    "billFromComposite",
+    "billFromTaxIdentificationNumber",
+    "billToName",
+    "billToTaxIdentificationNumber",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ],
+   "3": [
+    "billFromName",
+    "billFromTaxIdentificationNumber",
+    "billToName",
+    "billToTaxIdentificationNumber",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ],
+   "4": [
+    "billFromComposite",
+    "billFromName",
+    "billToName",
+    "detailOfGoodsOrServices",
+    "nameOfInvoice",
+    "paymentDueInDays"
+   ],
+   "5": [
+    "billFromComposite",
+    "billFromName",
+    "billFromTaxIdentificationNumber",
+    "billToTaxIdentificationNumber",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ],
+   "6": [
+    "billFromComposite",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ],
+   "7": [
+    "billFromComposite",
+    "billFromName",
+    "billFromTaxIdentificationNumber",
+    "billToName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ]
+  },
+  "6220-6220.pdf": {
+   "0": [
+    "billFromTaxIdentificationNumber",
+    "billToTaxIdentificationNumber",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ],
+   "1": [
+    "billFromComposite",
+    "billFromName",
+    "billToName",
+    "detailOfGoodsOrServices",
+    "nameOfInvoice"
+   ],
+   "2": [
+    "billFromComposite",
+    "billFromTaxIdentificationNumber",
+    "billToName",
+    "billToTaxIdentificationNumber",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ],
+   "3": [
+    "billFromName",
+    "billFromTaxIdentificationNumber",
+    "billToName",
+    "billToTaxIdentificationNumber",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ],
+   "4": [
+    "billFromComposite",
+    "billFromName",
+    "billToName",
+    "detailOfGoodsOrServices",
+    "nameOfInvoice",
+    "paymentDueInDays"
+   ],
+   "5": [
+    "billFromComposite",
+    "billFromName",
+    "billFromTaxIdentificationNumber",
+    "billToTaxIdentificationNumber",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ],
+   "6": [
+    "billFromComposite",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ],
+   "7": [
+    "billFromComposite",
+    "billFromName",
+    "billFromTaxIdentificationNumber",
+    "billToName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ]
+  },
+  "T9490001000578.pdf": {
+   "0": [
+    "billFromTaxIdentificationNumber",
+    "billToTaxIdentificationNumber",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ],
+   "1": [
+    "billFromComposite",
+    "billFromName",
+    "billToName",
+    "detailOfGoodsOrServices",
+    "nameOfInvoice"
+   ],
+   "2": [
+    "billFromComposite",
+    "billFromTaxIdentificationNumber",
+    "billToName",
+    "billToTaxIdentificationNumber",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ],
+   "3": [
+    "billFromName",
+    "billFromTaxIdentificationNumber",
+    "billToName",
+    "billToTaxIdentificationNumber",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ],
+   "4": [
+    "billFromComposite",
+    "billFromName",
+    "billToName",
+    "detailOfGoodsOrServices",
+    "nameOfInvoice",
+    "paymentDueInDays"
+   ],
+   "5": [
+    "billFromComposite",
+    "billFromName",
+    "billFromTaxIdentificationNumber",
+    "billToTaxIdentificationNumber",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ],
+   "6": [
+    "billFromComposite",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ],
+   "7": [
+    "billFromComposite",
+    "billFromName",
+    "billFromTaxIdentificationNumber",
+    "billToName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "nameOfInvoice"
+   ]
+  },
+  "141.jpg": {
+   "0": [
+    "detailOfGoodsOrServices",
+    "invoiceCode",
+    "invoiceNumber"
+   ],
+   "1": [
+    "detailOfGoodsOrServices",
+    "totalAmount"
+   ],
+   "4": [
+    "detailOfGoodsOrServices"
+   ],
+   "5": [
+    "detailOfGoodsOrServices"
+   ]
+  },
+  "421078.jpg": {
+   "0": [
+    "detailOfGoodsOrServices",
+    "invoiceCode",
+    "invoiceNumber"
+   ],
+   "1": [
+    "detailOfGoodsOrServices",
+    "totalAmount"
+   ],
+   "4": [
+    "detailOfGoodsOrServices"
+   ],
+   "5": [
+    "detailOfGoodsOrServices"
+   ]
+  },
+  "21f4576fe2e344788ee6832fd005f859.pdf": {
+   "0": [
+    "page"
+   ]
+  },
+  "7e0e33387c5c4812af35c4c24cc9ae74.pdf": {
+   "0": [
+    "page"
+   ]
+  },
+  "a546db456d4a4d1e9cb91523ed37b8b8.pdf": {
+   "0": [
+    "page"
+   ]
+  },
+  "4447-P2.pdf": {
+   "0": [
+    "billFromComposite",
+    "billFromName"
+   ],
+   "1": [
+    "billFromComposite",
+    "billFromName"
+   ],
+   "2": [
+    "billFromComposite",
+    "billFromName"
+   ],
+   "3": [
+    "billFromComposite",
+    "billFromName"
+   ],
+   "4": [
+    "billFromComposite",
+    "billFromName"
+   ]
+  },
+  "4475-P2.pdf": {
+   "0": [
+    "billFromComposite",
+    "billFromName"
+   ],
+   "1": [
+    "billFromComposite",
+    "billFromName"
+   ],
+   "2": [
+    "billFromComposite",
+    "billFromName"
+   ],
+   "3": [
+    "billFromComposite",
+    "billFromName"
+   ],
+   "4": [
+    "billFromComposite",
+    "billFromName"
+   ]
+  },
+  "No.10-794436.pdf": {
+   "0": [
+    "billFromName",
+    "detailOfGoodsOrServices"
+   ],
+   "1": [
+    "billFromName",
+    "detailOfGoodsOrServices"
+   ],
+   "2": [
+    "billFromName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceCode",
+    "invoiceNumber"
+   ],
+   "3": [
+    "billFromName",
+    "detailOfGoodsOrServices"
+   ],
+   "4": [
+    "billFromName",
+    "detailOfGoodsOrServices"
+   ],
+   "5": [
+    "billFromName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceCode",
+    "invoiceNumber"
+   ],
+   "6": [
+    "billFromName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceCode",
+    "invoiceNumber"
+   ],
+   "7": [
+    "billFromName",
+    "detailOfGoodsOrServices"
+   ]
+  },
+  "発券No.032349.pdf": {
+   "0": [
+    "billFromName",
+    "detailOfGoodsOrServices"
+   ],
+   "1": [
+    "billFromName",
+    "detailOfGoodsOrServices"
+   ],
+   "2": [
+    "billFromName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceCode",
+    "invoiceNumber"
+   ],
+   "3": [
+    "billFromName",
+    "detailOfGoodsOrServices"
+   ],
+   "4": [
+    "billFromName",
+    "detailOfGoodsOrServices"
+   ],
+   "5": [
+    "billFromName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceCode",
+    "invoiceNumber"
+   ],
+   "6": [
+    "billFromName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceCode",
+    "invoiceNumber"
+   ],
+   "7": [
+    "billFromName",
+    "detailOfGoodsOrServices"
+   ]
+  },
+  "なし.pdf": {
+   "0": [
+    "billFromComposite",
+    "billFromName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "receiptDate",
+    "receiptNumber",
+    "totalAmount"
+   ],
+   "1": [
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "invoiceNumber",
+    "receiptDate",
+    "receiptNumber",
+    "totalAmount"
+   ],
+   "2": [
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "invoiceNumber",
+    "receiptDate",
+    "receiptNumber",
+    "totalAmount"
+   ],
+   "3": [
+    "billFromComposite",
+    "billFromName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "receiptDate",
+    "receiptNumber",
+    "totalAmount"
+   ],
+   "4": [
+    "billFromComposite",
+    "billFromName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "receiptDate",
+    "totalAmount"
+   ],
+   "5": [
+    "billFromComposite",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "receiptDate",
+    "totalAmount"
+   ],
+   "6": [
+    "billFromComposite",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "receiptDate",
+    "totalAmount"
+   ],
+   "7": [
+    "billFromComposite",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "nameOfInvoice",
+    "receiptDate",
+    "totalAmount"
+   ],
+   "8": [
+    "billFromComposite",
+    "billFromName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "invoiceNumber",
+    "receiptDate",
+    "receiptNumber",
+    "totalAmount"
+   ]
+  },
+  "食事代.pdf": {
+   "0": [
+    "billFromComposite",
+    "billFromName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "receiptDate",
+    "receiptNumber",
+    "totalAmount"
+   ],
+   "1": [
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "invoiceNumber",
+    "receiptDate",
+    "receiptNumber",
+    "totalAmount"
+   ],
+   "2": [
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "invoiceNumber",
+    "receiptDate",
+    "receiptNumber",
+    "totalAmount"
+   ],
+   "3": [
+    "billFromComposite",
+    "billFromName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "receiptDate",
+    "receiptNumber",
+    "totalAmount"
+   ],
+   "4": [
+    "billFromComposite",
+    "billFromName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "receiptDate",
+    "totalAmount"
+   ],
+   "5": [
+    "billFromComposite",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "receiptDate",
+    "totalAmount"
+   ],
+   "6": [
+    "billFromComposite",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "receiptDate",
+    "totalAmount"
+   ],
+   "7": [
+    "billFromComposite",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "nameOfInvoice",
+    "receiptDate",
+    "totalAmount"
+   ],
+   "8": [
+    "billFromComposite",
+    "billFromName",
+    "detailOfGoodsOrServices",
+    "detailOfTaxSummary",
+    "invoiceDate",
+    "invoiceNumber",
+    "receiptDate",
+    "receiptNumber",
+    "totalAmount"
+   ]
+  }
+ },
+ "entity_count_conflict": [
+  [
+   "2025061701_2.pdf",
+   "2025061801.pdf"
+  ],
+  [
+   "286a865f79744bd8b15aa83a018d1f42.pdf",
+   "6cb9d3a3bf7f4db5a130017547a03fe6.pdf",
+   "f6d0063a018345d3a8897674dbb9aa0e.pdf",
+   "ff8faa045cb94061ae355e8df2cf4adf.pdf"
+  ]
+ ],
+ "groups": [
+  [
+   "00504-02.pdf",
+   "7444280070009.pdf"
+  ],
+  [
+   "00948421（1／2）.pdf",
+   "00948421（2／2）.pdf"
+  ],
+  [
+   "03022.pdf",
+   "6220-6220.pdf",
+   "T9490001000578.pdf"
+  ],
+  [
+   "141.jpg",
+   "421078.jpg"
+  ],
+  [
+   "2025061701_2.pdf",
+   "2025061801.pdf"
+  ],
+  [
+   "21f4576fe2e344788ee6832fd005f859.pdf",
+   "7e0e33387c5c4812af35c4c24cc9ae74.pdf",
+   "a546db456d4a4d1e9cb91523ed37b8b8.pdf"
+  ],
+  [
+   "286a865f79744bd8b15aa83a018d1f42.pdf",
+   "6cb9d3a3bf7f4db5a130017547a03fe6.pdf",
+   "f6d0063a018345d3a8897674dbb9aa0e.pdf",
+   "ff8faa045cb94061ae355e8df2cf4adf.pdf"
+  ],
+  [
+   "4447-P2.pdf",
+   "4475-P2.pdf"
+  ],
+  [
+   "No.10-794436.pdf",
+   "発券No.032349.pdf"
+  ],
+  [
+   "なし.pdf",
+   "食事代.pdf"
+  ],
+  [
+   "北信越支店2506(6).pdf",
+   "北信越支店2506(7).pdf"
+  ]
+ ]
+}

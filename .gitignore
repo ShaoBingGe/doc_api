@@ -95,3 +95,10 @@ _postman/recheck*.json
 _postman/regress*.json
 _postman/diag_*.json
 _postman/table_layout.json
+
+# 日本样本集：原始票据扫描 + OCR 结果缓存（与 golden_set / testing 同策略：
+# PII + 二进制不入库；prompt、评测脚本与报告保留）
+japan/docs/
+japan/result/
+japan/_bench/results/
+_bench/results/
