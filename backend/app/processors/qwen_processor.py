@@ -36,12 +36,39 @@ except ImportError:  # pragma: no cover
     _PYMUPDF = False
     logger.warning("PyMuPDF not available; Qwen processor can't render PDFs. pip install pymupdf")
 
-# Keep requests bounded: most invoices are 1-2 pages.
-_MAX_PAGES = 5
+# 单次调用送入模型的最大页数。**超出部分直接丢弃，不做分片再合并**
+# （分片会打断跨页票据的上下文，且成本翻倍；产品决策为「超过的部分不予识别」）。
+# 从 5 提到 16：实测「整月发票扫成一个 PDF、每页一张」的场景很常见，
+# 5 页截断会让第 6 张起的发票根本进不了模型视野（testing/DOC_07_15_25006 6 页 6 张即为此例）。
+MAX_PAGES = 16
+_MAX_PAGES = MAX_PAGES  # 向后兼容旧引用
+
+# 文本层的提取与质量判据集中在 app.processors.pdf_text（阈值也在那里）。
+
+_TEXT_LAYER_BLOCK = """
+
+━━━━━━ 该 PDF 的嵌入文本层（字符精确，已按版面坐标重排）━━━━━━
+下列文字直接取自 PDF 内部文本对象，**不经 OCR，字符准确**；并已按版面坐标
+重建阅读顺序（先按行、行内从左到右），同一行内的**连续多个空格表示跨列**。
+
+使用规则：
+1. **字符以文本层为准**：当你从图像读出的数字或编号（发票号、注册号/SSM、税号、
+   金额、日期、PO/DO 号）与文本层中对应内容不一致时，**采用文本层的值**——
+   图像可能因印刷重叠、字号过小或扫描模糊而误读单个字符。
+2. **版面归属仍以图像为准**：表格的行列对应、哪个值属于哪个字段、多张票据的
+   切分边界，都以图像所见为准。文本层的换行与空格只是排版还原，不构成语义。
+3. 注意「标签与值可能分列」：本文本层已尽力还原为 `标签 : 值` 同行，但若某行只有
+   标签或只有值，请结合图像判断其归属，**不要把相邻行的值硬配给某个标签**。
+4. 文本层中**没有出现**的内容不要凭空引入；文本层与图像都没有的字段，按缺失处理。
+
+{text}
+━━━━━━ 文本层结束 ━━━━━━
+"""
 _RENDER_DPI = 150
-# qwen3-vl-plus 实测 ~34s/页，5 页 PDF 单次调用可贴近 180s——放宽到 5 分钟，
-# 与前端 OCR_TIMEOUT（api-client.ts）保持一致。
-_HTTP_TIMEOUT = 300.0
+# qwen3-vl-plus 实测 ~34s/页；16 页单次调用可达 ~9 分钟，故超时同步放宽到 10 分钟。
+# 注意：前端 OCR_TIMEOUT（api-client.ts）若仍为 5 分钟，长文档在 UI 侧会先超时，
+# 但后端会跑完并落库——开放平台走 HTTP 直连，不受前端超时影响。
+_HTTP_TIMEOUT = 600.0
 
 
 class QwenProcessor(DocumentProcessor):
@@ -98,6 +125,17 @@ class QwenProcessor(DocumentProcessor):
         data = pathlib.Path(path).read_bytes()
         return f"data:{mime};base64," + base64.b64encode(data).decode()
 
+    @staticmethod
+    def _extract_text_layer(path: str) -> tuple[str, object]:
+        """抽取 PDF 文本层（按版面坐标重排），→ (text, TextQuality)。
+
+        解析细节与降级判据见 `app.processors.pdf_text`。这里只做转调：
+        文本层可用就注入，不可用（扫描件 / 稀疏 / 乱码）返回空串走纯 OCR。
+        """
+        from app.processors.pdf_text import extract_layout_text
+
+        return extract_layout_text(path, _MAX_PAGES)
+
     def _chat(self, *, model: str, messages: list, as_json: bool) -> str:
         # temperature=0：评测确定性。优化轮的版本对比（门口认证 / 单调守护 /
         # 终轮确认）都是单次打分，采样噪声会翻转「哪个版本更好」的判定；
@@ -149,6 +187,16 @@ class QwenProcessor(DocumentProcessor):
         # ── vision OCR (production extraction) ──
         if suffix == ".pdf":
             image_urls = self._pdf_to_png_data_urls(file_path)
+            # 文本层优先：数字版 PDF 的文本对象字符精确，用来纠正图像上的
+            # 单字符误读。取不到或不可信（扫描件/稀疏/乱码）时自动降级为纯 OCR。
+            text_layer, quality = self._extract_text_layer(file_path)
+            name = pathlib.Path(file_path).name
+            if text_layer:
+                instruction = instruction + _TEXT_LAYER_BLOCK.format(text=text_layer)
+                logger.info("text layer attached (%s): %s", name, quality)
+            else:
+                logger.info("text layer unusable, falling back to OCR only (%s): %s",
+                            name, quality)
         elif suffix in (".png", ".jpg", ".jpeg"):
             image_urls = [self._image_to_data_url(file_path)]
         else:
