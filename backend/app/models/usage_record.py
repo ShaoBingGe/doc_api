@@ -18,8 +18,9 @@ class UsageRecord(UUIDMixin, Base):
     api_definition_id: Mapped[uuid.UUID] = mapped_column(
         nullable=False, index=True, comment="FK → api_definitions"
     )
-    api_key_id: Mapped[uuid.UUID] = mapped_column(
-        nullable=False, index=True, comment="FK → api_keys"
+    api_key_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        nullable=True, index=True,
+        comment="FK → api_keys；开放平台（client_id/access_token）调用时为 None",
     )
     api_code: Mapped[str] = mapped_column(
         String(128), nullable=False, index=True, comment="API code snapshot"

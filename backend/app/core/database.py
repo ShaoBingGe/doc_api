@@ -147,3 +147,9 @@ def ensure_tenant_columns() -> None:
     SQLite 用 CHAR(32) 存 UUID；nullable，无需回填。"""
     for table in ("api_definitions", "documents", "api_keys"):
         _ensure_column(table, "tenant_id", sqlite_type="CHAR(32)")
+
+
+def ensure_external_template_id_column() -> None:
+    """api_definitions 补 external_template_id（开放平台数字模板号，如 templateId=7）。
+    nullable：为空表示该 API 不对开放平台暴露，无需回填存量行。"""
+    _ensure_column("api_definitions", "external_template_id", sqlite_type="INTEGER")

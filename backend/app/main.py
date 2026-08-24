@@ -32,6 +32,7 @@ async def lifespan(app: FastAPI):
     from app.core.database import (
         create_tables,
         ensure_customize_job_columns,
+        ensure_external_template_id_column,
         ensure_ocr_module_columns,
         ensure_ocr_skill_columns,
         ensure_round_eval_quality_column,
@@ -40,6 +41,8 @@ async def lifespan(app: FastAPI):
     create_tables()
     # Idempotent prototype migration: add tenant_id to data tables if missing.
     ensure_tenant_columns()
+    # Idempotent: add api_definitions.external_template_id (开放平台 templateId).
+    ensure_external_template_id_column()
     # Idempotent: add customize_jobs.options (save-as-new feature) if missing.
     ensure_customize_job_columns()
     # Idempotent: add ocr_optimization_rounds.eval_quality (批次2) if missing.
@@ -130,6 +133,12 @@ register_exception_handlers(app)
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 app.include_router(v1_router)
+
+# 开放平台（piaozone 兼容）：路径与线上生产一致，**不带 /api/v1 前缀**
+# —— POST /base/oauth/token 与 POST /ai/knowledge/nlpService/document/analyze
+from app.api.v1.open_api import router as open_api_router  # noqa: E402
+
+app.include_router(open_api_router)
 
 # Serve uploaded files as static assets (prototype only — use CDN / presigned URLs in prod)
 import os

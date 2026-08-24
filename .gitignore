@@ -83,3 +83,15 @@ Japan-inv/
 # 微软 SkillOpt 参考项目（第三方，仅供研究，勿入库）
 skillopt/
 backend/ab_prompt_test.py
+
+# 开放平台验证产物（含生产 client_secret / access_token，严禁入库）
+_postman/*environment*.json
+!_postman/*environment*.example.json
+_postman/newman_*.json
+_postman/retry*.json
+_postman/largest*.json
+_postman/over16.json
+_postman/recheck*.json
+_postman/regress*.json
+_postman/diag_*.json
+_postman/table_layout.json
