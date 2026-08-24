@@ -11,12 +11,49 @@ locked_fields:
 prompt_template:
   prompt_format: |-
     # 任务
-    请识别并提取这张马来西亚（MY）票据文档（PDF / 图片），按下方 JSON Schema 输出合法 JSON。
-    文档可能包含多张票据、跨页票据、印刷模糊等情况，请尽可能准确识别。
+    请识别并提取这份马来西亚（MY）票据文档（PDF / 图片），按下方 JSON Schema 输出合法 JSON。
+    **一份文档可能含多张彼此独立的票据**（常见于整月发票扫在一个 PDF 里），也可能是
+    一张票据跨多页；还可能排版混乱、印刷模糊。先按 §1.0 定「有几张」，再逐张提取。
 
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # Part 1 · 马来西亚（MY）国家全局说明
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    ## 1.0 票据切分 —— 先定「有几张」，再定「每张是什么」
+    切错张数会让整条记录作废，**这一步优先于分类与字段提取**。
+
+    ### 1.0.1 一条记录 = 一张物理独立的凭证
+    有自己的发行方、单号、金额、日期的一张凭证算一条。同一张凭证内部的多个区块
+    （表头 / 明细表 / 付款栏 / 签收栏）**合为一条**，不得拆开。
+
+    ### 1.0.2 逐页扫描，每一页都要看
+    多页文档必须**从第 1 页到最后一页逐页检查**，不得只看首页就结束。
+    典型场景：一份 PDF 把整月的多张发票扫在一起，每页一张、各有各的
+    `Invoice No.` 与 `Total` —— 这种情况必须逐张输出，有几张就输出几条。
+    自检：若文档有 N 页且每页都印着不同的 Invoice No./Total，输出记录数应当接近 N，
+    只输出 1 条几乎一定是漏检，必须回头重查。
+
+    ### 1.0.3 跨页单张 vs 多张独立 —— 按「单号 + 页码标记」判定
+    - **跨页单张**（合并为一条，`page` 列出全部页码）：后续页是前一页的延续，
+      特征为 **`Invoice No.` 与首页相同**，或页面标注 `Page 2 of 5` / `Page: 2/5`，
+      或标题为 `Attachment to Invoice` / `Continuation` / 仅有明细延续而无独立合计。
+    - **多张独立**（各自一条）：每页有**各自不同**的 `Invoice No.`，且各自有独立的
+      `Total` / `Total Payable` / `GROSS` 合计。
+    - 判据优先级：**先比 Invoice No.**（不同即为不同票据），再看页码标记，最后看是否有独立合计。
+
+    ### 1.0.4 一页多张
+    同一页上下拼贴多张小票/发票时，每张各输出一条；`page` 均填该页页码。
+    禁止因商家相同、金额相同而合并或去重 —— 同额的两张仍是两条。
+
+    ### 1.0.5 附件与非票据页
+    发票后附的送货单（Delivery Order）、装箱单、对账单、条款页、空白页，
+    若**不构成独立的付款凭证**，记为 `docType: other`（仅输出 docType 与 page）；
+    不要把它们并进发票，也不要漏掉不输出。
+
+    ### 1.0.6 输出前清点
+    输出 JSON 前，先在心里列出「第几页-单号-合计金额」的清单，再逐条转成记录；
+    **记录数必须等于清单条数**。每条记录都要能指认它在第几页；指不出来的不要输出，
+    也不要编造票面上不存在的单号或金额。
 
     ## 1.1 票据种类分类（docType + invoiceType）
     - **invoice**：正式付款凭证，包含供应商和客户信息、发票号码、日期、税务信息、付款条款、商品或服务明细、总金额。
@@ -54,12 +91,30 @@ prompt_template:
       - 格式：12 位纯数字（新号，如 `199201000276`），或旧号带连字符（如 `518287-T`、`424868-V`），或并列（如 `199701009372 (424868-V)`）—— 完整保留原文。
       - 关键词：`Company Reg.No`、`Registration No`、`SSM`，或公司名称右侧括号内的 12 位数字。
       - 字段：`billFromBusinessRegistrationNumber`。
+      - **逐位核读（本字段最易错）**：新式号常紧挨公司名排在同一行、字号偏小，扫描件里
+        易与公司名笔画重叠粘连，**末位尤其容易读错**（如 `…018633` 误读成 `…018630`）。
+        提取后做三项自检：① 去掉括号旧号后应恰为 **12 位纯数字**；
+        ② 前 4 位是注册年份，须在 1950–本年之间；
+        ③ 若该号在票面出现多处（抬头 / 页脚 / 印章 / 条款区），**相互比对取一致值**。
     - **SST Number（销售与服务税号）**：与 TIN / SSM 完全不同，**不要混用**。MY 票面常单独标注 `Sales Tax No.` / `SST ID`。
       - **严禁将 SST 号当作 invoice number / TIN / SSM**。
     - **发票号 invoiceNumber**：
       - 关键词：`Invoice No`、`INVOICE NO:`、`E INV NO`、`No.`
       - 典型格式：`PT-148862`、`S-25/10-0059`、`INV13398`、`IN2601/1024`、`25FC011847`
       - **严禁将 Sales Tax No 或 SST ID 误取为 invoice number。**
+
+    ## 1.35 明细行的字段归属（易错，务必按此填）
+    明细数组 `detailOfGoodsOrServices` 每行的字段归属**由语义决定，不看票面列头的英文用词**：
+    - **`articleName` = 这一行卖的是什么（品名/服务名）**。MY 发票的品名列表头五花八门：
+      `Description`、`Item`、`Item Description`、`Particulars`、`Product`、`Descriptions of Goods`
+      —— **无论表头叫哪个，品名一律填 `articleName`**。
+      只要该行有商品/服务，`articleName` **就不得为空**。
+      例：表头是 `Description`、该行内容是 `LONGKANG TANAH 6" (WL)`
+      → `articleName` = `LONGKANG TANAH 6" (WL)`。
+    - **`description` = 品名之外的补充说明**（规格、批号、备注列 Remark/Notes、型号、`c/o 某某` 等）。
+      **它不是票面 `Description` 列的对应字段。**
+      若该行只有一段文字（就是品名），`description` **留空**，不要把品名复制一份到这里。
+    - 自检：输出前检查每一行——**出现 `articleName` 为空但 `description` 有品名，即为填反了，必须对调**。
 
     ## 1.4 必填字段与缺失处理
     - **invoice / receipt 类型**：`docType`、`invoiceType`、`page`、`currency` 必须输出；若票面无 currency，按 MY 上下文推断（默认 MYR）。
@@ -209,6 +264,12 @@ prompt_template:
                 开票方（供应商）的商业登记号 / 注册号 / SSM 号码。
                 通用规则：提取 Company No. / Co. Reg. No. / Registration No. / Company Reg No. / BRN 后面的编号，注意可能包含新旧号、括号、连字符，例如 200201024195 或 199501005689 (New)。
                 马来西亚发票补充规则：查找 "Company Reg.No"、"Registration No"、"SSM"，或公司名称旁括号内的 12 位数字；典型格式如 199201000276、199501005689、518287-T、199701009372 (424868-V)；严禁提取买方的注册号；票面同时出现新旧号时按原文完整保留。
+                **逐位核读（本字段最易错）**：新式注册号是 **12 位纯数字**，且常紧挨公司名
+                排在同一行、字号偏小，扫描件里易与公司名笔画重叠粘连，末位尤其容易读错
+                （如 `...633` 误读成 `...630`）。提取后请做三项自检：
+                ① 数一遍位数——新式号去掉括号旧号后应恰为 12 位；
+                ② 前 4 位是注册年份，应在 1950–本年之间（如 `2007…`）；
+                ③ 若该号在票面出现多处（抬头、页脚、印章、条款区），**相互比对取一致值**。
             purchaseOrderNumber:
               type: STRING
               description: |-
@@ -235,10 +296,23 @@ prompt_template:
                 properties:
                   articleName:
                     type: STRING
-                    description: 商品或服务名称（需要提取完整信息）
+                    description: |-
+                      商品或服务名称（提取完整信息）。
+                      **无论票面那一列的表头叫什么，商品/服务名都填这里**：MY 发票的品名列
+                      常见表头有 `Description`、`Item`、`Item Description`、`Particulars`、
+                      `Product`、`Descriptions of Goods` 等——表头用词不影响归属，
+                      只要是"这一行卖的是什么"，一律进 articleName。
+                      **该明细行只要有商品/服务，本字段就不得为空。**
+                      例：表头为 `Description`、内容为 `LONGKANG TANAH 6" (WL)`
+                      → articleName = `LONGKANG TANAH 6" (WL)`（**不是**填进 description）。
                   description:
                     type: STRING
-                    description: 备注
+                    description: |-
+                      本行的**补充说明/备注**，用于品名之外的附加信息，如规格、批号、
+                      备注列（Remark / Notes）内容、型号说明、"c/o 某某"等。
+                      **注意：本字段不是票面 `Description` 列的对应字段**——票面 Description
+                      列装的是品名，应填 articleName。
+                      若该行只有一段文字（就是品名），本字段**留空**，不要把品名复制到这里。
                   quantity:
                     type: NUMBER
                     description: |-

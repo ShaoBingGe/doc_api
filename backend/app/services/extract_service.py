@@ -43,7 +43,7 @@ def extract_document(
     db: Session,
     *,
     api_code: str,
-    api_key: ApiKey,
+    api_key: ApiKey | None = None,
     file_bytes: bytes | None = None,
     filename: str | None = None,
     file_url: str | None = None,
@@ -134,11 +134,26 @@ def extract_document(
         processor_used=proc_used,
     )
 
+    # structured_data 可能是数组（多票据）或单对象；data 保持「首条 dict」的既有契约，
+    # entities 给出全量，供开放平台等需要多票据的调用方使用。
+    if isinstance(structured_data, list):
+        entities = [e for e in structured_data if isinstance(e, dict)]
+        first = entities[0] if entities else {}
+    elif isinstance(structured_data, dict):
+        inner = next((structured_data[k] for k in ("entities", "data")
+                      if isinstance(structured_data.get(k), list)), None)
+        entities = [e for e in inner if isinstance(e, dict)] if inner is not None \
+            else [structured_data]
+        first = entities[0] if entities else {}
+    else:
+        entities, first = [], {}
+
     return ExtractResponse(
         request_id=request_id,
         api_code=api_code,
         api_version=api_def.version,
-        data=structured_data,
+        data=first,
+        entities=entities,
         metadata=ExtractMetadata(
             processor=proc_used,
             model=model_name,
@@ -253,10 +268,10 @@ def _run_processor(
         else:
             structured_data = {"raw": raw_text}
 
-    # Normalise: processors may return a list (e.g. mock returns a list of docs)
-    if isinstance(structured_data, list):
-        structured_data = structured_data[0] if structured_data else {}
-
+    # 一份文档可能含多张票据（国家模板的 schema 根就是 ARRAY），此处**必须原样返回**。
+    # 历史实现在这里做过 `structured_data = structured_data[0]` 的「归一」，
+    # 把多票据文档的第 2 张起全部丢弃——6 页 6 张的 PDF 只会剩第 1 张。
+    # 调用方按需取首条（见 extract_document 的 data 字段）或全量（entities 字段）。
     actual_model = processor.get_model_version()
     return {}, structured_data, actual_model, None
 
@@ -267,7 +282,7 @@ def _persist_audit(
     db: Session,
     *,
     api_def: ApiDefinition,
-    api_key: ApiKey,
+    api_key: ApiKey | None,
     filename: str,
     file_size: int,
     structured_data: dict,
@@ -310,7 +325,7 @@ def record_usage(
     db: Session,
     *,
     api_def: ApiDefinition,
-    api_key: ApiKey,
+    api_key: ApiKey | None,
     request_id: uuid.UUID,
     status_code: int,
     latency_ms: int,
@@ -321,7 +336,7 @@ def record_usage(
     try:
         rec = UsageRecord(
             api_definition_id=api_def.id,
-            api_key_id=api_key.id,
+            api_key_id=api_key.id if api_key else None,
             api_code=api_def.api_code,
             request_id=request_id,
             status_code=status_code,

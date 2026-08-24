@@ -1,0 +1,969 @@
+{
+  "info": {
+    "name": "Doc API 开放平台 — testing 第 11-20 张生产验证",
+    "description": "invoicase.cn 生产，templateId=7（Chinkin MY），testing/ 文件名排序第 11-20 张。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. POST /base/oauth/token",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const ts=Math.floor(Date.now()/1000).toString();pm.environment.set('timestamp',ts);",
+              "pm.environment.set('sign',CryptoJS.MD5(pm.environment.get('client_id')+pm.environment.get('client_secret')+ts).toString());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b=pm.response.json();",
+              "pm.test('errcode = 0000',()=>pm.expect(b.errcode).to.eql('0000'));",
+              "pm.environment.set('access_token',b.access_token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"client_id\": \"{{client_id}}\",\n  \"timestamp\": \"{{timestamp}}\",\n  \"sign\": \"{{sign}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/base/oauth/token",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "base",
+            "oauth",
+            "token"
+          ]
+        }
+      }
+    },
+    {
+      "name": "2. EBM INV2507-296_20250715_103429",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set('fileHash','668b0a066c1089496038376936c4375a');",
+              "pm.variables.set('expectPages','1');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b=pm.response.json();",
+              "pm.test('HTTP 200',()=>pm.response.to.have.status(200));",
+              "pm.test('errcode = 0000',()=>pm.expect(b.errcode).to.eql('0000'));",
+              "pm.test('description = Success',()=>pm.expect(b.description).to.eql('Success'));",
+              "pm.test('顶层字段与生产一致',()=>pm.expect(Object.keys(b).sort()).to.eql(['data','description','docPages','errcode','traceId']));",
+              "pm.test('traceId 16 位十六进制',()=>pm.expect(b.traceId).to.match(/^[0-9a-f]{16}$/));",
+              "pm.test('docPages 与实际页数一致',()=>pm.expect(b.docPages).to.eql(Number(pm.variables.get('expectPages'))));",
+              "pm.test('data 非空',()=>pm.expect(b.data.length).to.be.above(0));",
+              "b.data.forEach((e,i)=>{",
+              "  pm.test(`票据${i+1}: header 五分组`,()=>pm.expect(Object.keys(e.header)).to.eql(['basic','billTo','billFrom','bussiness','payment']));",
+              "  pm.test(`票据${i+1}: detail 三分组`,()=>pm.expect(Object.keys(e.detail)).to.eql(['detailOfGoodsOrServices','detailOfTaxSummary','originalInvoiceReferences']));",
+              "  pm.test(`票据${i+1}: 字段全集(12/14/14/6/7)`,()=>{pm.expect(Object.keys(e.header.basic).length).to.eql(12);pm.expect(Object.keys(e.header.billTo).length).to.eql(14);pm.expect(Object.keys(e.header.billFrom).length).to.eql(14);pm.expect(Object.keys(e.header.bussiness).length).to.eql(6);pm.expect(Object.keys(e.header.payment).length).to.eql(7);});",
+              "  pm.test(`票据${i+1}: 标量均为字符串`,()=>{for(const g of ['basic','billTo','billFrom','bussiness','payment']){for(const [k,v] of Object.entries(e.header[g])){if(k==='page'){pm.expect(Array.isArray(v)).to.be.true;}else{pm.expect(typeof v,g+'.'+k).to.eql('string');}}}});",
+              "  pm.test(`票据${i+1}: sourceFileHash 回填`,()=>pm.expect(e.header.basic.sourceFileHash).to.eql(pm.variables.get('fileHash')));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "client-platform",
+            "value": "common"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "templateId",
+              "value": "7",
+              "type": "text"
+            },
+            {
+              "key": "fileHash",
+              "value": "{{fileHash}}",
+              "type": "text"
+            },
+            {
+              "key": "clientId",
+              "value": "{{client_id}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/Users/shaobin/Desktop/project/API_anything/testing/EBM INV2507-296_20250715_103429.pdf"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/ai/knowledge/nlpService/document/analyze?access_token={{access_token}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "ai",
+            "knowledge",
+            "nlpService",
+            "document",
+            "analyze"
+          ],
+          "query": [
+            {
+              "key": "access_token",
+              "value": "{{access_token}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "3. EBM INV2507-297_20250715_103428",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set('fileHash','e863c2d956836d4fe8062bfc7fafc29a');",
+              "pm.variables.set('expectPages','1');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b=pm.response.json();",
+              "pm.test('HTTP 200',()=>pm.response.to.have.status(200));",
+              "pm.test('errcode = 0000',()=>pm.expect(b.errcode).to.eql('0000'));",
+              "pm.test('description = Success',()=>pm.expect(b.description).to.eql('Success'));",
+              "pm.test('顶层字段与生产一致',()=>pm.expect(Object.keys(b).sort()).to.eql(['data','description','docPages','errcode','traceId']));",
+              "pm.test('traceId 16 位十六进制',()=>pm.expect(b.traceId).to.match(/^[0-9a-f]{16}$/));",
+              "pm.test('docPages 与实际页数一致',()=>pm.expect(b.docPages).to.eql(Number(pm.variables.get('expectPages'))));",
+              "pm.test('data 非空',()=>pm.expect(b.data.length).to.be.above(0));",
+              "b.data.forEach((e,i)=>{",
+              "  pm.test(`票据${i+1}: header 五分组`,()=>pm.expect(Object.keys(e.header)).to.eql(['basic','billTo','billFrom','bussiness','payment']));",
+              "  pm.test(`票据${i+1}: detail 三分组`,()=>pm.expect(Object.keys(e.detail)).to.eql(['detailOfGoodsOrServices','detailOfTaxSummary','originalInvoiceReferences']));",
+              "  pm.test(`票据${i+1}: 字段全集(12/14/14/6/7)`,()=>{pm.expect(Object.keys(e.header.basic).length).to.eql(12);pm.expect(Object.keys(e.header.billTo).length).to.eql(14);pm.expect(Object.keys(e.header.billFrom).length).to.eql(14);pm.expect(Object.keys(e.header.bussiness).length).to.eql(6);pm.expect(Object.keys(e.header.payment).length).to.eql(7);});",
+              "  pm.test(`票据${i+1}: 标量均为字符串`,()=>{for(const g of ['basic','billTo','billFrom','bussiness','payment']){for(const [k,v] of Object.entries(e.header[g])){if(k==='page'){pm.expect(Array.isArray(v)).to.be.true;}else{pm.expect(typeof v,g+'.'+k).to.eql('string');}}}});",
+              "  pm.test(`票据${i+1}: sourceFileHash 回填`,()=>pm.expect(e.header.basic.sourceFileHash).to.eql(pm.variables.get('fileHash')));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "client-platform",
+            "value": "common"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "templateId",
+              "value": "7",
+              "type": "text"
+            },
+            {
+              "key": "fileHash",
+              "value": "{{fileHash}}",
+              "type": "text"
+            },
+            {
+              "key": "clientId",
+              "value": "{{client_id}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/Users/shaobin/Desktop/project/API_anything/testing/EBM INV2507-297_20250715_103428.pdf"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/ai/knowledge/nlpService/document/analyze?access_token={{access_token}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "ai",
+            "knowledge",
+            "nlpService",
+            "document",
+            "analyze"
+          ],
+          "query": [
+            {
+              "key": "access_token",
+              "value": "{{access_token}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "4. ES248690.PDF_20250716_161011",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set('fileHash','8ce8c5a849ca4187227ea7bd0f1c939e');",
+              "pm.variables.set('expectPages','1');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b=pm.response.json();",
+              "pm.test('HTTP 200',()=>pm.response.to.have.status(200));",
+              "pm.test('errcode = 0000',()=>pm.expect(b.errcode).to.eql('0000'));",
+              "pm.test('description = Success',()=>pm.expect(b.description).to.eql('Success'));",
+              "pm.test('顶层字段与生产一致',()=>pm.expect(Object.keys(b).sort()).to.eql(['data','description','docPages','errcode','traceId']));",
+              "pm.test('traceId 16 位十六进制',()=>pm.expect(b.traceId).to.match(/^[0-9a-f]{16}$/));",
+              "pm.test('docPages 与实际页数一致',()=>pm.expect(b.docPages).to.eql(Number(pm.variables.get('expectPages'))));",
+              "pm.test('data 非空',()=>pm.expect(b.data.length).to.be.above(0));",
+              "b.data.forEach((e,i)=>{",
+              "  pm.test(`票据${i+1}: header 五分组`,()=>pm.expect(Object.keys(e.header)).to.eql(['basic','billTo','billFrom','bussiness','payment']));",
+              "  pm.test(`票据${i+1}: detail 三分组`,()=>pm.expect(Object.keys(e.detail)).to.eql(['detailOfGoodsOrServices','detailOfTaxSummary','originalInvoiceReferences']));",
+              "  pm.test(`票据${i+1}: 字段全集(12/14/14/6/7)`,()=>{pm.expect(Object.keys(e.header.basic).length).to.eql(12);pm.expect(Object.keys(e.header.billTo).length).to.eql(14);pm.expect(Object.keys(e.header.billFrom).length).to.eql(14);pm.expect(Object.keys(e.header.bussiness).length).to.eql(6);pm.expect(Object.keys(e.header.payment).length).to.eql(7);});",
+              "  pm.test(`票据${i+1}: 标量均为字符串`,()=>{for(const g of ['basic','billTo','billFrom','bussiness','payment']){for(const [k,v] of Object.entries(e.header[g])){if(k==='page'){pm.expect(Array.isArray(v)).to.be.true;}else{pm.expect(typeof v,g+'.'+k).to.eql('string');}}}});",
+              "  pm.test(`票据${i+1}: sourceFileHash 回填`,()=>pm.expect(e.header.basic.sourceFileHash).to.eql(pm.variables.get('fileHash')));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "client-platform",
+            "value": "common"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "templateId",
+              "value": "7",
+              "type": "text"
+            },
+            {
+              "key": "fileHash",
+              "value": "{{fileHash}}",
+              "type": "text"
+            },
+            {
+              "key": "clientId",
+              "value": "{{client_id}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/Users/shaobin/Desktop/project/API_anything/testing/ES248690.PDF_20250716_161011.pdf"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/ai/knowledge/nlpService/document/analyze?access_token={{access_token}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "ai",
+            "knowledge",
+            "nlpService",
+            "document",
+            "analyze"
+          ],
+          "query": [
+            {
+              "key": "access_token",
+              "value": "{{access_token}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "5. F-SAL60 Invoice_20250715_215239",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set('fileHash','41f5daf2bc47c0597c76a42d081760fa');",
+              "pm.variables.set('expectPages','1');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b=pm.response.json();",
+              "pm.test('HTTP 200',()=>pm.response.to.have.status(200));",
+              "pm.test('errcode = 0000',()=>pm.expect(b.errcode).to.eql('0000'));",
+              "pm.test('description = Success',()=>pm.expect(b.description).to.eql('Success'));",
+              "pm.test('顶层字段与生产一致',()=>pm.expect(Object.keys(b).sort()).to.eql(['data','description','docPages','errcode','traceId']));",
+              "pm.test('traceId 16 位十六进制',()=>pm.expect(b.traceId).to.match(/^[0-9a-f]{16}$/));",
+              "pm.test('docPages 与实际页数一致',()=>pm.expect(b.docPages).to.eql(Number(pm.variables.get('expectPages'))));",
+              "pm.test('data 非空',()=>pm.expect(b.data.length).to.be.above(0));",
+              "b.data.forEach((e,i)=>{",
+              "  pm.test(`票据${i+1}: header 五分组`,()=>pm.expect(Object.keys(e.header)).to.eql(['basic','billTo','billFrom','bussiness','payment']));",
+              "  pm.test(`票据${i+1}: detail 三分组`,()=>pm.expect(Object.keys(e.detail)).to.eql(['detailOfGoodsOrServices','detailOfTaxSummary','originalInvoiceReferences']));",
+              "  pm.test(`票据${i+1}: 字段全集(12/14/14/6/7)`,()=>{pm.expect(Object.keys(e.header.basic).length).to.eql(12);pm.expect(Object.keys(e.header.billTo).length).to.eql(14);pm.expect(Object.keys(e.header.billFrom).length).to.eql(14);pm.expect(Object.keys(e.header.bussiness).length).to.eql(6);pm.expect(Object.keys(e.header.payment).length).to.eql(7);});",
+              "  pm.test(`票据${i+1}: 标量均为字符串`,()=>{for(const g of ['basic','billTo','billFrom','bussiness','payment']){for(const [k,v] of Object.entries(e.header[g])){if(k==='page'){pm.expect(Array.isArray(v)).to.be.true;}else{pm.expect(typeof v,g+'.'+k).to.eql('string');}}}});",
+              "  pm.test(`票据${i+1}: sourceFileHash 回填`,()=>pm.expect(e.header.basic.sourceFileHash).to.eql(pm.variables.get('fileHash')));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "client-platform",
+            "value": "common"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "templateId",
+              "value": "7",
+              "type": "text"
+            },
+            {
+              "key": "fileHash",
+              "value": "{{fileHash}}",
+              "type": "text"
+            },
+            {
+              "key": "clientId",
+              "value": "{{client_id}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/Users/shaobin/Desktop/project/API_anything/testing/F-SAL60 Invoice_20250715_215239.pdf"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/ai/knowledge/nlpService/document/analyze?access_token={{access_token}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "ai",
+            "knowledge",
+            "nlpService",
+            "document",
+            "analyze"
+          ],
+          "query": [
+            {
+              "key": "access_token",
+              "value": "{{access_token}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "6. HOE GUAN INV L0013052_20250716_123224",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set('fileHash','66be26f3fc105d38a7e7786cf14116b9');",
+              "pm.variables.set('expectPages','1');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b=pm.response.json();",
+              "pm.test('HTTP 200',()=>pm.response.to.have.status(200));",
+              "pm.test('errcode = 0000',()=>pm.expect(b.errcode).to.eql('0000'));",
+              "pm.test('description = Success',()=>pm.expect(b.description).to.eql('Success'));",
+              "pm.test('顶层字段与生产一致',()=>pm.expect(Object.keys(b).sort()).to.eql(['data','description','docPages','errcode','traceId']));",
+              "pm.test('traceId 16 位十六进制',()=>pm.expect(b.traceId).to.match(/^[0-9a-f]{16}$/));",
+              "pm.test('docPages 与实际页数一致',()=>pm.expect(b.docPages).to.eql(Number(pm.variables.get('expectPages'))));",
+              "pm.test('data 非空',()=>pm.expect(b.data.length).to.be.above(0));",
+              "b.data.forEach((e,i)=>{",
+              "  pm.test(`票据${i+1}: header 五分组`,()=>pm.expect(Object.keys(e.header)).to.eql(['basic','billTo','billFrom','bussiness','payment']));",
+              "  pm.test(`票据${i+1}: detail 三分组`,()=>pm.expect(Object.keys(e.detail)).to.eql(['detailOfGoodsOrServices','detailOfTaxSummary','originalInvoiceReferences']));",
+              "  pm.test(`票据${i+1}: 字段全集(12/14/14/6/7)`,()=>{pm.expect(Object.keys(e.header.basic).length).to.eql(12);pm.expect(Object.keys(e.header.billTo).length).to.eql(14);pm.expect(Object.keys(e.header.billFrom).length).to.eql(14);pm.expect(Object.keys(e.header.bussiness).length).to.eql(6);pm.expect(Object.keys(e.header.payment).length).to.eql(7);});",
+              "  pm.test(`票据${i+1}: 标量均为字符串`,()=>{for(const g of ['basic','billTo','billFrom','bussiness','payment']){for(const [k,v] of Object.entries(e.header[g])){if(k==='page'){pm.expect(Array.isArray(v)).to.be.true;}else{pm.expect(typeof v,g+'.'+k).to.eql('string');}}}});",
+              "  pm.test(`票据${i+1}: sourceFileHash 回填`,()=>pm.expect(e.header.basic.sourceFileHash).to.eql(pm.variables.get('fileHash')));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "client-platform",
+            "value": "common"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "templateId",
+              "value": "7",
+              "type": "text"
+            },
+            {
+              "key": "fileHash",
+              "value": "{{fileHash}}",
+              "type": "text"
+            },
+            {
+              "key": "clientId",
+              "value": "{{client_id}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/Users/shaobin/Desktop/project/API_anything/testing/HOE GUAN INV L0013052_20250716_123224.pdf"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/ai/knowledge/nlpService/document/analyze?access_token={{access_token}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "ai",
+            "knowledge",
+            "nlpService",
+            "document",
+            "analyze"
+          ],
+          "query": [
+            {
+              "key": "access_token",
+              "value": "{{access_token}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "7. HOE GUAN INV L0013052_20250716_135213",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set('fileHash','66be26f3fc105d38a7e7786cf14116b9');",
+              "pm.variables.set('expectPages','1');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b=pm.response.json();",
+              "pm.test('HTTP 200',()=>pm.response.to.have.status(200));",
+              "pm.test('errcode = 0000',()=>pm.expect(b.errcode).to.eql('0000'));",
+              "pm.test('description = Success',()=>pm.expect(b.description).to.eql('Success'));",
+              "pm.test('顶层字段与生产一致',()=>pm.expect(Object.keys(b).sort()).to.eql(['data','description','docPages','errcode','traceId']));",
+              "pm.test('traceId 16 位十六进制',()=>pm.expect(b.traceId).to.match(/^[0-9a-f]{16}$/));",
+              "pm.test('docPages 与实际页数一致',()=>pm.expect(b.docPages).to.eql(Number(pm.variables.get('expectPages'))));",
+              "pm.test('data 非空',()=>pm.expect(b.data.length).to.be.above(0));",
+              "b.data.forEach((e,i)=>{",
+              "  pm.test(`票据${i+1}: header 五分组`,()=>pm.expect(Object.keys(e.header)).to.eql(['basic','billTo','billFrom','bussiness','payment']));",
+              "  pm.test(`票据${i+1}: detail 三分组`,()=>pm.expect(Object.keys(e.detail)).to.eql(['detailOfGoodsOrServices','detailOfTaxSummary','originalInvoiceReferences']));",
+              "  pm.test(`票据${i+1}: 字段全集(12/14/14/6/7)`,()=>{pm.expect(Object.keys(e.header.basic).length).to.eql(12);pm.expect(Object.keys(e.header.billTo).length).to.eql(14);pm.expect(Object.keys(e.header.billFrom).length).to.eql(14);pm.expect(Object.keys(e.header.bussiness).length).to.eql(6);pm.expect(Object.keys(e.header.payment).length).to.eql(7);});",
+              "  pm.test(`票据${i+1}: 标量均为字符串`,()=>{for(const g of ['basic','billTo','billFrom','bussiness','payment']){for(const [k,v] of Object.entries(e.header[g])){if(k==='page'){pm.expect(Array.isArray(v)).to.be.true;}else{pm.expect(typeof v,g+'.'+k).to.eql('string');}}}});",
+              "  pm.test(`票据${i+1}: sourceFileHash 回填`,()=>pm.expect(e.header.basic.sourceFileHash).to.eql(pm.variables.get('fileHash')));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "client-platform",
+            "value": "common"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "templateId",
+              "value": "7",
+              "type": "text"
+            },
+            {
+              "key": "fileHash",
+              "value": "{{fileHash}}",
+              "type": "text"
+            },
+            {
+              "key": "clientId",
+              "value": "{{client_id}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/Users/shaobin/Desktop/project/API_anything/testing/HOE GUAN INV L0013052_20250716_135213.pdf"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/ai/knowledge/nlpService/document/analyze?access_token={{access_token}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "ai",
+            "knowledge",
+            "nlpService",
+            "document",
+            "analyze"
+          ],
+          "query": [
+            {
+              "key": "access_token",
+              "value": "{{access_token}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "8. HOE GUAN INV L0013084_20250716_123225",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set('fileHash','060d48f3c59db8c7e148e0543a91801f');",
+              "pm.variables.set('expectPages','1');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b=pm.response.json();",
+              "pm.test('HTTP 200',()=>pm.response.to.have.status(200));",
+              "pm.test('errcode = 0000',()=>pm.expect(b.errcode).to.eql('0000'));",
+              "pm.test('description = Success',()=>pm.expect(b.description).to.eql('Success'));",
+              "pm.test('顶层字段与生产一致',()=>pm.expect(Object.keys(b).sort()).to.eql(['data','description','docPages','errcode','traceId']));",
+              "pm.test('traceId 16 位十六进制',()=>pm.expect(b.traceId).to.match(/^[0-9a-f]{16}$/));",
+              "pm.test('docPages 与实际页数一致',()=>pm.expect(b.docPages).to.eql(Number(pm.variables.get('expectPages'))));",
+              "pm.test('data 非空',()=>pm.expect(b.data.length).to.be.above(0));",
+              "b.data.forEach((e,i)=>{",
+              "  pm.test(`票据${i+1}: header 五分组`,()=>pm.expect(Object.keys(e.header)).to.eql(['basic','billTo','billFrom','bussiness','payment']));",
+              "  pm.test(`票据${i+1}: detail 三分组`,()=>pm.expect(Object.keys(e.detail)).to.eql(['detailOfGoodsOrServices','detailOfTaxSummary','originalInvoiceReferences']));",
+              "  pm.test(`票据${i+1}: 字段全集(12/14/14/6/7)`,()=>{pm.expect(Object.keys(e.header.basic).length).to.eql(12);pm.expect(Object.keys(e.header.billTo).length).to.eql(14);pm.expect(Object.keys(e.header.billFrom).length).to.eql(14);pm.expect(Object.keys(e.header.bussiness).length).to.eql(6);pm.expect(Object.keys(e.header.payment).length).to.eql(7);});",
+              "  pm.test(`票据${i+1}: 标量均为字符串`,()=>{for(const g of ['basic','billTo','billFrom','bussiness','payment']){for(const [k,v] of Object.entries(e.header[g])){if(k==='page'){pm.expect(Array.isArray(v)).to.be.true;}else{pm.expect(typeof v,g+'.'+k).to.eql('string');}}}});",
+              "  pm.test(`票据${i+1}: sourceFileHash 回填`,()=>pm.expect(e.header.basic.sourceFileHash).to.eql(pm.variables.get('fileHash')));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "client-platform",
+            "value": "common"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "templateId",
+              "value": "7",
+              "type": "text"
+            },
+            {
+              "key": "fileHash",
+              "value": "{{fileHash}}",
+              "type": "text"
+            },
+            {
+              "key": "clientId",
+              "value": "{{client_id}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/Users/shaobin/Desktop/project/API_anything/testing/HOE GUAN INV L0013084_20250716_123225.pdf"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/ai/knowledge/nlpService/document/analyze?access_token={{access_token}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "ai",
+            "knowledge",
+            "nlpService",
+            "document",
+            "analyze"
+          ],
+          "query": [
+            {
+              "key": "access_token",
+              "value": "{{access_token}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "9. I-GN2507-0123_20250715_215241",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set('fileHash','8b3ec13a9cce1f6458ace7b69ff6a5b1');",
+              "pm.variables.set('expectPages','1');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b=pm.response.json();",
+              "pm.test('HTTP 200',()=>pm.response.to.have.status(200));",
+              "pm.test('errcode = 0000',()=>pm.expect(b.errcode).to.eql('0000'));",
+              "pm.test('description = Success',()=>pm.expect(b.description).to.eql('Success'));",
+              "pm.test('顶层字段与生产一致',()=>pm.expect(Object.keys(b).sort()).to.eql(['data','description','docPages','errcode','traceId']));",
+              "pm.test('traceId 16 位十六进制',()=>pm.expect(b.traceId).to.match(/^[0-9a-f]{16}$/));",
+              "pm.test('docPages 与实际页数一致',()=>pm.expect(b.docPages).to.eql(Number(pm.variables.get('expectPages'))));",
+              "pm.test('data 非空',()=>pm.expect(b.data.length).to.be.above(0));",
+              "b.data.forEach((e,i)=>{",
+              "  pm.test(`票据${i+1}: header 五分组`,()=>pm.expect(Object.keys(e.header)).to.eql(['basic','billTo','billFrom','bussiness','payment']));",
+              "  pm.test(`票据${i+1}: detail 三分组`,()=>pm.expect(Object.keys(e.detail)).to.eql(['detailOfGoodsOrServices','detailOfTaxSummary','originalInvoiceReferences']));",
+              "  pm.test(`票据${i+1}: 字段全集(12/14/14/6/7)`,()=>{pm.expect(Object.keys(e.header.basic).length).to.eql(12);pm.expect(Object.keys(e.header.billTo).length).to.eql(14);pm.expect(Object.keys(e.header.billFrom).length).to.eql(14);pm.expect(Object.keys(e.header.bussiness).length).to.eql(6);pm.expect(Object.keys(e.header.payment).length).to.eql(7);});",
+              "  pm.test(`票据${i+1}: 标量均为字符串`,()=>{for(const g of ['basic','billTo','billFrom','bussiness','payment']){for(const [k,v] of Object.entries(e.header[g])){if(k==='page'){pm.expect(Array.isArray(v)).to.be.true;}else{pm.expect(typeof v,g+'.'+k).to.eql('string');}}}});",
+              "  pm.test(`票据${i+1}: sourceFileHash 回填`,()=>pm.expect(e.header.basic.sourceFileHash).to.eql(pm.variables.get('fileHash')));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "client-platform",
+            "value": "common"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "templateId",
+              "value": "7",
+              "type": "text"
+            },
+            {
+              "key": "fileHash",
+              "value": "{{fileHash}}",
+              "type": "text"
+            },
+            {
+              "key": "clientId",
+              "value": "{{client_id}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/Users/shaobin/Desktop/project/API_anything/testing/I-GN2507-0123_20250715_215241.pdf"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/ai/knowledge/nlpService/document/analyze?access_token={{access_token}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "ai",
+            "knowledge",
+            "nlpService",
+            "document",
+            "analyze"
+          ],
+          "query": [
+            {
+              "key": "access_token",
+              "value": "{{access_token}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "10. I-GN2507-0144_20250715_215342",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set('fileHash','38e8b4c75f03880e8dfdd3e6467187f3');",
+              "pm.variables.set('expectPages','1');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b=pm.response.json();",
+              "pm.test('HTTP 200',()=>pm.response.to.have.status(200));",
+              "pm.test('errcode = 0000',()=>pm.expect(b.errcode).to.eql('0000'));",
+              "pm.test('description = Success',()=>pm.expect(b.description).to.eql('Success'));",
+              "pm.test('顶层字段与生产一致',()=>pm.expect(Object.keys(b).sort()).to.eql(['data','description','docPages','errcode','traceId']));",
+              "pm.test('traceId 16 位十六进制',()=>pm.expect(b.traceId).to.match(/^[0-9a-f]{16}$/));",
+              "pm.test('docPages 与实际页数一致',()=>pm.expect(b.docPages).to.eql(Number(pm.variables.get('expectPages'))));",
+              "pm.test('data 非空',()=>pm.expect(b.data.length).to.be.above(0));",
+              "b.data.forEach((e,i)=>{",
+              "  pm.test(`票据${i+1}: header 五分组`,()=>pm.expect(Object.keys(e.header)).to.eql(['basic','billTo','billFrom','bussiness','payment']));",
+              "  pm.test(`票据${i+1}: detail 三分组`,()=>pm.expect(Object.keys(e.detail)).to.eql(['detailOfGoodsOrServices','detailOfTaxSummary','originalInvoiceReferences']));",
+              "  pm.test(`票据${i+1}: 字段全集(12/14/14/6/7)`,()=>{pm.expect(Object.keys(e.header.basic).length).to.eql(12);pm.expect(Object.keys(e.header.billTo).length).to.eql(14);pm.expect(Object.keys(e.header.billFrom).length).to.eql(14);pm.expect(Object.keys(e.header.bussiness).length).to.eql(6);pm.expect(Object.keys(e.header.payment).length).to.eql(7);});",
+              "  pm.test(`票据${i+1}: 标量均为字符串`,()=>{for(const g of ['basic','billTo','billFrom','bussiness','payment']){for(const [k,v] of Object.entries(e.header[g])){if(k==='page'){pm.expect(Array.isArray(v)).to.be.true;}else{pm.expect(typeof v,g+'.'+k).to.eql('string');}}}});",
+              "  pm.test(`票据${i+1}: sourceFileHash 回填`,()=>pm.expect(e.header.basic.sourceFileHash).to.eql(pm.variables.get('fileHash')));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "client-platform",
+            "value": "common"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "templateId",
+              "value": "7",
+              "type": "text"
+            },
+            {
+              "key": "fileHash",
+              "value": "{{fileHash}}",
+              "type": "text"
+            },
+            {
+              "key": "clientId",
+              "value": "{{client_id}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/Users/shaobin/Desktop/project/API_anything/testing/I-GN2507-0144_20250715_215342.pdf"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/ai/knowledge/nlpService/document/analyze?access_token={{access_token}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "ai",
+            "knowledge",
+            "nlpService",
+            "document",
+            "analyze"
+          ],
+          "query": [
+            {
+              "key": "access_token",
+              "value": "{{access_token}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "11. I-GN2507-0148_20250715_215339",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set('fileHash','cab09adc65e283f0160a59c02094ea74');",
+              "pm.variables.set('expectPages','1');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b=pm.response.json();",
+              "pm.test('HTTP 200',()=>pm.response.to.have.status(200));",
+              "pm.test('errcode = 0000',()=>pm.expect(b.errcode).to.eql('0000'));",
+              "pm.test('description = Success',()=>pm.expect(b.description).to.eql('Success'));",
+              "pm.test('顶层字段与生产一致',()=>pm.expect(Object.keys(b).sort()).to.eql(['data','description','docPages','errcode','traceId']));",
+              "pm.test('traceId 16 位十六进制',()=>pm.expect(b.traceId).to.match(/^[0-9a-f]{16}$/));",
+              "pm.test('docPages 与实际页数一致',()=>pm.expect(b.docPages).to.eql(Number(pm.variables.get('expectPages'))));",
+              "pm.test('data 非空',()=>pm.expect(b.data.length).to.be.above(0));",
+              "b.data.forEach((e,i)=>{",
+              "  pm.test(`票据${i+1}: header 五分组`,()=>pm.expect(Object.keys(e.header)).to.eql(['basic','billTo','billFrom','bussiness','payment']));",
+              "  pm.test(`票据${i+1}: detail 三分组`,()=>pm.expect(Object.keys(e.detail)).to.eql(['detailOfGoodsOrServices','detailOfTaxSummary','originalInvoiceReferences']));",
+              "  pm.test(`票据${i+1}: 字段全集(12/14/14/6/7)`,()=>{pm.expect(Object.keys(e.header.basic).length).to.eql(12);pm.expect(Object.keys(e.header.billTo).length).to.eql(14);pm.expect(Object.keys(e.header.billFrom).length).to.eql(14);pm.expect(Object.keys(e.header.bussiness).length).to.eql(6);pm.expect(Object.keys(e.header.payment).length).to.eql(7);});",
+              "  pm.test(`票据${i+1}: 标量均为字符串`,()=>{for(const g of ['basic','billTo','billFrom','bussiness','payment']){for(const [k,v] of Object.entries(e.header[g])){if(k==='page'){pm.expect(Array.isArray(v)).to.be.true;}else{pm.expect(typeof v,g+'.'+k).to.eql('string');}}}});",
+              "  pm.test(`票据${i+1}: sourceFileHash 回填`,()=>pm.expect(e.header.basic.sourceFileHash).to.eql(pm.variables.get('fileHash')));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "client-platform",
+            "value": "common"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "templateId",
+              "value": "7",
+              "type": "text"
+            },
+            {
+              "key": "fileHash",
+              "value": "{{fileHash}}",
+              "type": "text"
+            },
+            {
+              "key": "clientId",
+              "value": "{{client_id}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/Users/shaobin/Desktop/project/API_anything/testing/I-GN2507-0148_20250715_215339.pdf"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/ai/knowledge/nlpService/document/analyze?access_token={{access_token}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "ai",
+            "knowledge",
+            "nlpService",
+            "document",
+            "analyze"
+          ],
+          "query": [
+            {
+              "key": "access_token",
+              "value": "{{access_token}}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

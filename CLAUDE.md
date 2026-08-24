@@ -196,6 +196,11 @@ pending_first_doc ─ 保存生成 ─► pending_review(待验证) ─ 激活�
 
 - **管理 UI / 角色管理**：`Authorization: Bearer <JWT>`（HS256，`core/security.py` 签发）。所有数据接口强制 JWT（无 token → 401）。
 - **公有提取端点** `/api/v1/extract/`：`X-API-Key`（只存 SHA-256 哈希，明文仅创建时返回一次）；不受 JWT 隔离影响。
+- **开放平台（外部客户）** `POST /base/oauth/token` + `POST /ai/knowledge/nlpService/document/analyze`：
+  `client_id + client_secret` 换 `access_token`（`sign = MD5(client_id+client_secret+timestamp)`，
+  36 小时有效、存 DB）。路径**不带 `/api/v1` 前缀**、HTTP 恒 200 成败看 `errcode` ——
+  与生产契约逐字段一致，改动前先读 [docs/open-api-piaozone.md](./docs/open-api-piaozone.md)。
+  对外的数字 `templateId` → `api_definitions.external_template_id`；与 X-API-Key 端点共用同一条提取管线。
 - 密码用 bcrypt 哈希。普通用户走「邮箱+验证码」，邮箱须由用户管理员预先开通。
 - **租户数据隔离**（`core/deps`）：`scope_filter` 给 list 加 `tenant_id` 过滤、`assert_can_access` 校验单条归属（越权返回 **404** 不泄露存在性）、`owner_tenant_id` 创建时盖章；**平台管理员（tenant_id 为空）一律绕过**→ 跨租户全可见。
 - **强制点在路由层**：每个数据 router 挂 `Depends(get_current_user)`，OCR 优化 router 用 router 级 `verify_api_def_access` 一次守住全部嵌套路由；service 的 scope 参数**可选默认不过滤**（不污染纯 service 层测试）。

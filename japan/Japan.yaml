@@ -1,0 +1,274 @@
+id: '1'
+remark: gemini的 json schema, 使用了 anyof
+template_config:
+  # 当某条记录的 items 字段为空数组时，自动填充一条由 schema 推导的模板行，避免返回空明细
+  fill_empty_items: false
+prompt_template:
+  prompt_format: |-
+    **任务描述：**
+    请识别并提取用户提供的票据信息。文档中可能包含多张不同类型的票据，且部分票据可能跨越多页。
+        
+    **输入说明：**
+    - 用户上传的文档可能是PDF文件或图片文件；
+    - 文档中可能存在排版混乱、印刷不清等情况，请尽可能准确识别关键信息。
+    
+    **处理要求：**
+    1.票据识别：识别文档中的所有票据，一页可能包含多张票据
+    2.跨页处理：对于跨越多页的票据，请合并信息后作为单个完整票据输出
+    3.分类处理：根据票据类型采用不同的提取策略
+    4.结构化输出：以JSON格式输出结果
+    
+    
+    **票据分类标准：**
+    - invoice：正式的付款凭证，通常包含供应商和客户信息、发票号码、日期、税务信息（如增值税号）、付款条款、银行信息、商品或服务详情及总金额。
+      特别说明：以下类型均属于 invoice，即使名称中包含易混淆词汇，也必须优先归类为 invoice：
+      standard invoice、proforma invoice、credit note、debit note、請求書（日语“请求书”）
+      quotation（报价单）：尽管名称为“报价单”，但只要包含供应商/客户信息、商品/服务详情、金额等 invoice 核心要素，即属于 invoice
+      receipt/tax invoice（收据/税务发票）：因包含税务信息（如增值税号），区别于普通 receipt，故属于 invoice
+      美国海关报关文件：标题为 'ENTRY SUMMARY'、'CBP Form 7501'、'INWARD CARGO MANIFEST'、'CBP Form 7533'，或由 'U.S. Customs and Border Protection' / 'DEPARTMENT OF HOMELAND SECURITY' 签发的文件。此类文件虽为政府监管申报表单、且通常引用外部发票号（如 'Invoice: xxx'），但因包含申报货值（Entered Value / Total Entered Value）、关税与税费（Duty / Tax）、商品描述及进出口双方信息，必须归类为 invoice，严禁归为 other。
+    - receipt：通常为较小金额的付款凭证，一般不包含详细税务信息，常见于零售交易、餐饮、交通等消费场景。通常包括各种小票、收据、领収書、登记证书等。此外，标题明确为「支払明細書」的文档归类为 receipt。
+    - other：不符合上述标准的文档，如合同、订单确认书等
+    
+    **提取规则：**
+    - 保持原文：提取内容保留票据原文语言，不进行翻译
+    - 数据格式：
+      - **【强制规则】金额处理必须分两步执行：**
+        - **第一步：识别该票据的币种及其数字格式习惯。** 不同国家/地区对"."和","的含义可能完全相反，必须先判断再处理：
+          - 以"."作为千分位、","作为小数点的格式（常见于越南 VND、部分欧洲国家等）：票面上的 `6.000` 实际值为 **6000**，`1.234.567,89` 实际值为 **1234567.89**
+          - 以","作为千分位、"."作为小数点的格式（常见于 USD、CNY、GBP 等）：票面上的 `6,000` 实际值为 **6000**，`1,234,567.89` 实际值为 **1234567.89**
+          - 判断依据：优先参考票面明确标注的币种符号及国家/地区信息；其次观察票面数字的整体规律（如是否同时出现两种分隔符）。
+        - **第二步：将识别出的实际数值转换为纯数字格式输出**（如：`1234567.89`），严禁在输出中保留任何千分位符号。
+      - 税率以百分比字符串形式输出（如："10%"）
+    - 日期处理规则: 这是一个绝对规则，必须严格遵守。
+      1. **核心原则：年份必须是近期年份**。所有发票的年份 **必须** 大于等于2015年。任何解析出年份小于2015（如2014, 2012, 2006）的结果都是 **绝对错误** 的，决不能输出。
+      2. **解决歧义的强制步骤**: 当你看到一个像 '07-09-24' 这样的日期时，你必须按以下步骤思考来消除歧义：
+         a. **列出可能性**: 这个字符串可能是 YY-MM-DD, MM-DD-YY, 或 DD-MM-YY 格式。
+         b. **应用年份原则进行筛选**:
+            - 如果按 YY-MM-DD 解析，日期是 2007年09月24日。年份是2007，小于2015，所以这个解析 **是错误的，必须抛弃**。
+            - 如果按 MM-DD-YY 解析，日期是 2024年07月09日。年份是2024，大于2015，所以这个解析 **是可能的**。
+            - 如果按 DD-MM-YY 解析，日期是 2024年09月07日。年份是2024，大于2015，所以这个解析 **也是可能的**。
+         c. **最终决策**: 在所有通过“年份原则”筛选的、可能的解析中，选择最合理的一个；
+      3. **输出格式**: 最终所有日期字段都必须统一转换为 YYYY-MM-DD 格式输出。
+    - **【印尼发票强制规则（Faktur Pajak）】**：印尼发票存在特殊折算机制，"原始售价"与"计税基数"是两个不同的金额，绝对不能混用。各字段提取规则如下：
+      - **totalNetAmount / 明细 netAmount**：必须提取商品的**原始全额售价**（票面标识为 Harga Jual / Penggantian / Uang Muka / Termin）。注意：Dasar Pengenaan Pajak 是印尼税法对原价按一定比例折算后的计税基数，金额低于原价，与"不含税金额"含义不同——**严禁将 Dasar Pengenaan Pajak 填入此字段**。
+      - **totalTaxAmount / 明细 tax**：直接读取票面的 **Jumlah PPN**，绝对禁止用（totalAmount - totalNetAmount）反推。
+      - **detailOfTaxSummary.netTaxableAmount**：此字段是唯一应填写 **Dasar Pengenaan Pajak** 的字段。
+      - **totalAmount**：优先直接读取票面总金额；若票面无此行，推算公式必须用 **Harga Jual + Jumlah PPN**，禁止用 Dasar Pengenaan Pajak 参与计算。
+    - 必填字段：
+      - invoice/receipt类型：docType、invoiceType、page、currency必须输出。如果票面上没有currency信息，则根据上下文推断。
+      - other类型：仅docType、page必须输出
+    - 缺失信息：无法找到的字段不输出，不进行推断或填充
+    - 税种简称映射：detailOfTaxSummary.taxCategory字段必须使用以下标准简称（如果识别的税种不在此列表中，则使用你识别出的税种名称）：{tax_categories_text}
+    - 必须全面提取票据上出现的所有税种信息，不漏掉任何一种税种
+    - 发票上可能同时存在多种不同的税种（如增值税、预扣税等），需要逐一识别并提取
+    - 注意识别加项税种（如VAT）和减项税种（如WHT、预扣税等）
+    
+  json_schema:
+    title: invoice_and_receipts
+    type: ARRAY
+    items: 
+      anyOf:
+        - type: OBJECT
+          properties:
+            docType:
+              type: STRING
+              description: 票据类型：invoice 或 receipt 
+              enum:
+                - invoice
+                - receipt
+            page:
+              type: ARRAY
+              description: "所在文档中的页码列表（从1开始编号）。注意：一张票据可能跨越多个页面，应将这些连续页码作为一个数组整体输出。例如：票据出现在第2至第4页时，输出为 [2, 3, 4]。"
+              items:
+                type: NUMBER
+            invoiceType:
+              type: STRING
+              description: |-
+                发票类型，分为：
+                  - 'Commercial Invoice' (正式发票)：默认类型，若非 'Proforma Invoice' 或 'Credit Note'，则归为此类。
+                  - 'Proforma Invoice' (形式发票)：如果票面包含 "PROFORMA", "PRO FORMA", "Záloha", "Facture d'Avance", "Prepayment", "Vorkassenrechnung" 等关键词。
+                  - 'Credit Note' (贷项发票)：如果票面包含 "AVOIR", "CREDIT" 等关键词，或 totalAmount < 0。
+                  - 'Tax Invoice' (税务发票)：如果票面包含 "'Tax Invoice", "Faktur Pajak" 等关键词。
+              enum:
+                - Commercial Invoice
+                - Proforma Invoice
+                - Credit Note
+                - Tax Invoice
+            nameOfInvoice:
+              type: STRING
+              description: 票面标题，票面上的标题，如'VAT Invoice'、'Debit Note'等。
+            invoiceNumber:
+              type: STRING
+              description: 发票号码或收据编号，如果找不到，则查找票面的'Invoice No' 、'請求書番号'、'ご請求番号'、'ﾚシートNo'、'発券No'、'伝票番号'、'No.'、'No'、'登記證號碼'。【强制防错规则】：对于电信、公用事业或服务类账单（如Singtel），若票面上同时存在"Account No."（户口号码/客户号）与"Bill ID"（账单编号），必须强制提取"Account No."（户口号码）的值。
+            invoiceCode:
+              type: STRING
+              description: 发票类型代码，如果没有发票类型代码信息, 则查找发票序列号、'Serial'、'Ký hiệu'、'Ký hiệu(Serial)'。'Mã CQT(Code)'不是发票类型代码。
+            invoiceDate:
+              type: STRING
+              description: 发票发行日期。
+            totalNetAmount:
+              type: NUMBER
+              description: |-
+                全票不含税总净额。
+                注意：必须是所有商品/服务项的净额加总。如果票面有多个部分（如本金和佣金），请务必求和后再输出，不要只提取其中一部分的金额作为总净额。
+                【印尼发票（Faktur Pajak）专项规则】：必须提取 Harga Jual（原始售价），严禁使用 Dasar Pengenaan Pajak（计税基数）。
+            totalAmount:
+              type: NUMBER
+              description: 含税总金额，常见为Ukupan iznos fakture、subTotal、total、รำกวนเรียนทั้งสิ้น等。
+            totalTaxAmount:
+              type: NUMBER
+              description: |-
+                总税额。提取逻辑如下：
+                1. **语义优先**：优先提取明确标识为 'Tax', 'VAT', 'GST', 'IVA', 'Tax Amount' 等字段的数值总和。
+                2. **结构识别**：在存在多行税率汇总表（Tax Summary）的情况下，应提取表中各税种金额的加总，而不是提取表中的 'Total' 或 'Subtotal' 字段。
+                3. **严禁推算**：严禁仅通过 (TotalAmount - 某个收支项) 简单推算税额，必须在票面找到对应的税金标识。
+            currency:
+              type: STRING
+              description: 币种，以ISO 4217货币代码形式输出，如：USD, CNY, CAD, AUD, GBP, JPY, DEM, HKD, FRF, CHF, VND等。
+            billToName:
+              type: STRING
+              description: |-
+                收票方的名称。如果没有'Bill To'，则找'MESSRS'、'Purchaser'、'Customer'、'Buyer'、'Attention to'或其他和'购买方'同义的词语。
+                【日语敬语清理规则】：日语票据中收票方名称末尾常带敬语（如「御中」「様」「殿」「各位」），这些不属于公司或个人名称，必须剔除后再输出。剔除时连同敬语前的空白字符（半角/全角空格、换行）一并去掉。仅剔除末尾的敬语，不影响中间字符。
+                  - 例：「ハイセンスジャパン 株式会社 御中」→ 输出「ハイセンスジャパン 株式会社」
+                  - 例：「田中太郎 様」→ 输出「田中太郎」
+                  - 例：「営業部 各位」→ 输出「営業部」
+            billToComposite:
+              type: STRING
+              description: 收票方的完整地址信息。
+            billToCountry:
+              type: STRING
+              description: 收票方所在国家，根据收票方的完整地址提取。
+            billToCountryCode:
+              type: STRING
+              description: 收票方所在国家的ISO 3166-1 alpha-2国家代码，如：CN, US, MY, SG, JP, GB, DE等。
+            billToTaxIdentificationNumber:
+              type: STRING
+              description: 收票方的税务注册码（如 VAT / NPWP 等）。取明确标注的税号，不要提取地址中附带的长数字串。
+            buyerBranchCode:
+              type: STRING
+              description: |-
+                买方分支机构代码，格式为5位数字字符串（如"00000"或"00002"）。
+                OCR识别逻辑：寻找关键词 "Branch No."、"สาขาที่"，或紧跟在 Tax ID 后的5位数字。
+                转换规则：
+                  - 当识别到 "Head Office"、"HQ"、"สำนักงานใหญ่"，或机构代码为 "00000" 时，固定输出 "00000"（表示总部）。
+                  - 当识别到具体的5位数字（如 "00001"、"00002"）时，直接输出该数字字符串（表示分公司）。
+            billFromName:
+              type: STRING
+              description: 开票方的名称。如果没有'From'信息, 或者'From'信息不像一个公司名称，则找：'Account Name'、'Beneficiary Name'、'Seller'、'Remit to'、底部签名处或者标题、收据或小票的商家名称。
+            billFromComposite:
+              type: STRING
+              description: 开票方的完整地址信息。
+            billFromCountry:
+              type: STRING
+              description: 开票方所在国家，根据开票方的地址信息提取。
+            billFromCountryCode:
+              type: STRING
+              description: 开票方所在国家的ISO 3166-1 alpha-2国家代码，如：CN, US, MY, SG, JP, GB, DE等。
+            billFromTaxIdentificationNumber:
+              type: STRING
+              description: 开票方的纳税识别号。如果找不到，则查找税务注册码、'VAT Registration'、'TAX#'、'NPWP'。取明确标注的税号，不要提取地址中附带的长数字串。
+            purchaseOrderNumber:
+              type: STRING
+              description: 票面的PO number。
+            dueDate:
+              type: STRING
+              description: 付款截止日期。
+            detailOfGoodsOrServices:
+              type: ARRAY
+              description: 商品或服务明细列表，包括每项商品或服务的名称、备注、数量、单位、单价、不含税金额、税率、税额、含税金额和订单号
+              items:
+                type: OBJECT
+                properties:
+                  articleName:
+                    type: STRING
+                    description: 商品或服务名称（需要提取完整信息）
+                  description:
+                    type: STRING
+                    description: 备注
+                  quantity:
+                    type: NUMBER
+                    description: 商品或服务的数量
+                  unitOfMeasure:
+                    type: STRING
+                    description: 计量单位，如 pcs、kg、m、hour 等
+                  unitPrice:
+                    type: NUMBER
+                    description: 商品或服务的单价
+                  netAmount:
+                    type: NUMBER
+                    description: 不含税金额
+                  taxRate:
+                    type: STRING
+                    description: |-
+                      税率，必须是 `数字%` 形式（如 "0%"、"10%"、"10.5%"）。
+                      票面写 Exempt / Zero-rated / 免税 / 非课税 时输出 "0%"；
+                      其他无法表达为合法百分比的情况（如 "N/A"、文字描述、长串数字），输出 ""。
+                  tax:
+                    type: NUMBER
+                    description: 税额
+                  grossAmount:
+                    type: NUMBER
+                    description: 含税金额
+                  orderNumber:
+                    type: STRING
+                    description: 订单号（注文番号）
+                required: []
+            detailOfTaxSummary:
+              type: ARRAY
+              description: 税金汇总列表，包括税种、税率、税基、税额。请注意，同一税种但不同税率的情况需要分别提取。
+              items:
+                type: OBJECT
+                properties:
+                  taxCategory:
+                    type: STRING
+                    description: "税种简称。必须使用prompt中提供的标准税种简称（如'VAT'、'CIT'、'CT'等）。如果识别的税种不在标准列表中，则使用原始税种名称。"
+                  taxRate:
+                    type: STRING
+                    description: |-
+                      税率，必须是 `数字%` 形式（如 "0%"、"10%"、"10.5%"）。
+                      票面写 Exempt / Zero-rated / 免税 / 非课税 时输出 "0%"；
+                      其他无法表达为合法百分比的情况（如 "N/A"、文字描述、长串数字），输出 ""。
+                  netTaxableAmount:
+                    type: NUMBER
+                    description: 税基（需计税的金额/不含税金额）
+                  tax:
+                    type: NUMBER
+                    description: 税额
+                required: []
+            originalInvoiceReferences:
+              type: ARRAY
+              description: 原始发票引用列表。仅当 invoiceType 为 'Credit Note' 时提取；其他发票类型保留该字段但内容为空。票面上可能存在多组原始发票信息，每组作为一个元素输出。
+              items:
+                type: OBJECT
+                properties:
+                  originalInvoiceCode:
+                    type: STRING
+                    description: 原发票代码（序列号），如票面无此信息则不输出。
+                  originalInvoiceNumber:
+                    type: STRING
+                    description: 原发票号码。
+                  originalInvoiceDate:
+                    type: STRING
+                    description: 原发票开票日期，格式 YYYY-MM-DD。
+                required: []
+          required:
+            - docType
+            - invoiceType
+            - page
+            - currency
+        - type: OBJECT
+          properties:
+            docType:
+              type: STRING
+              description: 其他类型文档
+              enum:
+                - other
+            page:
+              type: ARRAY
+              description: 所在文档中的页码列表（从1开始编号）。
+              items:
+                type: NUMBER
+          required:
+            - docType
+            - page

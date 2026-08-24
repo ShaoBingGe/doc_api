@@ -1,0 +1,127 @@
+{
+  "info": {
+    "name": "超页提示验证",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. token",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const ts=Math.floor(Date.now()/1000).toString();pm.environment.set('timestamp',ts);",
+              "pm.environment.set('sign',CryptoJS.MD5(pm.environment.get('client_id')+pm.environment.get('client_secret')+ts).toString());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.environment.set('access_token',pm.response.json().access_token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"client_id\":\"{{client_id}}\",\"timestamp\":\"{{timestamp}}\",\"sign\":\"{{sign}}\"}"
+        },
+        "url": {
+          "raw": "{{base_url}}/base/oauth/token",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "base",
+            "oauth",
+            "token"
+          ]
+        }
+      }
+    },
+    {
+      "name": "2. 18页文档（超过16页上限）",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b=pm.response.json();",
+              "pm.test('errcode 仍为 0000（前16页识别成功）',()=>pm.expect(b.errcode).to.eql('0000'));",
+              "pm.test('docPages 报原文档实际页数 18',()=>pm.expect(b.docPages).to.eql(18));",
+              "pm.test('description 给出超页提示',()=>pm.expect(b.description).to.eql('超过16页的部分，不予以识别'));",
+              "pm.test('data 非空',()=>pm.expect(b.data.length).to.be.above(0));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "client-platform",
+            "value": "common"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "templateId",
+              "value": "7",
+              "type": "text"
+            },
+            {
+              "key": "fileHash",
+              "value": "3a8ad5ed61e65dbf5224380f0796fdbe",
+              "type": "text"
+            },
+            {
+              "key": "clientId",
+              "value": "{{client_id}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/tmp/over16.pdf"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/ai/knowledge/nlpService/document/analyze?access_token={{access_token}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "ai",
+            "knowledge",
+            "nlpService",
+            "document",
+            "analyze"
+          ],
+          "query": [
+            {
+              "key": "access_token",
+              "value": "{{access_token}}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

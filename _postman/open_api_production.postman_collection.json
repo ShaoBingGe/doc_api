@@ -1,0 +1,341 @@
+{
+  "info": {
+    "name": "Doc API 开放平台（piaozone 兼容）— 生产验证",
+    "description": "对 https://invoicase.cn 的开放平台接口做鉴权 + 3 张真实马来西亚发票的端到端验证。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. POST /base/oauth/token  取 access_token",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// sign = MD5(client_id + client_secret + timestamp)，与生产一致",
+              "const ts = Math.floor(Date.now() / 1000).toString();",
+              "const cid = pm.environment.get('client_id');",
+              "const sec = pm.environment.get('client_secret');",
+              "pm.environment.set('timestamp', ts);",
+              "pm.environment.set('sign', CryptoJS.MD5(cid + sec + ts).toString());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b = pm.response.json();",
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('errcode = 0000', () => pm.expect(b.errcode).to.eql('0000'));",
+              "pm.test('description = 操作成功', () => pm.expect(b.description).to.eql('操作成功'));",
+              "pm.test('token_type = bearer', () => pm.expect(b.token_type).to.eql('bearer'));",
+              "pm.test('expires_in = 129600', () => pm.expect(b.expires_in).to.eql(129600));",
+              "pm.test('access_token 为 32 位十六进制', () => pm.expect(b.access_token).to.match(/^[0-9a-f]{32}$/));",
+              "pm.environment.set('access_token', b.access_token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"client_id\": \"{{client_id}}\",\n  \"timestamp\": \"{{timestamp}}\",\n  \"sign\": \"{{sign}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/base/oauth/token",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "base",
+            "oauth",
+            "token"
+          ]
+        }
+      }
+    },
+    {
+      "name": "2. analyze — INV1 Panasonic",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set('fileHash', '20d548d1d5b0a9aace01e3cefd775bfb');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b = pm.response.json();",
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('errcode = 0000', () => pm.expect(b.errcode).to.eql('0000'));",
+              "pm.test('description = Success', () => pm.expect(b.description).to.eql('Success'));",
+              "pm.test('顶层字段与生产一致', () => pm.expect(Object.keys(b).sort()).to.eql(['data','description','docPages','errcode','traceId']));",
+              "pm.test('traceId 16 位十六进制', () => pm.expect(b.traceId).to.match(/^[0-9a-f]{16}$/));",
+              "pm.test('data 非空', () => pm.expect(b.data.length).to.be.above(0));",
+              "const e = b.data[0];",
+              "pm.test('entity = header + detail', () => pm.expect(Object.keys(e).sort()).to.eql(['detail','header']));",
+              "pm.test('header 五分组(含 bussiness 原样拼写)', () => pm.expect(Object.keys(e.header)).to.eql(['basic','billTo','billFrom','bussiness','payment']));",
+              "pm.test('detail 三分组', () => pm.expect(Object.keys(e.detail)).to.eql(['detailOfGoodsOrServices','detailOfTaxSummary','originalInvoiceReferences']));",
+              "pm.test('basic 12 字段', () => pm.expect(Object.keys(e.header.basic).length).to.eql(12));",
+              "pm.test('billTo 14 字段', () => pm.expect(Object.keys(e.header.billTo).length).to.eql(14));",
+              "pm.test('billFrom 14 字段', () => pm.expect(Object.keys(e.header.billFrom).length).to.eql(14));",
+              "pm.test('标量均为字符串', () => { for (const g of ['basic','billTo','billFrom','bussiness','payment']) { for (const [k,v] of Object.entries(e.header[g])) { if (k==='page') { pm.expect(Array.isArray(v)).to.be.true; v.forEach(x=>pm.expect(typeof x).to.eql('string')); } else { pm.expect(typeof v, g+'.'+k).to.eql('string'); } } } });",
+              "pm.test('sourceFileHash 回填 = 请求 fileHash', () => pm.expect(e.header.basic.sourceFileHash).to.eql(pm.iterationData.get('fileHash') || pm.variables.get('fileHash')));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "client-platform",
+            "value": "common"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "templateId",
+              "value": "7",
+              "type": "text"
+            },
+            {
+              "key": "fileHash",
+              "value": "{{fileHash}}",
+              "type": "text"
+            },
+            {
+              "key": "clientId",
+              "value": "{{client_id}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/Users/shaobin/Desktop/project/API_anything/backend/app/ocr_optimizer/eval/golden_set/MY/docs/20d548d1_9231848661_1__PANASONIC_20251028_115127.pdf"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/ai/knowledge/nlpService/document/analyze?access_token={{access_token}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "ai",
+            "knowledge",
+            "nlpService",
+            "document",
+            "analyze"
+          ],
+          "query": [
+            {
+              "key": "access_token",
+              "value": "{{access_token}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "3. analyze — INV2 SolidTimber",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set('fileHash', '15f9a6761f7d388c520f28342fa12e74');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b = pm.response.json();",
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('errcode = 0000', () => pm.expect(b.errcode).to.eql('0000'));",
+              "pm.test('description = Success', () => pm.expect(b.description).to.eql('Success'));",
+              "pm.test('顶层字段与生产一致', () => pm.expect(Object.keys(b).sort()).to.eql(['data','description','docPages','errcode','traceId']));",
+              "pm.test('traceId 16 位十六进制', () => pm.expect(b.traceId).to.match(/^[0-9a-f]{16}$/));",
+              "pm.test('data 非空', () => pm.expect(b.data.length).to.be.above(0));",
+              "const e = b.data[0];",
+              "pm.test('entity = header + detail', () => pm.expect(Object.keys(e).sort()).to.eql(['detail','header']));",
+              "pm.test('header 五分组(含 bussiness 原样拼写)', () => pm.expect(Object.keys(e.header)).to.eql(['basic','billTo','billFrom','bussiness','payment']));",
+              "pm.test('detail 三分组', () => pm.expect(Object.keys(e.detail)).to.eql(['detailOfGoodsOrServices','detailOfTaxSummary','originalInvoiceReferences']));",
+              "pm.test('basic 12 字段', () => pm.expect(Object.keys(e.header.basic).length).to.eql(12));",
+              "pm.test('billTo 14 字段', () => pm.expect(Object.keys(e.header.billTo).length).to.eql(14));",
+              "pm.test('billFrom 14 字段', () => pm.expect(Object.keys(e.header.billFrom).length).to.eql(14));",
+              "pm.test('标量均为字符串', () => { for (const g of ['basic','billTo','billFrom','bussiness','payment']) { for (const [k,v] of Object.entries(e.header[g])) { if (k==='page') { pm.expect(Array.isArray(v)).to.be.true; v.forEach(x=>pm.expect(typeof x).to.eql('string')); } else { pm.expect(typeof v, g+'.'+k).to.eql('string'); } } } });",
+              "pm.test('sourceFileHash 回填 = 请求 fileHash', () => pm.expect(e.header.basic.sourceFileHash).to.eql(pm.iterationData.get('fileHash') || pm.variables.get('fileHash')));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "client-platform",
+            "value": "common"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "templateId",
+              "value": "7",
+              "type": "text"
+            },
+            {
+              "key": "fileHash",
+              "value": "{{fileHash}}",
+              "type": "text"
+            },
+            {
+              "key": "clientId",
+              "value": "{{client_id}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/Users/shaobin/Desktop/project/API_anything/backend/app/ocr_optimizer/eval/golden_set/MY/docs/15f9a676_Angel_Foo_202603121725_20260312_172817.pdf"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/ai/knowledge/nlpService/document/analyze?access_token={{access_token}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "ai",
+            "knowledge",
+            "nlpService",
+            "document",
+            "analyze"
+          ],
+          "query": [
+            {
+              "key": "access_token",
+              "value": "{{access_token}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "4. analyze — INV3 26032923-W1",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.variables.set('fileHash', '1b4bb93e68ee872fc1ea7a52d4f8b54b');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b = pm.response.json();",
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('errcode = 0000', () => pm.expect(b.errcode).to.eql('0000'));",
+              "pm.test('description = Success', () => pm.expect(b.description).to.eql('Success'));",
+              "pm.test('顶层字段与生产一致', () => pm.expect(Object.keys(b).sort()).to.eql(['data','description','docPages','errcode','traceId']));",
+              "pm.test('traceId 16 位十六进制', () => pm.expect(b.traceId).to.match(/^[0-9a-f]{16}$/));",
+              "pm.test('data 非空', () => pm.expect(b.data.length).to.be.above(0));",
+              "const e = b.data[0];",
+              "pm.test('entity = header + detail', () => pm.expect(Object.keys(e).sort()).to.eql(['detail','header']));",
+              "pm.test('header 五分组(含 bussiness 原样拼写)', () => pm.expect(Object.keys(e.header)).to.eql(['basic','billTo','billFrom','bussiness','payment']));",
+              "pm.test('detail 三分组', () => pm.expect(Object.keys(e.detail)).to.eql(['detailOfGoodsOrServices','detailOfTaxSummary','originalInvoiceReferences']));",
+              "pm.test('basic 12 字段', () => pm.expect(Object.keys(e.header.basic).length).to.eql(12));",
+              "pm.test('billTo 14 字段', () => pm.expect(Object.keys(e.header.billTo).length).to.eql(14));",
+              "pm.test('billFrom 14 字段', () => pm.expect(Object.keys(e.header.billFrom).length).to.eql(14));",
+              "pm.test('标量均为字符串', () => { for (const g of ['basic','billTo','billFrom','bussiness','payment']) { for (const [k,v] of Object.entries(e.header[g])) { if (k==='page') { pm.expect(Array.isArray(v)).to.be.true; v.forEach(x=>pm.expect(typeof x).to.eql('string')); } else { pm.expect(typeof v, g+'.'+k).to.eql('string'); } } } });",
+              "pm.test('sourceFileHash 回填 = 请求 fileHash', () => pm.expect(e.header.basic.sourceFileHash).to.eql(pm.iterationData.get('fileHash') || pm.variables.get('fileHash')));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "client-platform",
+            "value": "common"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "templateId",
+              "value": "7",
+              "type": "text"
+            },
+            {
+              "key": "fileHash",
+              "value": "{{fileHash}}",
+              "type": "text"
+            },
+            {
+              "key": "clientId",
+              "value": "{{client_id}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/Users/shaobin/Desktop/project/API_anything/backend/app/ocr_optimizer/eval/golden_set/MY/docs/1b4bb93e_26032923-W1_20260402_095813.pdf"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/ai/knowledge/nlpService/document/analyze?access_token={{access_token}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "ai",
+            "knowledge",
+            "nlpService",
+            "document",
+            "analyze"
+          ],
+          "query": [
+            {
+              "key": "access_token",
+              "value": "{{access_token}}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

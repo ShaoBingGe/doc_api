@@ -109,3 +109,13 @@ class ApiDefinition(UUIDMixin, TimestampMixin, Base):
     template_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         nullable=True, comment="FK → templates（基于哪个模板，可为 None）"
     )
+    external_template_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        index=True,
+        comment=(
+            "开放平台对外暴露的数字模板号（piaozone 兼容层的 templateId，如 7）。"
+            "外部客户按此号调用 /ai/knowledge/nlpService/document/analyze；"
+            "为空表示该 API 不对开放平台暴露。"
+        ),
+    )

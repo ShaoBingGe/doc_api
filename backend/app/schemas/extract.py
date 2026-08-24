@@ -30,7 +30,17 @@ class ExtractResponse(BaseModel):
     request_id: uuid.UUID
     api_code: str
     api_version: int
-    data: dict
+    data: dict = Field(
+        default_factory=dict,
+        description="首条票据（保持既有契约不变；多票据文档请改用 entities）",
+    )
+    entities: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "文档中提取到的**全部**票据。一份文档可能含多张独立票据"
+            "（如整月发票扫成一个 PDF），data 只暴露第一张，此处为全量。"
+        ),
+    )
     metadata: ExtractMetadata
 
 
