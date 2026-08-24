@@ -1,0 +1,346 @@
+id: '101'
+remark: 'Slim variant of #101 — same structure/required/enums, compressed wording only.'
+template_config:
+  fill_empty_items: false
+prompt_template:
+  prompt_format: "**Task:** Extract every invoice/document in the file into JSON. One page may hold several\
+    \ invoices; a single invoice may span several pages — merge multi-page invoices into ONE record. Scans\
+    \ may be skewed or low quality; read as accurately as possible. Keep the document's original language;\
+    \ do not translate.\n\n**Document Classification (docType):**\n- `invoice`: formal payment voucher\
+    \ — has supplier + customer, invoice number, date, tax info, goods/services detail, total. Standard\
+    \ invoice, proforma invoice, credit note and debit note ALL count as `invoice`, whatever the title\
+    \ says.\n- `receipt`: small-value payment voucher, usually no detailed tax info (retail, catering,\
+    \ transport, tickets).\n- `other`: only documents that are genuinely neither of the above (contracts,\
+    \ order confirmations, …). **Safety rule: if the page shows a seller, a buyer and an amount payable,\
+    \ it is an `invoice` (or `receipt`) — never classify such a page as `other`.** An unusual layout,\
+    \ a missing invoice number or a title you do not recognise are NOT reasons to fall back to `other`.\n\
+    \n**Malaysia (MY) Anchors** — apply when the document is clearly Malaysian (address in Malaysia, currency\
+    \ MYR/RM, Malay text). Do NOT apply to documents explicitly marked with another country or currency.\n\
+    - **Supplier vs buyer**: the party carrying TIN / SST No / BRN / bank details is the supplier (billFrom).\
+    \ The party after \"Bill To / Customer / MESSRS / Sold To / Attention\" is the buyer (billTo).\n-\
+    \ **TIN** = `C` + 10~11 digits (e.g. C5884056070). Buyer TIN → billToTaxIdentificationNumber; supplier\
+    \ TIN → billFromTaxIdentificationNumber. Never put SST No or BRN into a TIN field.\n- **BRN / SSM**\
+    \ (company registration): 12 digits (199201000276), old form `518287-T`, or both together `199701009372\
+    \ (424868-V)`. **Copy the full original text verbatim, including the parentheses and everything inside\
+    \ — never truncate to just one part, and never split the two halves across two fields.** A registration\
+    \ number never carries a `C` prefix: do not add one and do not re-file it as a TIN. Take the supplier's\
+    \ only → billFromBusinessRegistrationNumber.\n- **SST No** = `B16-xxxx-xxxxxxxx` / `W10-xxxx-xxxxxxxx`.\
+    \ This template has NO SST field — if seen, discard it. Never force it into TIN / BRN / invoiceNumber.\n\
+    - **invoiceNumber**: near the top; e.g. PT-148862, INV-117055, 25FC011847. Exclude SST No, TIN, Cert.\
+    \ No., System Ref No.\n\n**Formatting:**\n- **Amounts** → plain numbers, no thousands separators (output\
+    \ `1234567.89`). First decide the separator convention: MYR/USD/CNY/SGD/GBP use `,` for thousands\
+    \ and `.` for decimals (`1,234,567.89` → 1234567.89). If the document clearly uses the opposite convention\
+    \ (`.` thousands, `,` decimals — e.g. VND and some European currencies), read it that way (`1.234.567,89`\
+    \ → 1234567.89, `6.000` → 6000).\n- **Dates** → output `YYYY-MM-DD`. This rule is absolute. Malaysia\
+    \ writes dates **day first**, so for ANY all-numeric date — two- or four-digit year alike (`12-02-26`,\
+    \ `12/02/2026`, `07-09-24`) — read it as **DD-MM-YY(YY) first** and accept that reading when day ≤\
+    \ 31, month ≤ 12 and year ≥ 2015. Never silently swap day and month: `12/02/2026` is 12 February 2026,\
+    \ not 2 December. Only if the day-first reading is impossible, fall back to YY-MM-DD, then MM-DD-YY,\
+    \ taking the first valid reading with year ≥ 2015 (`32-07-26`: day=32 invalid → YY-MM-DD → 2032-07-26).\
+    \ The year **must be ≥ 2015**; any reading yielding an earlier year is wrong. A date already written\
+    \ unambiguously (`12 Feb 2026`) is simply reformatted, never re-ordered.\n- **Tax rate** → percentage\
+    \ string, e.g. \"10%\".\n- **Line quantity** → `unitPrice × quantity = netAmount` (tolerance 0.01).\
+    \ If the document offers several candidate quantity columns, pick the one that satisfies the equation;\
+    \ if there is only one, use it.\n\n**Required output:**\n- `invoice`/`receipt`: docType, invoiceType,\
+    \ page, currency must always be present (infer currency from context if unprinted).\n- `other`: only\
+    \ docType and page.\n- **Five downstream-critical fields — search hard, never fabricate:**\n  1. `invoiceNumber`\
+    \ — sweep the whole document (header, footer, tables, stamps, remarks) under all aliases (Invoice\
+    \ No / No. / INVOICE NO / E INV NO). Only output a number that really appears; never substitute a\
+    \ PO / DO / SST / customer number. Leave empty if genuinely absent.\n  2. `invoiceDate` — look for\
+    \ Invoice Date / Date / Tarikh; a lone date on the document is usually it. Never guess; leave empty\
+    \ if genuinely absent.\n  3. `invoiceType` — if undeterminable, default to `Commercial Invoice`.\n\
+    \  4. `totalAmount` — prefer the printed Total / Grand Total; if there is no total line, sum the tax-inclusive\
+    \ line amounts. Never invent; default 0 only if it truly cannot be derived.\n  5. `currency` — prefer\
+    \ the printed marking, else infer from country/symbol/ language; if still undeterminable default to\
+    \ `MYR`.\n  **Multi-currency documents**: currency, totalAmount and line amounts must all belong to\
+    \ the same currency system. In that case ignore the MY currency default and follow what the document\
+    \ actually prints.\n  Before emitting, re-check these five for oversight — but fill gaps with the\
+    \ agreed fallbacks above, never with invented data.\n- **Whatever IS printed must be extracted, even\
+    \ when the field is not in the required list.** Omitting a value that is visible on the page counts\
+    \ as a miss, exactly like getting it wrong. In particular: when a subtotal / net line or a tax line\
+    \ is printed — or can be summed from the line items — output `totalNetAmount` and `totalTaxAmount`;\
+    \ when a company registration number (BRN / SSM / Company No.) or a TIN is printed beside the supplier,\
+    \ output `billFromBusinessRegistrationNumber` / `billFromTaxIdentificationNumber`. Never leave such\
+    \ a field out just because it is optional. **Zero is a value, not an absence**: on a zero-rated, exempt\
+    \ or tax-free invoice output `totalTaxAmount: 0` (and `tax: 0` on the lines) — do not omit the field\
+    \ just because the tax happens to be nil.\n- Any other field genuinely absent from the document: leave\
+    \ the key out. Do not infer, and never write placeholder text such as \"Not found\".\n\n**Taxes:**\n\
+    - `detailOfTaxSummary.taxCategory` must use these standard abbreviations (if the tax you identify\
+    \ is not listed, use its name as printed): {tax_categories_text}\n- Extract **every** tax type present\
+    \ — one invoice may carry several (e.g. VAT plus withholding tax). Distinguish additive taxes (VAT/SST)\
+    \ from subtractive ones (WHT).\n\n**Anti-false-extraction (invoiceNumber, PO, DO, TIN, BRN):**\n1.\
+    \ **PO/DO placement is mutually exclusive**: they appear either in the header or in the line items,\
+    \ not both. Look in the header first; only if absent, look in the rows.\n2. **Never cross lines or\
+    \ columns.** A value must sit on the same line as its label, or on the line immediately below it.\
+    \ Never absorb text belonging to a neighbouring column or the next row — e.g. `P/O No. :` followed\
+    \ by a line break must not yield \"Qty Unit\", and `DO-2604/0012` on one line must not become \"DO-2604/0012\
+    \ MENARA\".\n3. **Reject non-values.** A document number can never be a column heading, a form label,\
+    \ an address fragment or a place name (e.g. QTY, UNIT, PRICE, AMOUNT, TOTAL, DESCRIPTION, PRODUCT,\
+    \ CODE, ITEM, DATE, TERMS, PAYMENT, DELIVERY, CUSTOMER, INVOICE, REF, NO., PAGE, TEL, FAX, ATTN, BANK,\
+    \ ACCOUNT, REMARK, SIGNATURE, PCS, KG, BAGS, PALLET, TRIP, LORRY, JALAN, MENARA, KUALA LUMPUR, SELANGOR,\
+    \ PENANG, JOHOR, MALAYSIA). Also reject strings of length ≤ 2 and anything starting with `:`.\n4.\
+    \ Extract only values that carry an explicit label — do not guess.\n5. Keep the printed format; do\
+    \ not reformat or alter digits.\n6. Multiple DO / PO numbers → one field, separated by semicolons\
+    \ (e.g. `SH34756; SH34757`).\n7. Keep supplier and buyer information strictly apart.\n"
+  json_schema:
+    title: invoice_and_receipts
+    type: ARRAY
+    items:
+      anyOf:
+      - type: OBJECT
+        properties:
+          docType:
+            type: STRING
+            description: 'Document type: invoice or receipt'
+            enum:
+            - invoice
+            - receipt
+          page:
+            type: ARRAY
+            description: Page numbers holding this document (1-based). A multi-page invoice lists all
+              its pages in one array, e.g. [2, 3, 4].
+            items:
+              type: NUMBER
+          invoiceType:
+            type: STRING
+            description: "Invoice type:\n  - 'Proforma Invoice': contains PROFORMA / PRO FORMA / Prepayment.\n\
+              \  - 'Credit Note': contains CREDIT / AVOIR, or totalAmount < 0.\n  - 'Tax Invoice': contains\
+              \ 'Tax Invoice'.\n  - 'Commercial Invoice': the default when none of the above matches.\n\
+              \  (A REFUND note maps to Credit Note; a DEBIT note stays Commercial Invoice.)"
+            enum:
+            - Commercial Invoice
+            - Proforma Invoice
+            - Credit Note
+            - Tax Invoice
+          nameOfInvoice:
+            type: STRING
+            description: Title on the document, e.g., 'VAT Invoice', 'Debit Note', etc.
+          invoiceNumber:
+            type: STRING
+            description: 'Invoice or receipt number. Labels: ''Invoice No'', ''No.'', ''INVOICE NO:'',
+              ''E INV NO''; usually at the top. Examples: PT-148862, S-25/10-0059, IN2601/1024, 25FC011847.
+              Do NOT take Sales Tax No / SST ID / Cert. No. / System Ref No. / Return No.'
+          invoiceCode:
+            type: STRING
+            description: Invoice type code or serial ('Serial'). Omit if the document has none.
+          invoiceDate:
+            type: STRING
+            description: 'Issue date (downstream-critical). Labels: ''Invoice Date'', ''Date'', ''Tarikh''.
+              A lone date is usually the invoice date; if several dates appear (due date, shipping date),
+              take the issue/invoice one. All-numeric dates are day-first (DD-MM-YYYY) — do not swap day
+              and month. Never fabricate. Output YYYY-MM-DD.'
+          totalNetAmount:
+            type: NUMBER
+            description: Invoice-wide net amount excluding tax — the sum of ALL line net amounts. Output
+              it whenever a subtotal/net line is printed or the lines can be summed. If the document has
+              several parts (e.g. principal plus commission), sum them all; do not report only one part.
+          totalAmount:
+            type: NUMBER
+            description: 'Total including tax (downstream-critical). Labels: ''Total'', ''Grand Total'',
+              ''Total Due'', ''Amount Payable''. With no total line, sum the tax-inclusive line amounts.
+              Never invent; default 0 only if truly underivable.'
+          totalTaxAmount:
+            type: NUMBER
+            description: Total tax — always output it, including `0` when the invoice is zero-rated, exempt
+              or simply carries no tax. Omitting the field is wrong; `0` is right. (1) Prefer values explicitly
+              labelled Tax / VAT / GST / SST / IVA. (2) With a multi-row tax summary table, sum the per-type
+              amounts — not the table's own Total/Subtotal row. (3) Never derive tax by subtracting other
+              figures from the total; it must carry a tax label.
+          currency:
+            type: STRING
+            description: ISO 4217 code (MYR, USD, CNY, SGD, GBP …). Default 'MYR' when unmarked and uninferable.
+          billToName:
+            type: STRING
+            description: Buyer name. If there is no 'Bill To', look for MESSRS / Purchaser / Customer
+              / Buyer / Attention to.
+          billToComposite:
+            type: STRING
+            description: Buyer's full address block.
+          billToCountry:
+            type: STRING
+            description: Buyer's country, taken from the address.
+          billToCountryCode:
+            type: STRING
+            description: Buyer's ISO 3166-1 alpha-2 country code (MY, SG, CN …).
+          billToTaxIdentificationNumber:
+            type: STRING
+            description: 'Buyer''s TIN. Labels: ''TIN'', ''TIN No.'', ''Buyer TIN'', ''Customer Tin No.''.
+              Format `C` + 10~11 digits (e.g. C5884056070). Take the BUYER''s when both parties show a
+              TIN. Not the same as an SST ID (B16-/W10- format).'
+          billFromName:
+            type: STRING
+            description: Supplier/issuer name. With no 'From' block, use Account Name / Beneficiary Name
+              / Seller / Remit to, the bottom signature, or the merchant name on a receipt.
+          billFromComposite:
+            type: STRING
+            description: Supplier's full address block.
+          billFromCountry:
+            type: STRING
+            description: Supplier's country, taken from the address.
+          billFromCountryCode:
+            type: STRING
+            description: Supplier's ISO 3166-1 alpha-2 country code.
+          billFromTaxIdentificationNumber:
+            type: STRING
+            description: Supplier's tax identification number (TIN, `C` + 10~11 digits); also 'VAT Registration'
+              / 'TAX#'.
+          billFromBusinessRegistrationNumber:
+            type: STRING
+            description: 'Supplier''s company registration / SSM / BRN number, printed beside the supplier
+              name, usually at the top. Labels: ''Company Reg.No'', ''Co. Reg. No.'', ''Registration No'',
+              ''SSM'', ''BRN'', ''Company No.''. Formats: plain 12 digits (199201000276, 200201024195),
+              old style (518287-T, 009532-K), or **new and old together, with or without a space before
+              the bracket** — 199701009372 (424868-V), 202101033325(1433625-W). When both numbers are
+              printed, return the **whole string exactly as shown, brackets included** — returning only
+              `1433625-W` or only the 12-digit half is wrong. Take the SUPPLIER''s, not the buyer''s.'
+          purchaseOrderNumber:
+            type: STRING
+            description: 'Invoice-level purchase order number — the number the BUYER issued, from the
+              customer block at the top. Labels: ''P/O No.'', ''Your PO No.'', ''Your P.O. No'', ''PO
+              No'', ''PO #'', ''Order No'', "Buyer''s Order No", ''Customer PO No.'', ''Customer Ref'',
+              ''YOUR REFERENCE'', ''REFER YOUR P/O NO.''. **Shape: a letter prefix (W1 / K2 / N1 / P …)
+              followed by digits, frequently with a space** — W1 537443, K2 513875, W1 525065, N1 547225,
+              W1 529109; occasionally plain digits (90001110, 0052719). Do not substitute the supplier''s
+              own internal reference (e.g. TYS/RIA/PO/056) for the buyer''s PO. Avoid ''Delivery Order
+              No'' and ''Sales Order No''. If the PO belongs to one line only, put it on that line instead.'
+          dueDate:
+            type: STRING
+            description: Payment due date.
+          salesOrderNumber:
+            type: STRING
+            description: Invoice-level sales order number (SO No / S/O No / SO#). If it belongs to one
+              line only, put it on that line instead.
+          deliveryOrderNumber:
+            type: STRING
+            description: 'Invoice-level delivery order number, from the header block. Labels: ''D/O No.'',
+              ''DO NO'', ''DELIVERY ORDER NO.'', ''External Document No''. Examples: E-DO00863, DO2601/0543,
+              SH34756. Several DO numbers may appear — list them all in this one field, semicolon-separated.
+              If a DO belongs to one line only, put it on that line instead.'
+          detailOfGoodsOrServices:
+            type: ARRAY
+            description: 'Line items of goods or services.
+
+              **Three strong rules:**
+
+              1. Each line should satisfy |quantity × unitPrice − netAmount| / max(|netAmount|, 1) < 0.01.
+              If it cannot, output the document''s netAmount as printed — do not bend quantity or unitPrice
+              to make it fit.
+
+              2. Add-on lines written as "+item amount" (e.g. "+ Wanton Mee 1.00") merge into the description
+              of the main line above; never emit them as separate rows.
+
+              3. If netAmount is not printed, compute quantity × unitPrice — do not leave it empty.'
+            items:
+              type: OBJECT
+              properties:
+                articleName:
+                  type: STRING
+                  description: Goods or service name (complete).
+                description:
+                  type: STRING
+                  description: Remarks.
+                quantity:
+                  type: NUMBER
+                  description: Quantity.
+                unitOfMeasure:
+                  type: STRING
+                  description: Unit of measure (pcs, kg, m, hour …).
+                unitPrice:
+                  type: NUMBER
+                  description: Unit price.
+                netAmount:
+                  type: NUMBER
+                  description: Amount excluding tax.
+                taxRate:
+                  type: STRING
+                  description: Tax rate as `number%` (e.g. "0%", "10%", "10.5%"). Exempt / zero-rated
+                    / tax-free / 免税 / 非课税 → "0%". Anything not expressible as a valid percentage (N/A,
+                    prose, long digit strings) → "".
+                tax:
+                  type: NUMBER
+                  description: Tax amount.
+                grossAmount:
+                  type: NUMBER
+                  description: Amount including tax.
+                orderNumber:
+                  type: STRING
+                  description: Order number.
+                salesOrderNumber:
+                  type: STRING
+                  description: SO number belonging to THIS line only (if it covers the whole invoice,
+                    put it in the header field instead).
+                deliveryOrderNumber:
+                  type: STRING
+                  description: 'DO number belonging to THIS line only (if it covers the whole invoice,
+                    put it in the header field instead). Often date+DO+number, e.g. "25/02/2025 DO 127235".
+                    Examples: KT00367825, DO-K.157321, DO-2604/0012.'
+                purchaseOrderNumber:
+                  type: STRING
+                  description: 'PO number belonging to THIS line only (if it covers the whole invoice,
+                    put it in the header field instead). Letter prefix plus digits, sometimes spaced:
+                    W1525987, W1 543625, K2 513875.'
+              required: []
+          detailOfTaxSummary:
+            type: ARRAY
+            description: Tax summary rows. The same tax category at different rates must be listed as
+              separate rows.
+            items:
+              type: OBJECT
+              properties:
+                taxCategory:
+                  type: STRING
+                  description: Standard tax abbreviation from the list given in the prompt (VAT, SST,
+                    WHT …). If the tax is not in that list, use its printed name.
+                taxRate:
+                  type: STRING
+                  description: Tax rate as `number%` (e.g. "0%", "10%", "10.5%"). Exempt / zero-rated
+                    / tax-free / 免税 / 非课税 → "0%". Anything not expressible as a valid percentage (N/A,
+                    prose, long digit strings) → "".
+                netTaxableAmount:
+                  type: NUMBER
+                  description: Tax base (taxable amount, excluding tax).
+                tax:
+                  type: NUMBER
+                  description: Tax amount.
+              required: []
+          originalInvoiceReferences:
+            type: ARRAY
+            description: Original invoice references. Populate only when invoiceType is 'Credit Note';
+              otherwise keep the field but leave it empty. One element per referenced invoice.
+            items:
+              type: OBJECT
+              properties:
+                originalInvoiceCode:
+                  type: STRING
+                  description: Original invoice code / serial; omit if absent.
+                originalInvoiceNumber:
+                  type: STRING
+                  description: Original invoice number.
+                originalInvoiceDate:
+                  type: STRING
+                  description: Original invoice date, YYYY-MM-DD.
+              required: []
+        required:
+        - docType
+        - invoiceType
+        - page
+        - currency
+        - invoiceNumber
+        - invoiceDate
+        - totalAmount
+      - type: OBJECT
+        properties:
+          docType:
+            type: STRING
+            description: Other type of document
+            enum:
+            - other
+          page:
+            type: ARRAY
+            description: Page numbers holding this document (1-based). A multi-page invoice lists all
+              its pages in one array, e.g. [2, 3, 4].
+            items:
+              type: NUMBER
+        required:
+        - docType
+        - page
