@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     # (production OCR) and as the first chain step's model when
     # LLM_FALLBACK_CHAIN isn't configured. Sensible Q2-2026 default.
     GEMINI_MODEL: str = "gemini-2.5-flash"
+    # Gemini 3.x 思考档：low / high。票据抽取以照抄票面为主，low 足够且更快更省；
+    # 对 2.x 模型无效（那一代用 thinking_budget）。
+    GEMINI_THINKING_LEVEL: str = "low"
     OPENAI_API_KEY: str = ""
     # 阿里云百炼 / DashScope（qwen-vl-ocr 视觉 OCR + qwen-plus 文本），OpenAI 兼容端点。
     # 大陆云实例用它替代不可达的 Gemini。
