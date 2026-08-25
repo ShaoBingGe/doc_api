@@ -6,6 +6,12 @@
     POST /ai/knowledge/nlpService/document/analyze?access_token={token}
     POST /ai/knowledge/nlpService/overseaInvoice/extraction?access_token={token}
         └─ 别名，与上一条完全等价（存量对接方写死了这条路径）
+    POST /ai/knowledge/nlpService/document/analyze/async?access_token={token}
+    POST /ai/knowledge/nlpService/tasks/query?access_token={token}
+
+同步与异步走**同一个准入闸**（services/extract_gate），所以"全服务并发不超过 N"
+是一句真话，而不是两条路各自限流后相加。提取一律丢进线程池执行，绝不在
+async 路由里直接调同步的 extract_document —— 那会独占事件循环整场识别。
 
 与既有的 `/api/v1/extract/{api_code}`（X-API-Key）并存：前者给外部客户，
 后者给工作区/前端。两条路径共用同一套提取管线（extract_service）。
@@ -29,14 +35,19 @@ from fastapi import APIRouter, Body, Depends, Header, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.deps import get_db
 from app.models.api_definition import ApiDefinition, ApiDefinitionStatus
 from app.models.open_api_client import OpenApiClient
+from app.services import async_task_service as tasksvc
 from app.services import extract_service as svc
 from app.services import open_api_auth as auth
 from app.services import open_api_mapper as mapper
+from app.services.async_task_worker import run_extraction
+from app.services.extract_gate import GateTimeout, get_gate
 
 logger = logging.getLogger(__name__)
+_settings = get_settings()
 
 router = APIRouter(tags=["Open API (piaozone-compatible)"])
 
@@ -113,6 +124,26 @@ def _resolve_api_def(
     return api_def
 
 
+def lookup_template(db: Session, template_id: str) -> ApiDefinition | None:
+    """templateId → ApiDefinition，**不做权限校验**。
+
+    给异步 worker 用：提交任务时已经校验过归属，执行时只需按号取模板。
+    找不到或已停用返回 None（worker 据此把任务标 FAILED，而不是抛异常）。
+    """
+    try:
+        tid = int(str(template_id).strip())
+    except (TypeError, ValueError):
+        return None
+    api_def = (
+        db.query(ApiDefinition)
+        .filter(ApiDefinition.external_template_id == tid)
+        .first()
+    )
+    if api_def is None or api_def.status == ApiDefinitionStatus.deprecated:
+        return None
+    return api_def
+
+
 # 对外暴露的两条等价路径。第一条来自生产日志切片（规范路径）；第二条是
 # 票易通「海外发票」业务线的历史路径 —— 对接方把它写死在了客户端代码里，
 # 改不动，故服务端挂别名兜住。两条路径同一个 handler、同一套鉴权与提取管线，
@@ -183,18 +214,36 @@ async def analyze_document(
             content=mapper.build_error(exc.errcode, exc.description, trace_id=trace_id),
         )
 
-    # 复用既有提取管线（prompt 解析 / processor 兜底 / 审计一并沿用）
+    # docPages 先算：准入闸按页数扣配额（每页渲染约占 30MB 内存）
+    doc_pages = _count_pages(file_bytes, filename)
+
+    # 复用既有提取管线（prompt 解析 / processor 兜底 / 审计一并沿用）。
+    # 两处关键改动，见 services/extract_gate.py 与 async_task_worker.run_extraction：
+    #   1) 过准入闸 —— 与异步 worker 共用同一个上限，"全服务并发 N"才是真话；
+    #   2) 丢进线程池 —— extract_document 是同步函数，直接在 async 路由里调用会
+    #      独占事件循环整场识别（实测 200s），期间取 token / 轮询 / 健康检查全部排队。
     try:
-        result = svc.extract_document(
-            db,
-            api_code=api_def.api_code,
-            api_key=None,  # 开放平台无 ApiKey，用量记录里 api_key_id 为 None
-            file_bytes=file_bytes,
-            filename=filename,
-            request_ip=request.client.host if request.client else "unknown",
-        )
+        async with get_gate().slot(doc_pages, timeout=_settings.SYNC_GATE_WAIT_SEC):
+            result = await run_extraction(
+                api_code=api_def.api_code,
+                file_bytes=file_bytes,
+                filename=filename,
+                request_ip=request.client.host if request.client else "unknown",
+            )
         # 取 entities（全量票据）；data 只有首条，多票据文档会漏
         structured: Any = result.entities if result.entities else result.data
+    except GateTimeout as exc:
+        # 满载：明确回"稍后重试"，不无限挂着（调用方有自己的 HTTP 超时）。
+        # 复用既有 5000，不给已上线的同步契约新增错误码。
+        logger.warning("analyze 拒绝（闸满）: %s", exc)
+        return JSONResponse(
+            status_code=200,
+            content=mapper.build_error(
+                auth.ERR_PROCESS_FAILED,
+                "服务繁忙，请稍后重试（并发已达上限）",
+                trace_id=trace_id,
+            ),
+        )
     except Exception as exc:  # noqa: BLE001 — 失败也走 errcode，不抛 500
         logger.exception("analyze failed: template=%s client=%s", template_id, client_id)
         return JSONResponse(
@@ -204,8 +253,8 @@ async def analyze_document(
             ),
         )
 
-    # docPages 报**原文档实际页数**（不是送模型的页数），调用方据此判断是否被截断
-    doc_pages = _count_pages(file_bytes, filename)
+    # doc_pages 报**原文档实际页数**（不是送模型的页数），调用方据此判断是否被截断。
+    # 上面过闸时已经算过，这里直接复用。
     page_limit = _page_limit(api_def.processor_type)
     payload = mapper.build_response(
         structured,
@@ -240,6 +289,178 @@ async def analyze_document(
         logger.debug("record_usage failed (non-fatal)", exc_info=True)
 
     return JSONResponse(status_code=200, content=payload)
+
+
+# ── 3. 异步识别：申请 + 查询 ──────────────────────────────────────────────────
+#
+# 契约见「异步文档处理 API 文档」。与同步端点的三点差别，改动前务必先看清：
+#   1. 错误码用 A 系（A0301/A0410/A0426/A0700/C0110/1999），不是同步的 4xxx。
+#      两套码是对接方文档写死的，不能统一 —— 响应里另附 legacyErrcode 供内部排查。
+#   2. 申请接口的响应**没有 traceId、没有 docPages**，data 是对象不是数组。
+#   3. 查询接口的 result 是**字符串**（同步响应的 JSON 文本），不是对象。
+
+ANALYZE_ASYNC_PATH = "/ai/knowledge/nlpService/document/analyze/async"
+TASKS_QUERY_PATH = "/ai/knowledge/nlpService/tasks/query"
+
+
+@router.post(
+    ANALYZE_ASYNC_PATH,
+    summary="异步文档解析申请（开放平台）",
+    description=(
+        "multipart/form-data：file / templateId / fileHash / callbackUrl。\n"
+        "立即返回 taskId，处理结果通过 tasks/query 轮询获取。\n"
+        "HTTP 恒为 200，成败看 errcode（'0000' 成功）。"
+    ),
+)
+async def analyze_document_async(
+    request: Request,
+    access_token: Annotated[str | None, Query()] = None,
+    client_platform: Annotated[str | None, Header(alias="client-platform")] = None,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    template_id = file_hash = callback_url = ""
+    file_bytes: bytes | None = None
+    filename: str | None = None
+    try:
+        form = await request.form()
+        template_id = str(form.get("templateId") or "0")
+        file_hash = str(form.get("fileHash") or "")
+        callback_url = str(form.get("callbackUrl") or "")
+        upload = form.get("file")
+        # duck typing 而非 isinstance —— 见同步端点里的同款说明
+        if upload is not None and hasattr(upload, "read"):
+            file_bytes = await upload.read()
+            filename = getattr(upload, "filename", None) or "upload"
+    except Exception:  # noqa: BLE001 — 表单畸形不该 500
+        logger.warning("analyze/async: malformed multipart body", exc_info=True)
+        return JSONResponse(
+            status_code=200,
+            content=tasksvc.build_submit_error(
+                tasksvc.ERR_UPLOAD_FAILED, "读取上传文件失败"
+            ),
+        )
+
+    try:
+        client = auth.resolve_token(db, access_token)
+        if not file_bytes:
+            raise tasksvc.AsyncTaskError(tasksvc.ERR_MISSING_PARAM, "file 不能为空")
+        # 提交时就校验模板归属，别等到 worker 跑起来才发现越权
+        _resolve_api_def(db, template_id=template_id, client=client)
+    except auth.OpenApiAuthError as exc:
+        return JSONResponse(
+            status_code=200,
+            content=tasksvc.build_submit_error(
+                tasksvc.ERR_UNAUTHORIZED, exc.description
+            ),
+        )
+    except tasksvc.AsyncTaskError as exc:
+        return JSONResponse(
+            status_code=200,
+            content=tasksvc.build_submit_error(exc.errcode, exc.description),
+        )
+
+    try:
+        task = tasksvc.create_task(
+            db,
+            client=client,
+            template_id=template_id,
+            file_bytes=file_bytes,
+            filename=filename or "upload",
+            file_hash=file_hash,
+            callback_url=callback_url,
+            page_count=_count_pages(file_bytes, filename),
+        )
+    except tasksvc.AsyncTaskError as exc:
+        return JSONResponse(
+            status_code=200,
+            content=tasksvc.build_submit_error(exc.errcode, exc.description),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("analyze/async 建任务失败: template=%s", template_id)
+        return JSONResponse(
+            status_code=200,
+            content=tasksvc.build_submit_error(tasksvc.ERR_FAIL, f"任务信息入库失败: {exc}"),
+        )
+
+    if callback_url:
+        # 本期只入库不回调（已与对接方确认下一期做）。记一条日志，
+        # 免得对方以为配了就会收到推送。
+        logger.info(
+            "任务 %s 提供了 callbackUrl 但本期不触发回调，请改用 tasks/query 轮询",
+            task.id,
+        )
+
+    return JSONResponse(status_code=200, content=tasksvc.build_submit_ok(task.id))
+
+
+@router.post(
+    TASKS_QUERY_PATH,
+    summary="批量查询异步任务状态（开放平台）",
+    description=(
+        'application/json：{"taskIds": ["…"]}，最多 10 个。\n'
+        "返回以 taskId 为键的映射；result 为 JSON 字符串，需调用方自行解析。"
+    ),
+)
+async def query_tasks(
+    body: Annotated[dict, Body(...)],
+    access_token: Annotated[str | None, Query()] = None,
+    client_platform: Annotated[str | None, Header(alias="client-platform")] = None,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    trace_id = _trace_id()
+
+    try:
+        client = auth.resolve_token(db, access_token)
+    except auth.OpenApiAuthError as exc:
+        return JSONResponse(
+            status_code=200,
+            content=tasksvc.build_query_error(
+                tasksvc.ERR_UNAUTHORIZED, exc.description, trace_id=trace_id
+            ),
+        )
+
+    raw = body.get("taskIds")
+    task_ids = [str(t) for t in raw if str(t or "").strip()] if isinstance(raw, list) else []
+    if not task_ids:
+        return JSONResponse(
+            status_code=200,
+            content=tasksvc.build_query_error(
+                tasksvc.ERR_MISSING_PARAM, "taskIds 不能为空", trace_id=trace_id
+            ),
+        )
+    if len(task_ids) > tasksvc.MAX_QUERY_TASK_IDS:
+        return JSONResponse(
+            status_code=200,
+            content=tasksvc.build_query_error(
+                tasksvc.ERR_BATCH_TOO_LARGE,
+                f"一次最多查询 {tasksvc.MAX_QUERY_TASK_IDS} 个任务，收到 {len(task_ids)} 个",
+                trace_id=trace_id,
+            ),
+        )
+
+    try:
+        data = tasksvc.query_tasks(db, task_ids=task_ids, client_id=client.client_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("tasks/query 失败")
+        return JSONResponse(
+            status_code=200,
+            content=tasksvc.build_query_error(
+                tasksvc.ERR_FAIL, str(exc), trace_id=trace_id
+            ),
+        )
+
+    # 查不到的 taskId（不存在 / 属于别的 client）直接不出现在 map 里 ——
+    # 不区分两者，避免泄露"这个 id 存在"这一信息。
+    return JSONResponse(
+        status_code=200,
+        content={
+            "errcode": tasksvc.ERR_OK,
+            "description": "成功",
+            "data": data,
+            "traceId": trace_id,
+            "legacyErrcode": tasksvc.LEGACY_OF[tasksvc.ERR_OK],
+        },
+    )
 
 
 def _page_limit(processor_type: str | None) -> int | None:
