@@ -117,6 +117,32 @@ class Settings(BaseSettings):
     # 回旧整段重写路径（规则段为加性载体，关闭即不渲染）。
     SKILL_TYPED_EDITS: bool = True
 
+    # ── 并发准入闸（单体服务的唯一咽喉）──────────────────────────────────────
+    # 同步端点与异步 worker 共用一个闸，所以这里配的是**全服务**并发上限。
+    # 两个维度必须同时满足，见 services/extract_gate.py 的说明：
+    #   文档数 —— 对接方明确要求不超过 3；
+    #   页数   —— 实测每页渲染约占 30MB 内存，只限文档数挡不住 16 页大文档
+    #             （3×16 页 ≈ 1.4GB，直接撑爆 2G 的机器）。
+    # 按机器内存调：阿里云(1.6G) 24 页 ≈ 720MB，腾讯云(1.9G) 可给到 18。
+    GATE_MAX_DOCS: int = 3
+    GATE_MAX_PAGES: int = 24
+    # 同步端点等槽位的上限；超时返回"服务繁忙"而非无限挂着（调用方有 HTTP 超时）。
+    SYNC_GATE_WAIT_SEC: float = 120.0
+
+    # ── 异步任务（开放平台 analyze/async + tasks/query）──────────────────────
+    # 上传文件先落盘再排队，队列里只有路径不含字节 —— 排队本身几乎不耗内存。
+    ASYNC_SPOOL_DIR: str = "./data/async_spool"
+    # 任务行保留天数（异步接口文档第 7 条：默认 10 天后过期删除）。
+    ASYNC_TASK_TTL_DAYS: int = 10
+    # worker 轮询空闲间隔（秒）；有待处理任务时不等待，立即取下一个。
+    ASYNC_POLL_INTERVAL_SEC: float = 2.0
+    # 单个任务的处理重试次数（异步接口文档第 9 条：默认最多 3 次）。
+    ASYNC_MAX_RETRIES: int = 3
+    # 终态结果的内存读缓存条数上限。轮询是高频读，缓存挡在 SQLite 前面；
+    # 单条结果 5–50KB，256 条最坏约 12MB，有界。
+    TASK_CACHE_SIZE: int = 256
+    TASK_CACHE_TTL_SEC: int = 3600
+
     # ── Security ──────────────────────────────────────────────────────────
     SECRET_KEY: str = "CHANGE-ME-IN-PRODUCTION-32-bytes!!"
     API_KEY_PREFIX: str = "sk-"
