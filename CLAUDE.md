@@ -201,6 +201,11 @@ pending_first_doc ─ 保存生成 ─► pending_review(待验证) ─ 激活�
   36 小时有效、存 DB）。路径**不带 `/api/v1` 前缀**、HTTP 恒 200 成败看 `errcode` ——
   与生产契约逐字段一致，改动前先读 [docs/open-api-piaozone.md](./docs/open-api-piaozone.md)。
   对外的数字 `templateId` → `api_definitions.external_template_id`；与 X-API-Key 端点共用同一条提取管线。
+  同步端点另挂别名 `~/overseaInvoice/extraction`（对接方写死了这条路径），同一 handler、行为等价。
+- **异步识别** `POST ~/document/analyze/async`（返 taskId）+ `POST ~/tasks/query`（轮询，≤10 个）：
+  错误码用 **A 系**（`A0301`/`A0410`/`A0426`/`A0700`/`C0110`/`1999`），与同步的 4xxx 是两套，
+  响应附 `legacyErrcode` 做对照；申请响应**无** `traceId`/`docPages`，查询的 `result` 是**字符串**。
+  查不到的 taskId 静默缺席（不区分「不存在」与「属于别的 client」）。`callbackUrl` 当前只入库不触发。
 - 密码用 bcrypt 哈希。普通用户走「邮箱+验证码」，邮箱须由用户管理员预先开通。
 - **租户数据隔离**（`core/deps`）：`scope_filter` 给 list 加 `tenant_id` 过滤、`assert_can_access` 校验单条归属（越权返回 **404** 不泄露存在性）、`owner_tenant_id` 创建时盖章；**平台管理员（tenant_id 为空）一律绕过**→ 跨租户全可见。
 - **强制点在路由层**：每个数据 router 挂 `Depends(get_current_user)`，OCR 优化 router 用 router 级 `verify_api_def_access` 一次守住全部嵌套路由；service 的 scope 参数**可选默认不过滤**（不污染纯 service 层测试）。
@@ -245,6 +250,20 @@ verdict 非法一律 reject 保旧 prompt；optimizer 重写丢客户反馈行 �
 行级 processor_type 是偏好不是契约——历史行钉着 gemini，大陆服务器只配 qwen；
 直传会让迭代轮 OCR 全错（每轮 0 分，「进度始终为 0」事故）而上传识别却正常。
 LLM_FALLBACK_CHAIN 由 `get_chain` 做同样的可用性过滤。降级时丢弃外族 model_name。
+
+### ⑦ 提取一律过闸 + 丢线程池，绝不在 async 路由里直接调
+开放平台的同步与异步两条路**共用同一个准入闸**（`services/extract_gate.py`），
+"全服务并发不超过 N"才是真话；闸是**双维度**——文档数（默认 3）**且**在途页数
+（阿里云 24 / 腾讯云 18）。只限文档数挡不住大文档：实测每页渲染约占 **30MB**，
+`MAX_PAGES=16` 下 3 个并发就是 1.4GB，2G 的机器直接 OOM。
+`extract_document` 是**同步函数**，必须经 `async_task_worker.run_extraction`
+（`anyio.to_thread`）执行；直接 `await` 它等于独占事件循环整场识别——
+实测腾讯云 200 秒识别期间取 token **30 秒超时**，健康检查/轮询一并假死。
+`tests/test_open_api_concurrency.py` 用事件循环滞后采样守这条，并带**阳性对照**
+（把写法改回阻塞版，判据必须报警）。
+异步任务上传后**先落盘再排队**，文件在拿到槽位之后才读进内存——排队本身不吃内存
+（一个排队任务约 200 字节），这是"加队列不会撑爆内存"的前提，别把 `read_bytes()`
+挪到闸外面。
 
 ---
 

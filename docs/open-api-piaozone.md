@@ -133,6 +133,107 @@ Content-Type: multipart/form-data
 
 ---
 
+## 二·B、异步识别（申请 + 轮询）
+
+大文档识别可达数分钟，同步接口会把调用方的 HTTP 连接挂住。异步链路把它拆成
+「立即拿 taskId」+「轮询取结果」两步。
+
+```
+POST /ai/knowledge/nlpService/document/analyze/async?access_token=<token>
+POST /ai/knowledge/nlpService/tasks/query?access_token=<token>
+```
+
+### 与同步接口的三处差异（最容易写错的地方）
+
+| | 同步 | 异步 |
+|---|---|---|
+| 错误码 | `4001`…`5000` | **A 系**：`A0301` / `A0410` / `A0426` / `A0700` / `C0110` / `1999` |
+| 申请响应 | 有 `traceId`、`docPages`，`data` 是数组 | **无** `traceId` / `docPages`，`data` 是对象 |
+| 结果字段 | `data[]` 是对象 | `result` 是**字符串**（JSON 文本，需自行 `json.loads`） |
+
+两套错误码是对接方文档写死的，无法统一。异步响应额外带一个 `legacyErrcode` 字段，
+是 A 系码到同步 4xxx 的对照，**仅供内部排查**，对接方不必解析。
+
+### 申请
+
+`multipart/form-data`：`file`（必填）、`templateId`、`fileHash`、`callbackUrl`。
+
+```json
+{"errcode":"0000","description":"成功","data":{"taskId":"d9318f61-…"},"legacyErrcode":"0000"}
+```
+
+> `callbackUrl` **当前只入库不触发回调**，请用轮询获取结果。回调（含 2/10/30 分钟
+> 重试策略）计划在下一期实现。
+
+### 查询
+
+`application/json`：`{"taskIds": ["…"]}`，**最多 10 个**（超出返回 `A0426`）。
+
+```json
+{
+  "errcode": "0000", "description": "成功", "traceId": "381dacadfb0793b1",
+  "data": {
+    "d9318f61-…": {
+      "taskId": "d9318f61-…",
+      "status": "COMPLETED",
+      "statusDesc": "已完成",
+      "requestParams": {"templateId": "7", "language": "auto", "fileName": "invoice.pdf"},
+      "result": "{\"errcode\":\"0000\",\"data\":[…]}",
+      "errorMessage": null
+    }
+  }
+}
+```
+
+`status` 只有三个值：`PENDING` / `COMPLETED` / `FAILED`。
+`result` 仅在 `COMPLETED` 时有值，其内容就是**同步接口的完整响应**（序列化成字符串）。
+`errorMessage` 仅在 `FAILED` 时有值。
+
+**查不到的 taskId 不出现在 `data` 里，也不报错** —— 不存在与「属于别的 client」
+不作区分，避免泄露 taskId 是否存在。任务保留 10 天后自动清理。
+
+### 异步错误码
+
+| errcode | 含义 | legacyErrcode |
+|---|---|---|
+| `0000` | 成功 | `0000` |
+| `A0301` | 访问未授权（token 无效/过期、无权使用该 templateId） | `4004` |
+| `A0410` | 请求必填参数为空（无文件 / 缺 taskIds） | `4008` |
+| `A0426` | 批量查询超过 10 个 | — |
+| `A0700` | 用户上传文件异常（读取/落盘失败） | — |
+| `C0110` | 识别管线出错 | `5000` |
+| `1999` | 其他未归类失败 | `5000` |
+
+---
+
+## 二·C、并发与内存治理
+
+单 worker 单体服务，**同步与异步共用一个准入闸**（`services/extract_gate.py`），
+所以"全服务并发不超过 N"是一句真话，而不是两条路各自限流后相加。
+
+闸有两个维度，同时满足才放行：
+
+| 维度 | 默认 | 为什么 |
+|---|---|---|
+| 文档数 `GATE_MAX_DOCS` | 3 | 对接方要求 |
+| 在途页数 `GATE_MAX_PAGES` | 24（阿里云）/ 18（腾讯云） | **实测每页渲染约占 30MB 内存**。只限文档数挡不住大文档：3 × 16 页 ≈ 1.4GB，直接撑爆 2G 的机器 |
+
+其余要点：
+
+- **排队不吃内存**：上传文件先落盘（`ASYNC_SPOOL_DIR`），队列里只有路径，
+  一个排队任务约 200 字节。文件在**拿到槽位之后**才读进内存。
+- **提取不阻塞事件循环**：`extract_document` 是同步函数，一律经
+  `anyio.to_thread` 丢进线程池。直接在 `async` 路由里调用会独占事件循环整场识别
+  （实测腾讯云 200 秒，期间取 token 会 30 秒超时）。
+- **同步端点满载时**等槽位至多 `SYNC_GATE_WAIT_SEC`（默认 120s），
+  超时返回 `5000` + "服务繁忙，请稍后重试"，不新增同步侧错误码。
+- **重启恢复**：残留的 RUNNING 任务在启动时退回 PENDING（`recover_orphans`）。
+
+满载实测（阿里云，6 个异步 + 1 个同步并发）：取 token 中位 10ms、最大 648ms、
+**零次超过 1 秒**；内存 235MB → 峰值 465MB（上限 1500M）。
+
+---
+
 ## 三、templateId 的分配
 
 `templateId` 映射到 `api_definitions.external_template_id`（整数列，幂等补列）。

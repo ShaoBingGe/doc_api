@@ -95,8 +95,24 @@ async def lifespan(app: FastAPI):
     except Exception:
         import logging
         logging.getLogger(__name__).exception("reap_stale_jobs failed on boot")
+    # 开放平台异步任务 worker：常驻协程，负责抢占 PENDING 任务并调度提取。
+    # 启动时先把上次非正常退出留下的 RUNNING 退回 PENDING（异步接口文档第 8 条
+    # 「服务重启，未完成的任务会被自动恢复处理」）。失败不阻塞服务启动 ——
+    # 同步端点不依赖它。
+    try:
+        from app.services.async_task_worker import start_worker
+        await start_worker()
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("async task worker failed to start")
     yield
-    # Shutdown: nothing to clean up in sync mode
+    # Shutdown: 停 worker，在途任务退回 PENDING 由下次启动接手
+    try:
+        from app.services.async_task_worker import stop_worker
+        await stop_worker()
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("async task worker failed to stop")
 
 
 # ── Application ───────────────────────────────────────────────────────────────
