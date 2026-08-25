@@ -30,9 +30,52 @@ from ..models import (
     VersionOrigin,
 )
 from . import template_loader
-from .composer import GLOBAL_OUTPUT_CONTRACT_DETAILS
+from .composer import GLOBAL_OUTPUT_CONTRACT_DETAILS, _render_schema_tree
 
 logger = logging.getLogger(__name__)
+
+
+def _render_field_contract(schema: dict) -> str:
+    """渲染「字段键名清单」段，供 v1 prompt 使用。
+
+    为什么必须有：qwen 视觉模型不支持 response_schema 硬约束（DashScope 限制），
+    Gemini 虽支持但 extract 链路当前也未传 runtime_config——两条链路的字段键名
+    实际都只靠 prompt 文本约束。没有清单时模型会自行起名，实测漂移包括
+    date/issueDate（应为 invoiceDate）、subTotal（应为 totalNetAmount），
+    甚至把 totalAmount 留空而只填 grossAmount。
+
+    只渲染「路径 · 类型 · enum」的紧凑树（约为 JSON dump 的 20%）；字段的业务
+    语义由 Part 1/2 的国家规则承担，此处不重复 description。
+    """
+    return (
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "# 输出字段清单（键名必须逐字一致）\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "最终 JSON **只能使用下列键名**，严禁自创、改写、缩写或翻译键名。\n"
+        "常见错误：把 `invoiceDate` 写成 `date`/`issueDate`；把 `totalNetAmount`\n"
+        "写成 `subTotal`；把 `billFromName` 写成 `billFrom`；把金额只填进\n"
+        "`grossAmount` 而让 `totalAmount` 留空。**读对了值但填错键 = 该字段丢失。**\n"
+        "票面没有的字段不输出该键（不要给 null / \"\" / 0），但**凡是读到的值，"
+        "必须放进下列对应的键**。\n\n"
+        f"{_render_schema_tree(schema)}\n"
+    )
+
+
+def build_v1_prompt(decomposed: dict) -> str:
+    """组装 v1 版本的 composed_prompt = 国家规则 + 字段清单 + Part 3 输出契约。
+
+    抽成函数供两处复用：建 API 时（init_from_country_template）与平台升级国家模板
+    后的存量刷新（seed_open_api.refresh_prompt_from_country_template）。两边若各写
+    一份，刷新就会把字段清单段洗掉。
+    """
+    return (
+        decomposed["prompt_format"].rstrip()
+        + "\n\n"
+        + _render_field_contract(decomposed["json_schema"])
+        + "\n"
+        + GLOBAL_OUTPUT_CONTRACT_DETAILS
+        + "\n"
+    )
 
 
 def init_from_country_template(
@@ -92,12 +135,12 @@ def init_from_country_template(
     # is used and includes Part 3 (GLOBAL_OUTPUT_CONTRACT_DETAILS) automatically.
     # For v1 we MUST append Part 3 here too so the platform output contract is
     # enforced from the very first OCR call (design v7).
-    v1_prompt = (
-        decomposed["prompt_format"].rstrip()
-        + "\n\n"
-        + GLOBAL_OUTPUT_CONTRACT_DETAILS
-        + "\n"
-    )
+    #
+    # 字段清单同样必须进 v1（原先没有，是字段名漂移的根因）：qwen 视觉模型不支持
+    # response_schema 硬约束，字段键名完全靠 prompt 文本约束。缺清单时模型自行起名——
+    # 实测同一份 MY 模板下 invoiceDate 被写成 date、totalNetAmount 写成 subTotal、
+    # totalAmount 干脆留空（值读对了却填错键），下游取不到数。
+    v1_prompt = build_v1_prompt(decomposed)
 
     version_id = uuid.uuid4()
     version = OcrPromptVersion(

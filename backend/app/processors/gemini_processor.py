@@ -62,7 +62,20 @@ class GeminiProcessor(DocumentProcessor):
         # safe default. Previous hardcoded "gemini-3.1-pro-preview" is no
         # longer a published Gemini model and would 404.
         self.model_name = model_name or settings.GEMINI_MODEL or "gemini-2.5-flash"
+        # Gemini 3.x 的默认思考档，可用 GEMINI_THINKING_LEVEL 覆盖（low / high）。
+        # 票据抽取以照抄票面为主，low 足够且明显更快更省。
+        import os
+        self.default_thinking_level = (
+            os.environ.get("GEMINI_THINKING_LEVEL")
+            or getattr(settings, "GEMINI_THINKING_LEVEL", "")
+            or "low"
+        ).strip().lower()
         self.llm_param_config = self._build_param_config({})
+
+    def _is_gemini_3(self) -> bool:
+        """Gemini 3.x 用 thinking_level，2.x 用 thinking_budget —— 两者不通用。"""
+        name = (self.model_name or "").lower()
+        return "gemini-3" in name
 
     def _build_param_config(self, custom_config: dict) -> dict:
         """Build LLM params from environment variables, merged with custom_config."""
@@ -165,10 +178,16 @@ class GeminiProcessor(DocumentProcessor):
 
         merged = {**self.llm_param_config}
         if runtime_config:
-            # Convert thinking_budget shorthand to ThinkingConfig object
+            # thinking_level（Gemini 3.x：'low' / 'high'）优先于 thinking_budget
+            # （Gemini 2.x 的 token 预算）。两者互斥，同时给出时以 level 为准。
+            if "thinking_level" in runtime_config:
+                level = runtime_config.pop("thinking_level")
+                if level:
+                    merged["thinking_config"] = types.ThinkingConfig(thinking_level=level)
+                    logger.info("Using thinking_level=%s", level)
             if "thinking_budget" in runtime_config:
                 budget = runtime_config.pop("thinking_budget")
-                if isinstance(budget, int) and budget > 0:
+                if isinstance(budget, int) and budget > 0 and "thinking_config" not in merged:
                     merged["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
                     logger.info("Converted thinking_budget %d to ThinkingConfig", budget)
             merged.update(runtime_config)
@@ -176,11 +195,16 @@ class GeminiProcessor(DocumentProcessor):
         if merged.get("response_schema"):
             merged["response_schema"] = self._normalize_schema(merged["response_schema"])
 
-        # Set default thinking_config if not provided.
-        # Gemini 3.x requires thinking mode (budget > 0); use -1 for auto/dynamic.
-        # Older 2.x models accept budget=0 (off) but auto also works.
+        # 未显式指定时按模型代次选默认思考档：
+        #   Gemini 3.x → thinking_level='low'（票据抽取是照抄票面，不需要深推理；
+        #                low 显著降低延迟与 token 成本）
+        #   Gemini 2.x → thinking_budget=-1（auto/dynamic，2.x 不认 thinking_level）
         if "thinking_config" not in merged:
-            merged["thinking_config"] = types.ThinkingConfig(thinking_budget=-1)
+            if self._is_gemini_3():
+                merged["thinking_config"] = types.ThinkingConfig(
+                    thinking_level=self.default_thinking_level)
+            else:
+                merged["thinking_config"] = types.ThinkingConfig(thinking_budget=-1)
 
         param_config = GeminiLMModelParams(**merged).model_dump(exclude_none=True)
         param_config["system_instruction"] = [types.Part.from_text(text=instruction)]

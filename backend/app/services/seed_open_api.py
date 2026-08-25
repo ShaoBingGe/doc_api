@@ -116,7 +116,7 @@ def refresh_prompt_from_country_template(db: Session, api_def: ApiDefinition) ->
     """
     from app.ocr_optimizer.models import OcrPromptVersion
     from app.ocr_optimizer.service import template_loader
-    from app.ocr_optimizer.service.composer import GLOBAL_OUTPUT_CONTRACT_DETAILS
+    from app.ocr_optimizer.service.preset_init import build_v1_prompt
 
     v = db.query(OcrPromptVersion).filter(
         OcrPromptVersion.id == api_def.prompt_version_id).one_or_none()
@@ -124,7 +124,8 @@ def refresh_prompt_from_country_template(db: Session, api_def: ApiDefinition) ->
         return False
 
     d = template_loader.decompose_country_template(CHINKIN_COUNTRY)
-    new_prompt = d["prompt_format"].rstrip() + "\n\n" + GLOBAL_OUTPUT_CONTRACT_DETAILS + "\n"
+    # 与 preset_init 建 v1 时**同一套组装**——否则刷新会把字段清单段洗掉
+    new_prompt = build_v1_prompt(d)
     # 只比 prompt 正文会漏掉「只改了 schema description」的模板升级 —— schema 同样要比。
     if new_prompt == v.composed_prompt and d["json_schema"] == v.composed_schema:
         return False

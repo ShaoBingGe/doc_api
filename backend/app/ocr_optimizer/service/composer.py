@@ -281,10 +281,13 @@ def _render_schema_tree(schema: dict, *, max_depth: int = 6) -> str:
     lines: list[str] = []
 
     def _type_of(node: dict) -> str:
+        # 国家模板的 yaml 用大写类型名（ARRAY / OBJECT / STRING，Gemini schema 风格），
+        # composer 自组装的用小写。统一小写后再比较——否则 array/object 分支永远命中
+        # 不了，整棵树会退化成 JSON dump（体积反而比字段树大数倍）。
         t = node.get("type")
         if isinstance(t, list):
-            return "/".join(str(x) for x in t)
-        return str(t or "any")
+            return "/".join(str(x).lower() for x in t)
+        return str(t or "any").lower()
 
     def _walk(node: dict, name: str | None, depth: int) -> None:
         if depth > max_depth or not isinstance(node, dict):
@@ -306,9 +309,14 @@ def _render_schema_tree(schema: dict, *, max_depth: int = 6) -> str:
             else:
                 # 数组根（国家模板 $[*].x 家族）：明确告知输出是 JSON 数组
                 lines.append(f"{indent}- 输出为 JSON 数组，每个元素为一条记录（{it}），字段如下：")
-            if isinstance(items, dict) and items.get("properties"):
-                for k, v in items["properties"].items():
-                    _walk(v if isinstance(v, dict) else {}, k, depth + 1)
+            if isinstance(items, dict):
+                if items.get("anyOf"):
+                    # 国家模板的数组根：items 是 anyOf（invoice/receipt 对象 | other 对象），
+                    # 需转交 anyOf 分支展开，否则子字段一个都渲染不出来。
+                    _walk(items, None, depth + 1)
+                elif items.get("properties"):
+                    for k, v in items["properties"].items():
+                        _walk(v if isinstance(v, dict) else {}, k, depth + 1)
             return
         if t == "object" or node.get("properties"):
             if name is not None:
