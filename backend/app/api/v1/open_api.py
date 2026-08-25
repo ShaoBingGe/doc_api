@@ -4,6 +4,8 @@
 
     POST /base/oauth/token
     POST /ai/knowledge/nlpService/document/analyze?access_token={token}
+    POST /ai/knowledge/nlpService/overseaInvoice/extraction?access_token={token}
+        └─ 别名，与上一条完全等价（存量对接方写死了这条路径）
 
 与既有的 `/api/v1/extract/{api_code}`（X-API-Key）并存：前者给外部客户，
 后者给工作区/前端。两条路径共用同一套提取管线（extract_service）。
@@ -111,8 +113,24 @@ def _resolve_api_def(
     return api_def
 
 
+# 对外暴露的两条等价路径。第一条来自生产日志切片（规范路径）；第二条是
+# 票易通「海外发票」业务线的历史路径 —— 对接方把它写死在了客户端代码里，
+# 改不动，故服务端挂别名兜住。两条路径同一个 handler、同一套鉴权与提取管线，
+# 行为逐字节一致；新接入方一律引导用规范路径。
+ANALYZE_PATH = "/ai/knowledge/nlpService/document/analyze"
+ANALYZE_PATH_ALIAS = "/ai/knowledge/nlpService/overseaInvoice/extraction"
+
+
 @router.post(
-    "/ai/knowledge/nlpService/document/analyze",
+    ANALYZE_PATH_ALIAS,
+    summary="文档结构化解析（别名路径，等价于 document/analyze）",
+    description=(
+        f"与 `{ANALYZE_PATH}` 完全等价，供已写死此路径的存量对接方使用。\n"
+        "新接入请用规范路径。"
+    ),
+)
+@router.post(
+    ANALYZE_PATH,
     summary="文档结构化解析（开放平台）",
     description=(
         "multipart/form-data：templateId / fileHash / file / clientId。\n"

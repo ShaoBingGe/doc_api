@@ -14,6 +14,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.v1 import open_api
 from app.main import app
 from app.models.api_definition import ApiDefinition, ApiDefinitionStatus
 from app.models.open_api_client import OpenApiClient
@@ -195,6 +196,50 @@ def test_analyze_missing_file(client, seeded):
         f"/ai/knowledge/nlpService/document/analyze?access_token={token}",
         data={"templateId": str(TEMPLATE_ID), "clientId": CLIENT_ID})
     assert r.json()["errcode"] != "0000"
+
+
+# ── 别名路径（overseaInvoice/extraction）──────────────────────────────────────
+# 存量对接方把这条路径写死在客户端里，改不动；服务端挂别名兜住。
+# 两条路径必须逐字段等价 —— 若哪天有人只给规范路径加了逻辑，这组测试要报警。
+
+def test_alias_path_returns_same_envelope_as_canonical(client, seeded):
+    """别名路径与规范路径响应结构一致（traceId 逐次随机，故排除后比对）。"""
+    token = _token(client)
+
+    def _call(path: str) -> dict:
+        r = client.post(
+            f"{path}?access_token={token}",
+            headers={"client-platform": "common"},
+            data={"templateId": str(TEMPLATE_ID), "fileHash": "abc123",
+                  "clientId": CLIENT_ID},
+            files={"file": ("doc.pdf", io.BytesIO(b"%PDF-1.4 fake"),
+                            "application/pdf")},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        body.pop("traceId")
+        return body
+
+    canonical = _call(open_api.ANALYZE_PATH)
+    alias = _call(open_api.ANALYZE_PATH_ALIAS)
+    assert alias == canonical
+
+
+def test_alias_path_enforces_the_same_auth(client, seeded):
+    """别名不得成为鉴权旁路：缺 token 一样 200 + 非 0000。"""
+    r = client.post(
+        open_api.ANALYZE_PATH_ALIAS,
+        data={"templateId": str(TEMPLATE_ID), "clientId": CLIENT_ID},
+        files={"file": ("d.pdf", io.BytesIO(b"x"), "application/pdf")})
+    assert r.status_code == 200
+    assert r.json()["errcode"] != "0000"
+    assert r.json()["data"] == []
+
+
+def test_alias_path_string_is_the_one_the_client_hardcoded(client, seeded):
+    """路径字面量本身是对外契约，写死在对方代码里 —— 改一个字符就是线上 404。"""
+    assert open_api.ANALYZE_PATH_ALIAS == (
+        "/ai/knowledge/nlpService/overseaInvoice/extraction")
 
 
 # ── 映射器单测（不依赖 HTTP）──────────────────────────────────────────────────
