@@ -1,0 +1,278 @@
+{
+  "version_id": "5c7185b7-a302-460f-93aa-3f43a248ae14",
+  "version": "1",
+  "origin": "init",
+  "processor": "gemini/gemini-3.5-flash",
+  "composed_prompt": "# 任务\n请识别并提取这份马来西亚（MY）票据文档（PDF / 图片），按下方 JSON Schema 输出合法 JSON。\n**一份文档可能含多张彼此独立的票据**（常见于整月发票扫在一个 PDF 里），也可能是\n一张票据跨多页；还可能排版混乱、印刷模糊。先按 §1.0 定「有几张」，再逐张提取。\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n# Part 1 · 马来西亚（MY）国家全局说明\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n## 1.0 票据切分 —— 先定「有几张」，再定「每张是什么」\n切错张数会让整条记录作废，**这一步优先于分类与字段提取**。\n\n### 1.0.1 一条记录 = 一张物理独立的凭证\n有自己的发行方、单号、金额、日期的一张凭证算一条。同一张凭证内部的多个区块\n（表头 / 明细表 / 付款栏 / 签收栏）**合为一条**，不得拆开。\n\n### 1.0.2 逐页扫描，每一页都要看\n多页文档必须**从第 1 页到最后一页逐页检查**，不得只看首页就结束。\n典型场景：一份 PDF 把整月的多张发票扫在一起，每页一张、各有各的\n`Invoice No.` 与 `Total` —— 这种情况必须逐张输出，有几张就输出几条。\n自检：若文档有 N 页且每页都印着不同的 Invoice No./Total，输出记录数应当接近 N，\n只输出 1 条几乎一定是漏检，必须回头重查。\n\n### 1.0.3 跨页单张 vs 多张独立 —— 按「单号 + 页码标记」判定\n- **跨页单张**（合并为一条，`page` 列出全部页码）：后续页是前一页的延续，\n  特征为 **`Invoice No.` 与首页相同**，或页面标注 `Page 2 of 5` / `Page: 2/5`，\n  或标题为 `Attachment to Invoice` / `Continuation` / 仅有明细延续而无独立合计。\n- **多张独立**（各自一条）：每页有**各自不同**的 `Invoice No.`，且各自有独立的\n  `Total` / `Total Payable` / `GROSS` 合计。\n- 判据优先级：**先比 Invoice No.**（不同即为不同票据），再看页码标记，最后看是否有独立合计。\n\n### 1.0.4 一页多张\n同一页上下拼贴多张小票/发票时，每张各输出一条；`page` 均填该页页码。\n禁止因商家相同、金额相同而合并或去重 —— 同额的两张仍是两条。\n\n### 1.0.5 附件与非票据页\n发票后附的送货单（Delivery Order）、装箱单、对账单、条款页、空白页，\n若**不构成独立的付款凭证**，记为 `docType: other`（仅输出 docType 与 page）；\n不要把它们并进发票，也不要漏掉不输出。\n\n### 1.0.6 输出前清点\n输出 JSON 前，先在心里列出「第几页-单号-合计金额」的清单，再逐条转成记录；\n**记录数必须等于清单条数**。每条记录都要能指认它在第几页；指不出来的不要输出，\n也不要编造票面上不存在的单号或金额。\n\n## 1.1 票据种类分类（docType + invoiceType）\n- **invoice**：正式付款凭证，包含供应商和客户信息、发票号码、日期、税务信息、付款条款、商品或服务明细、总金额。\n  下列子类型一律归为 invoice（即使名称含 quotation / credit / proforma 等）：\n  - Commercial Invoice（标准发票，默认子类）\n  - Proforma Invoice（形式发票；票面含 PROFORMA / PRO FORMA 等关键词）\n  - Credit Note（贷项发票；票面含 AVOIR / CREDIT 等关键词，或 totalAmount < 0）\n  - Tax Invoice（税务发票；票面含 \"Tax Invoice\" / \"Faktur Pajak\"，MY 多数 SST 发票属此类）\n  - Debit Note（借项发票）\n  - Quotation 报价单：若含供应商/客户/明细/金额等 invoice 核心要素，亦归 invoice\n  - Receipt/Tax Invoice 收据税票：含税务信息（如 SST/TIN）的归 invoice\n- **receipt**：小额付款凭证，一般无详细税务信息，如各种小票、收据。\n- **other**：合同、订单确认书等不属 invoice/receipt 的文档。\n\n## 1.2 内容与格式统一要求\n- **语言**：MY 票据以英文为主，部分中/马来文。**保持原文，不翻译**。\n- **货币**：默认 MYR / RM。\n  - 千分位 `,` + 小数点 `.`（同 USD/CNY/GBP）：`6,000.00` → 实际值 `6000.00`；`1,234,567.89` → `1234567.89`。\n  - 注意区分越南 VND / 部分欧洲格式（`.` 千分位、`,` 小数点）—— 若票面出现 VND 等标识或数字规律明显相反，按相反规则解析。\n  - **输出统一为纯数字字符串/数值，严禁保留千分位符号或货币符号。**\n- **税率**：以百分比字符串输出，如 `\"6%\"`、`\"10%\"`。\n- **日期处理（绝对规则，必须严格遵守）**：\n  1. **核心原则：年份必须 ≥ 2015**。任何解析出 < 2015（如 2014/2012/2006）的结果一律抛弃。\n  2. **歧义消除**：MY 主流为 `DD-MM-YYYY`；遇到 `07-09-24` 这种二位年时按上述年份原则筛选；剩余多个合理解析中取最合理者。\n  3. **输出格式**：最终所有日期字段 **统一 YYYY-MM-DD**。\n\n## 1.3 MY 税号/税编强制规定\n- **TIN（Tax Identification Number）**：所有 MY 实体的纳税识别号。\n  - 格式：`C` + 10 位数字（如 `C5884056070`、`C4908240100`）。\n  - 一张票面上若同时出现卖方 TIN 与买方 TIN：\n    - 卖方 TIN → `billFromTaxIdentificationNumber`\n    - 买方 TIN → `billToTaxIdentificationNumber`\n  - 关键词：`TIN`、`TIN No.`、`Supplier TIN`、`Buyer TIN`、`Customer Tin No.`\n- **SSM / Company Reg. No.（业务登记号）**：MY 公司注册号，**仅供应商提取，不取买方**。\n  - 格式：12 位纯数字（新号，如 `199201000276`），或旧号带连字符（如 `518287-T`、`424868-V`），或并列（如 `199701009372 (424868-V)`）—— 完整保留原文。\n  - 关键词：`Company Reg.No`、`Registration No`、`SSM`，或公司名称右侧括号内的 12 位数字。\n  - 字段：`billFromBusinessRegistrationNumber`。\n  - **逐位核读（本字段最易错）**：新式号常紧挨公司名排在同一行、字号偏小，扫描件里\n    易与公司名笔画重叠粘连，**末位尤其容易读错**（如 `…018633` 误读成 `…018630`）。\n    提取后做三项自检：① 去掉括号旧号后应恰为 **12 位纯数字**；\n    ② 前 4 位是注册年份，须在 1950–本年之间；\n    ③ 若该号在票面出现多处（抬头 / 页脚 / 印章 / 条款区），**相互比对取一致值**。\n- **SST Number（销售与服务税号）**：与 TIN / SSM 完全不同，**不要混用**。MY 票面常单独标注 `Sales Tax No.` / `SST ID`。\n  - **严禁将 SST 号当作 invoice number / TIN / SSM**。\n- **发票号 invoiceNumber**：\n  - 关键词：`Invoice No`、`INVOICE NO:`、`E INV NO`、`No.`\n  - 典型格式：`PT-148862`、`S-25/10-0059`、`INV13398`、`IN2601/1024`、`25FC011847`\n  - **严禁将 Sales Tax No 或 SST ID 误取为 invoice number。**\n\n## 1.35 明细行的字段归属（易错，务必按此填）\n明细数组 `detailOfGoodsOrServices` 每行的字段归属**由语义决定，不看票面列头的英文用词**：\n- **`articleName` = 这一行卖的是什么（品名/服务名）**。MY 发票的品名列表头五花八门：\n  `Description`、`Item`、`Item Description`、`Particulars`、`Product`、`Descriptions of Goods`\n  —— **无论表头叫哪个，品名一律填 `articleName`**。\n  只要该行有商品/服务，`articleName` **就不得为空**。\n  例：表头是 `Description`、该行内容是 `LONGKANG TANAH 6\" (WL)`\n  → `articleName` = `LONGKANG TANAH 6\" (WL)`。\n- **`description` = 品名之外的补充说明**（规格、批号、备注列 Remark/Notes、型号、`c/o 某某` 等）。\n  **它不是票面 `Description` 列的对应字段。**\n  若该行只有一段文字（就是品名），`description` **留空**，不要把品名复制一份到这里。\n- 自检：输出前检查每一行——**出现 `articleName` 为空但 `description` 有品名，即为填反了，必须对调**。\n\n## 1.4 必填字段与缺失处理\n- **invoice / receipt 类型**：`docType`、`invoiceType`、`page`、`currency` 必须输出；若票面无 currency，按 MY 上下文推断（默认 MYR）。\n- **other 类型**：仅 `docType`、`page` 必须输出。\n- **缺失信息**：无法找到的字段一律不输出，**不要推断、不要捏造**。\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n# Part 2 · 字段识别规则\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n下方 JSON Schema 中每个字段的 `description` 已经包含了：\n- 该字段的业务含义\n- MY 票面常见关键词与典型格式\n- 取值位置锚点\n- 易混淆字段的辨别要点\n- 数值类字段的取值方法（如税额优先语义匹配 / 严禁推算）\n\n**请严格按 schema 中每字段的 description 提取。**\n\n> 说明：字段识别规则（\"在哪里找、找什么\"）由本 Part 2 + schema description 承担；\n> 输出装配规则（\"找到后怎么组装成 JSON\"）已统一抽到 Part 3 平台契约。\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n# Part 3 · 输出契约与装配规则\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n> 本部分由平台统一管理，运行时由 composer 从\n> `backend/app/ocr_optimizer/assets/global_output_contract.yaml`\n> 强制注入。本 yaml 中**不复制具体规则**，避免双向维护漂移。\n>\n> 涵盖：\n>   3.1 顶层 ARRAY 结构\n>   3.2 数值字段统一规范（去千分位、去货币符号、保留精度）\n>   3.3 税额装配（detailOfTaxSummary 数组 + 总税额一致性 + ADJUSTMENT 平账）\n>   3.4 行项目装配（一行一项 + qty×price 校验 < 1% + PO/SO/DO 头/行二选一）\n>   3.5 跨页装配（合并为单元素 + page 数组）\n>   3.6 Credit Note 装配（originalInvoiceReferences 必填）\n>   3.7 缺失字段处理（找不到不输出，严禁推断捏造）\n>   3.8 字段输出顺序（预留）\n>\n> 国家级特例（如 MY 货币千分位约定）写在 Part 1.2 作为\"输入侧事实\"，\n> 为 Part 3 平台规则提供解析依据。\n> 本国家无 Part 3 特例 override。\n\n\n━━━ MY 报销贴单专项修正（v5）━━━\n**本段优先级最高。与前文任何规则冲突时，一律以本段为准。**\n\n## A. 刷卡小票 / 收银小票必须判 `receipt`\n\n马来西亚加油站、便利店、餐饮的**刷卡支付凭条与收银小票**，\n即便票面印有 `INVOICE` / `Current Invoice` 字样，也一律判 `docType: \"receipt\"`。\n\n识别特征（命中任意两条即判 receipt）：\n\n- 窄条形票面（收银机 / POS 打印），字段竖排、点阵或热敏打印\n- 含刷卡交易字段：`Card Name` / `Terminal` / `Site Id` / `Auth Code` /\n  `App ID` / `App Crypt` / `Approved` / `Verification` / `Seq. Number`\n- 含 `Pump` / `FuelSave` / `BUDI95` / `Subsidy` / `Litr` / `ltr` 等加油字样\n- **没有买方信息**（无 Bill To / Customer / MESSRS 抬头）\n- 没有独立的税额拆分表\n\n只有同时具备**买方抬头 + 供应商税号（TIN/SST）+ 明确税额行**的正式票据，\n才判 `invoice`。抬头写 `TAX INVOICE` 且有 SST/税额的，判 `invoice`。\n\n### A-1. 手写 / 预印收据本也是 receipt\n\n马来西亚常见的**手写现金收据本**（票面预印表格、手工填写金额）判\n`docType: \"receipt\"`，不要因为它有编号就判成 invoice。\n\n识别特征：\n\n- 抬头为 `CASH BILL` / `BILL` / `RESIT` / `INVOICE`（预印），右上角有\n  预印流水号 `No. 10206` 这种\n- 表格为空白待填的 `Butir-Butir / Particulars`、`Kuantiti / Quantity`、\n  `Harga / Unit Price`、`Nilai / Amount` 列\n- 底部有 `Terima Oleh / Received By`、`Disahkan Oleh / Prepared By` 签收栏\n- 内容为手写体，无税号、无买方公司信息、无税额拆分\n\n这类单据**永远不是** invoice——它只是收款方手工开具的收款凭证。\n\n### A-2. 什么**不算** receipt（反向边界，优先于 A 判定）\n\n下列内容即便含刷卡字样，也一律判 `docType: \"other\"`，**不要**当成 receipt：\n\n- **银行卡 / 电子钱包账单里的单条交易记录**：特征是只有一行「日期 + 商户名 +\n  金额」，金额常带负号（如 `-RM 100.00`）或标注 `Transaction Date:`，\n  **没有商户抬头版块、没有明细行、没有合计行、没有任何单号**。\n  它是账单的一行，不是商户开出的凭证。\n- **对账单 / 交易流水表**（Transaction History、Statement、账单汇总表）：\n  整页是表格化的多行流水，即便每行有金额也不拆成多张票据。\n- 送货单（Delivery Order）、装箱单、条款页、空白页、封面页。\n\n**判据**：一张真正的 receipt 必然具备「**商户抬头 + 至少一行消费明细 +\n一个合计金额**」三者。三者缺一，就不是 receipt。\n\n## B. `nameOfInvoice` 必须输出票面抬头\n\n`nameOfInvoice` 填**票面上原样印着的标题文字**，保持原大小写与原文，不翻译。\n常见取值：`INVOICE`、`TAX INVOICE`、`Receipt`、`CASH BILL`、`Current Invoice`、\n`RESIT`、`Bill`。\n\n- 抬头可能在票面顶部居中，也可能在商户名之下、明细表之上。\n- 票面确实没有任何标题文字时才留空；**不要用 `invoiceType` 的值去凑**。\n\n## C. 加油 / 刷卡凭条的单号取 `Reference No`\n\n**适用范围（务必先判断）**：仅适用于**没有明确单号标注**的加油站、\n刷卡支付凭条——即票面上找不到 `Invoice No` / `Bill No` / `Receipt No`\n这类明确标注、只有一堆交易系统字段的那种小票。\n\n**票面若印有明确的单号标注，一律优先取它**，不要改取 Reference No：\n`Invoice No` / `INVOICE NO` / `Bill No` / `Receipt No` / `Resit No` /\n`R.No` / `Master Bill` / `Booking No`。\n\n只有在上述标注**全部缺失**时，才按以下顺序取值：\n\n1. `Reference No` / `Ref No` / `Ref. No` ← 首选\n2. `Approval Code` / `Auth Code`（仅当连 Reference No 也没有）\n\n**无论何种情况都绝对不要取**下列字段作为 `invoiceNumber`：\n`Terminal`（终端号，常见 8 位纯数字）、`Site Id`、`Site Tran No`、`Batch No`、\n`Card No`、`Seq. Number`、`App ID`、`App Crypt`、`CDB Ref No`。\n\n**自检**：同一份文档里若两张不同的票出现**相同**的 `invoiceNumber`，\n说明取错了字段（多半取成了 Terminal 或 Site Id）——回到票面重新按上表取值。\n\n## D. 多币种票据在马来西亚场景优先取 MYR\n\n票面同时列出外币与马币两种金额时（典型：境外平台开给马来西亚客户的收据，\n如 `GRAND TOTAL USD 54.98` 与 `Total Charge MYR 224.97 (USD 54.98)`）：\n\n- `currency` 取 **MYR**\n- `totalAmount` 取**马币那一行的数值**（上例为 `224.97`，不是 `54.98`）\n- 判据：马币金额通常出现在 `Total Charge` / `Amount Charged` / `结算金额` 一行，\n  是**实际扣款金额**；外币行只是计价币种。\n\n票面只有单一外币、完全没有马币行时，照原币种输出，不做换算。\n\n## E. 明细行的 `unitPrice`\n\n明细表里票面**印有单价列**时（`Price` / `Unit Price` / `Harga` / `@` 后的数字、\n或 `12.34/ltr` 这类每单位价格），必须填 `unitPrice`。\n\n- 加油小票的 `RM3.370/ltr`、`@RM1.380/ltr` 就是单价，填 `3.370` / `1.380`。\n- 数量为 1 且票面只印一个金额时，`unitPrice` 等于该金额。\n- 票面确实没有单价列、也无法从 `netAmount ÷ quantity` 直接读出时才留空——\n  **不要为了填而用除法反推**（除不尽会引入假精度）。\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n# 输出字段清单（键名必须逐字一致）\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n最终 JSON **只能使用下列键名**，严禁自创、改写、缩写或翻译键名。\n常见错误：把 `invoiceDate` 写成 `date`/`issueDate`；把 `totalNetAmount`\n写成 `subTotal`；把 `billFromName` 写成 `billFrom`；把金额只填进\n`grossAmount` 而让 `totalAmount` 留空。**读对了值但填错键 = 该字段丢失。**\n票面没有的字段不输出该键（不要给 null / \"\" / 0），但**凡是读到的值，必须放进下列对应的键**。\n\n- 输出为 JSON 数组，每个元素为一条记录（any），字段如下：\n  - anyOf ↓\n    - (选项1): object\n      - docType: string（enum: invoice | receipt）\n      - page[]: number\n      - invoiceType: string（enum: Commercial Invoice | Proforma Invoice | Credit Note | Tax Invoice）\n      - nameOfInvoice: string\n      - invoiceNumber: string\n      - invoiceCode: string\n      - invoiceDate: string\n      - totalNetAmount: number\n      - totalAmount: number\n      - totalTaxAmount: number\n      - currency: string\n      - billToName: string\n      - billToComposite: string\n      - billToCountry: string\n      - billToCountryCode: string\n      - billToTaxIdentificationNumber: string\n      - billFromName: string\n      - billFromComposite: string\n      - billFromCountry: string\n      - billFromCountryCode: string\n      - billFromTaxIdentificationNumber: string\n      - billFromBusinessRegistrationNumber: string\n      - purchaseOrderNumber: string\n      - dueDate: string\n      - salesOrderNumber: string\n      - deliveryOrderNumber: string\n      - detailOfGoodsOrServices[]: object\n        - articleName: string\n        - description: string\n        - quantity: number\n        - unitOfMeasure: string\n        - unitPrice: number\n        - netAmount: number\n        - taxRate: string\n        - tax: number\n        - grossAmount: number\n        - orderNumber: string\n        - salesOrderNumber: string\n        - deliveryOrderNumber: string\n        - purchaseOrderNumber: string\n      - detailOfTaxSummary[]: object\n        - taxCategory: string\n        - taxRate: string\n        - netTaxableAmount: number\n        - tax: number\n      - originalInvoiceReferences[]: object\n        - originalInvoiceCode: string\n        - originalInvoiceNumber: string\n        - originalInvoiceDate: string\n    - (选项2): object\n      - docType: string（enum: other）\n      - page[]: number\n\n# Part 3 · 输出契约与装配规则（平台统一）\n\n## 3.1 顶层结构\n输出必须是 JSON Schema 中定义的 ARRAY。每个元素是一张票据对象（anyOf：invoice/receipt/other）。\n整份文档若含多张票据，按出现顺序作为数组元素，**不要合并**。\n整份文档若仅一张票据，输出长度为 1 的数组。\n\n## 3.2 数值字段统一规范\n所有 type=NUMBER 的字段（含明细行的 quantity / unitPrice / netAmount / tax / grossAmount，\n以及票头的 totalNetAmount / totalAmount / totalTaxAmount）：\n- **一律去除千分位分隔符**（`,` 或 `.`，按国家 Part 1.2 的\"输入侧事实\"判别）\n- **一律去除货币符号**（$ / RM / ¥ / € / £ 等）\n- **保留原始小数精度**（不四舍五入、不补零、不截断）\n- 负数（如 Credit Note 的总金额）保留 `-` 号\n- 严禁输出字符串形式的数字（\"6000.00\" 错，6000.00 对）\n\n## 3.3 税额装配\n`detailOfTaxSummary` 是数组：每个税种 × 税率 = 一行。\n- `taxCategory` 优先使用平台标准简称表（VAT/SST/GST/WHT/CIT/CT/...），不在表中用票面原名\n- `netTaxableAmount` / `tax` 同 §3.2 数值规范\n- 总税额一致性：\n  * `totalTaxAmount` 应等于 `sum(detailOfTaxSummary[].tax)`\n  * 若票面给出独立的总税额（如 \"Total Tax: RM 600.00\"）且与 `sum(detailOfTaxSummary[].tax)` 不一致：\n    - **以票面独立总税额为准**写入 `totalTaxAmount`\n    - 同时在 `detailOfTaxSummary` 末尾补一行 `{\"taxCategory\": \"ADJUSTMENT\", \"tax\": <差值>}` 用于平账\n- **严禁推算**：不要用 `totalAmount - totalNetAmount` 反推 `totalTaxAmount`；必须在票面找到税金标识\n\n## 3.4 行项目装配\n- **一行 = 一项**（detailOfGoodsOrServices 数组每个元素）；不要把多个商品合并成一行，也不要把一行拆成多行\n- **数值一致性校验**：每行必须满足\n  `|quantity × unitPrice - netAmount| / max(|netAmount|, 1) < 0.01`（即误差 < 1%）\n  校验失败时：**优先信任 `netAmount`**（票面给出的金额），重新核对 `quantity` 或 `unitPrice`\n- **PO / SO / DO 单号归属规则**（仅写一处，**严禁两边都填**）：\n  | 情况 | 写到 |\n  |---|---|\n  | 单号对整张发票通用 | 票头的 `purchaseOrderNumber` / `salesOrderNumber` / `deliveryOrderNumber` |\n  | 单号仅对某一行适用 | 对应行的同名字段 |\n  | 单号既出现在表头又出现在每行 | 视为头级，**只填票头** |\n- 行项目内的 `tax` / `grossAmount` 同样遵循 §3.2\n\n## 3.5 跨页装配\n同一张票据跨越多页时：\n- 合并所有页内容为**单个**数组元素（不要拆成多条记录）\n- `page` 字段输出全部连续页码数组，如 [2, 3, 4]\n- 跨页明细：把所有页的行项目按出现顺序合并到 `detailOfGoodsOrServices`\n\n## 3.6 Credit Note 装配\n当 `invoiceType = \"Credit Note\"`：\n- 必须填 `originalInvoiceReferences` 数组（原发票号 / 原发票代码 / 原发票日期 各一组）\n- 若票面有多组原始发票引用，全部输出为多个数组元素\n- `totalAmount`、`totalNetAmount`、`totalTaxAmount` 通常为负数，保留 `-` 号\n- `detailOfGoodsOrServices` 的 `quantity`、`netAmount`、`grossAmount` 同样为负数\n\n当 `invoiceType != \"Credit Note\"`：\n- **不输出** `originalInvoiceReferences` 字段（不要给空数组）\n\n## 3.7 缺失字段处理\n- schema 中 **非 required** 字段，若票面无信息：**不要输出**该字段（不要给 null / 不要给 \"\" / 不要给 0）\n- schema 中 **required** 字段（如 `docType` / `page` / `invoiceType` / `currency`）若缺失：\n  按国家 Part 1.4 默认值规则处理；不能默认的，按 Part 1.3 推断\n- **严禁推断、严禁捏造、严禁拼凑** —— 找不到就不写，宁可漏字段也不要错字段\n\n## 3.8 字段输出顺序\n当前版本不强制 key 顺序，按 JSON 解析器默认输出即可。\n（预留：若未来下游 API 要求稳定排序，在此声明规则。）\n\n## 3.9 字段重命名传导\n当某个字段在客户工作区被重命名（OcrModule 的 module_key 在 fork 时从\n旧名变为新名，或临时 pending_edits.renames 注入了 {旧→新} 映射）：\n- **最终 JSON 输出 key 必须使用新名**（fork 后 module_key 即新名；fork 前由\n  Part 3 pending-edits 章节注明的映射决定）\n- 严禁同时输出旧 key 和新 key\n- prompt 中可能保留旧字段命名作为「识别提示」（语义锚点），但输出 key\n  以新命名为准\n- 若 prompt 中存在 \"{旧字段命名} → {新字段命名}\" 显式映射，\n  以该映射为最终输出 key 的权威来源\n",
+  "composed_schema": {
+    "title": "invoice_and_receipts",
+    "type": "ARRAY",
+    "items": {
+      "anyOf": [
+        {
+          "type": "OBJECT",
+          "properties": {
+            "docType": {
+              "type": "STRING",
+              "description": "票据类型：invoice 或 receipt",
+              "enum": [
+                "invoice",
+                "receipt"
+              ]
+            },
+            "page": {
+              "type": "ARRAY",
+              "description": "所在文档中的页码列表（从1开始编号）。注意：一张票据可能跨越多个页面，应将这些连续页码作为一个数组整体输出。例如：票据出现在第2至第4页时，输出为 [2, 3, 4]。",
+              "items": {
+                "type": "NUMBER"
+              }
+            },
+            "invoiceType": {
+              "type": "STRING",
+              "description": "发票类型，分为：\n  - 'Commercial Invoice' (正式发票)：默认类型，若非 'Proforma Invoice' 或 'Credit Note'，则归为此类。\n  - 'Proforma Invoice' (形式发票)：如果票面包含 \"PROFORMA\", \"PRO FORMA\", \"Záloha\", \"Facture d'Avance\", \"Prepayment\", \"Vorkassenrechnung\" 等关键词。\n  - 'Credit Note' (贷项发票)：如果票面包含 \"AVOIR\", \"CREDIT\" 等关键词，或 totalAmount < 0。\n  - 'Tax Invoice' (税务发票)：如果票面包含 \"'Tax Invoice\", \"Faktur Pajak\" 等关键词。",
+              "enum": [
+                "Commercial Invoice",
+                "Proforma Invoice",
+                "Credit Note",
+                "Tax Invoice"
+              ]
+            },
+            "nameOfInvoice": {
+              "type": "STRING",
+              "description": "票面标题，票面上的标题，如'VAT Invoice'、'Debit Note'等。"
+            },
+            "invoiceNumber": {
+              "type": "STRING",
+              "description": "发票号码或收据编号。\n通用规则：如果找不到，则查找票面的 'Invoice No'、'請求書番号'、'ご請求番号'、'ﾚシートNo'、'発券No'、'伝票番号'、'No.'、'No'。\n马来西亚发票补充规则：可查找 \"Invoice No\"、\"No.\"、\"INVOICE NO:\"、\"E INV NO\"；典型格式如 PT-148862、S-25/10-0059、INV13398、IN2601/1024、25FC011847；严禁将 Sales Tax No 或 SST ID 提取为发票号。"
+            },
+            "invoiceCode": {
+              "type": "STRING",
+              "description": "发票类型代码，如果没有发票类型代码信息, 则查找发票序列号、'Serial'、'Ký hiệu'、'Ký hiệu(Serial)'。'Mã CQT(Code)'不是发票类型代码。"
+            },
+            "invoiceDate": {
+              "type": "STRING",
+              "description": "发票发行日期。"
+            },
+            "totalNetAmount": {
+              "type": "NUMBER",
+              "description": "全票不含税总净额。\n注意：必须是所有商品/服务项的净额加总。如果票面有多个部分（如本金和佣金），请务必求和后再输出，不要只提取其中一部分的金额作为总净额。"
+            },
+            "totalAmount": {
+              "type": "NUMBER",
+              "description": "含税总金额，常见为Ukupan iznos fakture、subTotal、total、รำกวนเรียนทั้งสิ้น等。"
+            },
+            "totalTaxAmount": {
+              "type": "NUMBER",
+              "description": "总税额。提取逻辑如下：\n1. **语义优先**：优先提取明确标识为 'Tax', 'VAT', 'GST', 'IVA', 'Tax Amount' 等字段的数值总和。\n2. **结构识别**：在存在多行税率汇总表（Tax Summary）的情况下，应提取表中各税种金额的加总，而不是提取表中的 'Total' 或 'Subtotal' 字段。\n3. **严禁推算**：严禁仅通过 (TotalAmount - 某个收支项) 简单推算税额，必须在票面找到对应的税金标识。"
+            },
+            "currency": {
+              "type": "STRING",
+              "description": "币种，以ISO 4217货币代码形式输出，如：USD, CNY, CAD, AUD, GBP, JPY, DEM, HKD, FRF, CHF, VND等。"
+            },
+            "billToName": {
+              "type": "STRING",
+              "description": "收票方的名称。如果没有'Bill To'，则找'MESSRS'、'Purchaser'、'Customer'、'Buyer'、'Attention to'或其他和'购买方'同义的词语。"
+            },
+            "billToComposite": {
+              "type": "STRING",
+              "description": "收票方的完整地址信息。"
+            },
+            "billToCountry": {
+              "type": "STRING",
+              "description": "收票方所在国家，根据收票方的完整地址提取。"
+            },
+            "billToCountryCode": {
+              "type": "STRING",
+              "description": "收票方所在国家的ISO 3166-1 alpha-2国家代码，如：CN, US, MY, SG, JP, GB, DE等。"
+            },
+            "billToTaxIdentificationNumber": {
+              "type": "STRING",
+              "description": "收票方（买方）的税务注册码。\n马来西亚发票补充规则：查找 \"TIN\"、\"TIN No.\"、\"TIN Number\"、\"Supplier TIN\"、\"Buyer TIN\"、\"Customer Tin No.\"；格式必须为 \"C\" 开头 + 10 位数字（例如 C5884056070、C4908240100），不符合此格式的不要写入该字段；当票面同时存在供应商 TIN 与买方 TIN 时，只取买方 TIN。"
+            },
+            "billFromName": {
+              "type": "STRING",
+              "description": "开票方的名称。如果没有'From'信息, 或者'From'信息不像一个公司名称，则找：'Account Name'、'Beneficiary Name'、'Seller'、'Remit to'、底部签名处或者标题、收据或小票的商家名称。"
+            },
+            "billFromComposite": {
+              "type": "STRING",
+              "description": "开票方的完整地址信息。"
+            },
+            "billFromCountry": {
+              "type": "STRING",
+              "description": "开票方所在国家，根据开票方的地址信息提取。"
+            },
+            "billFromCountryCode": {
+              "type": "STRING",
+              "description": "开票方所在国家的ISO 3166-1 alpha-2国家代码，如：CN, US, MY, SG, JP, GB, DE等。"
+            },
+            "billFromTaxIdentificationNumber": {
+              "type": "STRING",
+              "description": "开票方（卖方）的税务注册码。\n通用规则：如果找不到，则查找税务注册码、'VAT Registration'、'TAX#'。\n马来西亚发票补充规则：查找 \"TIN\"、\"TIN No.\"、\"TIN Number\"、\"Supplier TIN\"、\"Vendor TIN\"、\"Seller TIN\"、\"Income Tax No.\"；格式必须为 \"C\" 开头 + 10 位数字（例如 C5884056070、C4908240100），不符合此格式的不要写入该字段；当票面同时存在供应商 TIN 与买方 TIN 时，只取供应商 TIN。**严禁将 SST 号 / Sales Tax No. / SSM 注册号当作 TIN 写入本字段**（SST/SSM 各有专门字段）。"
+            },
+            "billFromBusinessRegistrationNumber": {
+              "type": "STRING",
+              "description": "开票方（供应商）的商业登记号 / 注册号 / SSM 号码。\n通用规则：提取 Company No. / Co. Reg. No. / Registration No. / Company Reg No. / BRN 后面的编号，注意可能包含新旧号、括号、连字符，例如 200201024195 或 199501005689 (New)。\n马来西亚发票补充规则：查找 \"Company Reg.No\"、\"Registration No\"、\"SSM\"，或公司名称旁括号内的 12 位数字；典型格式如 199201000276、199501005689、518287-T、199701009372 (424868-V)；严禁提取买方的注册号；票面同时出现新旧号时按原文完整保留。\n**逐位核读（本字段最易错）**：新式注册号是 **12 位纯数字**，且常紧挨公司名\n排在同一行、字号偏小，扫描件里易与公司名笔画重叠粘连，末位尤其容易读错\n（如 `...633` 误读成 `...630`）。提取后请做三项自检：\n① 数一遍位数——新式号去掉括号旧号后应恰为 12 位；\n② 前 4 位是注册年份，应在 1950–本年之间（如 `2007…`）；\n③ 若该号在票面出现多处（抬头、页脚、印章、条款区），**相互比对取一致值**。"
+            },
+            "purchaseOrderNumber": {
+              "type": "STRING",
+              "description": "采购订单号。\n通用规则：查找 PO number / P/O No / Cust PO / CUSTOMER P/O NO 等标注。仅当该单号适用于整张发票时提取；如果单号只对应某一明细行，则不填此字段，填入对应明细行的 purchaseOrderNumber 中。\n马来西亚发票补充规则：查找 \"P/O No.\"、\"Your PO No.\"、\"PO No\"、\"Order No\"、\"Buyer's Order No\"、\"P.O.NO.\"（表头）；典型格式如 W1 537443、K2 513875、W1 525065、N1 547225、90001110；通常由字母前缀（W1/K2/N1 等）+ 数字组成，可能含空格分隔（如 W1 516992），提取时保留原始空格格式；当票面以 \"P.O.NO. D.O.NO. SALES REP.\" 横向表头形式呈现时，PO 值通常位于表头下方第二行。"
+            },
+            "dueDate": {
+              "type": "STRING",
+              "description": "付款截止日期。"
+            },
+            "salesOrderNumber": {
+              "type": "STRING",
+              "description": "销售订单号，如 SO No / S/O No / Sales order / SO#。仅当该单号适用于整张发票时提取；如果单号只对应某一明细行，则不填此字段，填入对应明细行的 salesOrderNumber 中。"
+            },
+            "deliveryOrderNumber": {
+              "type": "STRING",
+              "description": "发货单号 / 交货单号。\n通用规则：查找 Packing slip / D.O.NO. / D/O NO / DO 等标注，常见格式如 DO-153555、DO251728。仅当该单号适用于整张发票时提取；如果单号只对应某一明细行，则不填此字段，填入对应明细行的 deliveryOrderNumber 中。\n马来西亚发票补充规则：查找 \"D/O No.\"、\"Our D/O No\"、\"DO NO\"、\"D.O. No.\"、\"REFER D/O\"、\"D.O.NO.\"（表头）；典型格式如 E-DO00863、DO2601/0543、SH34756、LTA2507250095、T 056331、90001110；一张发票可能含多个 DO 号，必须全部列出并以分号\";\"分隔写入同一字段；当票面以 \"P.O.NO. D.O.NO. SALES REP.\" 横向表头形式呈现时，DO 值通常位于表头下方第一行（多为纯数字）。"
+            },
+            "detailOfGoodsOrServices": {
+              "type": "ARRAY",
+              "description": "商品或服务明细列表，包括每项商品或服务的名称、备注、数量、单位、单价、不含税金额、税率、税额、含税金额、订单号、销售订单号和发货单号",
+              "items": {
+                "type": "OBJECT",
+                "properties": {
+                  "articleName": {
+                    "type": "STRING",
+                    "description": "商品或服务名称（提取完整信息）。\n**无论票面那一列的表头叫什么，商品/服务名都填这里**：MY 发票的品名列\n常见表头有 `Description`、`Item`、`Item Description`、`Particulars`、\n`Product`、`Descriptions of Goods` 等——表头用词不影响归属，\n只要是\"这一行卖的是什么\"，一律进 articleName。\n**该明细行只要有商品/服务，本字段就不得为空。**\n例：表头为 `Description`、内容为 `LONGKANG TANAH 6\" (WL)`\n→ articleName = `LONGKANG TANAH 6\" (WL)`（**不是**填进 description）。"
+                  },
+                  "description": {
+                    "type": "STRING",
+                    "description": "本行的**补充说明/备注**，用于品名之外的附加信息，如规格、批号、\n备注列（Remark / Notes）内容、型号说明、\"c/o 某某\"等。\n**注意：本字段不是票面 `Description` 列的对应字段**——票面 Description\n列装的是品名，应填 articleName。\n若该行只有一段文字（就是品名），本字段**留空**，不要把品名复制到这里。"
+                  },
+                  "quantity": {
+                    "type": "NUMBER",
+                    "description": "商品或服务的数量。\n单位列辨识：若该行的\"数量/单价\"分多列子标题（如 PCS / BDL / MT / CTN / SET），\n优先取**计费单位**对应的列（与 unitPrice 同列）。\n参考校验：quantity × unitPrice 应约等于 netAmount（具体一致性阈值见 Part 3.4）。"
+                  },
+                  "unitOfMeasure": {
+                    "type": "STRING",
+                    "description": "计量单位，如 pcs、kg、m、hour 等"
+                  },
+                  "unitPrice": {
+                    "type": "NUMBER",
+                    "description": "商品或服务的单价"
+                  },
+                  "netAmount": {
+                    "type": "NUMBER",
+                    "description": "不含税金额"
+                  },
+                  "taxRate": {
+                    "type": "STRING",
+                    "description": "税率"
+                  },
+                  "tax": {
+                    "type": "NUMBER",
+                    "description": "税额"
+                  },
+                  "grossAmount": {
+                    "type": "NUMBER",
+                    "description": "含税金额"
+                  },
+                  "orderNumber": {
+                    "type": "STRING",
+                    "description": "订单号（注文番号）"
+                  },
+                  "salesOrderNumber": {
+                    "type": "STRING",
+                    "description": "本明细行对应的销售订单号，如 SO No / S/O No / Sales order / SO#。仅当该单号只对应本明细行时填入；如果单号适用于整张发票所有明细，则不填此字段，填入发票头部的 salesOrderNumber 中。"
+                  },
+                  "deliveryOrderNumber": {
+                    "type": "STRING",
+                    "description": "本明细行对应的发货单号，如 Packing slip / D.O.NO. / D/O NO / DO，常见格式如 DO-153555、DO251728。仅当该单号只对应本明细行时填入；如果单号适用于整张发票所有明细，则不填此字段，填入发票头部的 deliveryOrderNumber 中。"
+                  },
+                  "purchaseOrderNumber": {
+                    "type": "STRING",
+                    "description": "本明细行对应的采购订单号，如 P/O No / Cust PO / CUSTOMER P/O NO。仅当该单号只对应本明细行时填入；如果单号适用于整张发票所有明细，则不填此字段，填入发票头部的 purchaseOrderNumber 中。"
+                  }
+                },
+                "required": []
+              }
+            },
+            "detailOfTaxSummary": {
+              "type": "ARRAY",
+              "description": "税金汇总列表，包括税种、税率、税基、税额。\n同一票据可能同时存在加项税（VAT / SST / GST）与减项税（WHT / 预扣税），都要逐一提取。\n同一税种但不同税率的情况需要分别提取为多行。\n装配规则与一致性校验见 Part 3.3（含 ADJUSTMENT 平账机制）。",
+              "items": {
+                "type": "OBJECT",
+                "properties": {
+                  "taxCategory": {
+                    "type": "STRING",
+                    "description": "税种简称。优先使用平台标准简称（VAT/SST/GST/WHT/CIT/CT/IVA/ADJUSTMENT），不在表中用票面原名。"
+                  },
+                  "taxRate": {
+                    "type": "STRING",
+                    "description": "税率"
+                  },
+                  "netTaxableAmount": {
+                    "type": "NUMBER",
+                    "description": "税基（需计税的金额/不含税金额）"
+                  },
+                  "tax": {
+                    "type": "NUMBER",
+                    "description": "税额。识别原则：\n1. **语义优先**：优先提取明确标识为 Tax / SST / VAT / GST / Tax Amount 的数值。\n2. **结构识别**：在多行税率汇总表（Tax Summary）中提取每个税种的金额合计，\n   不是简单取表底的 Total / Subtotal。\n3. **严禁推算**：不要用 totalAmount − 某项反推税额，必须在票面找到对应的税金标识。"
+                  }
+                },
+                "required": []
+              }
+            },
+            "originalInvoiceReferences": {
+              "type": "ARRAY",
+              "description": "原始发票引用列表。仅当 invoiceType 为 'Credit Note' 时提取；其他发票类型保留该字段但内容为空。票面上可能存在多组原始发票信息，每组作为一个元素输出。",
+              "items": {
+                "type": "OBJECT",
+                "properties": {
+                  "originalInvoiceCode": {
+                    "type": "STRING",
+                    "description": "原发票代码（序列号），如票面无此信息则不输出。"
+                  },
+                  "originalInvoiceNumber": {
+                    "type": "STRING",
+                    "description": "原发票号码。"
+                  },
+                  "originalInvoiceDate": {
+                    "type": "STRING",
+                    "description": "原发票开票日期，格式 YYYY-MM-DD。"
+                  }
+                },
+                "required": []
+              }
+            }
+          },
+          "required": [
+            "docType",
+            "invoiceType",
+            "page",
+            "currency"
+          ]
+        },
+        {
+          "type": "OBJECT",
+          "properties": {
+            "docType": {
+              "type": "STRING",
+              "description": "其他类型文档",
+              "enum": [
+                "other"
+              ]
+            },
+            "page": {
+              "type": "ARRAY",
+              "description": "所在文档中的页码列表（从1开始编号）。",
+              "items": {
+                "type": "NUMBER"
+              }
+            }
+          },
+          "required": [
+            "docType",
+            "page"
+          ]
+        }
+      ]
+    }
+  },
+  "country_global_text": "# Part 1 · 马来西亚（MY）国家全局说明\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n## 1.0 票据切分 —— 先定「有几张」，再定「每张是什么」\n切错张数会让整条记录作废，**这一步优先于分类与字段提取**。\n\n### 1.0.1 一条记录 = 一张物理独立的凭证\n有自己的发行方、单号、金额、日期的一张凭证算一条。同一张凭证内部的多个区块\n（表头 / 明细表 / 付款栏 / 签收栏）**合为一条**，不得拆开。\n\n### 1.0.2 逐页扫描，每一页都要看\n多页文档必须**从第 1 页到最后一页逐页检查**，不得只看首页就结束。\n典型场景：一份 PDF 把整月的多张发票扫在一起，每页一张、各有各的\n`Invoice No.` 与 `Total` —— 这种情况必须逐张输出，有几张就输出几条。\n自检：若文档有 N 页且每页都印着不同的 Invoice No./Total，输出记录数应当接近 N，\n只输出 1 条几乎一定是漏检，必须回头重查。\n\n### 1.0.3 跨页单张 vs 多张独立 —— 按「单号 + 页码标记」判定\n- **跨页单张**（合并为一条，`page` 列出全部页码）：后续页是前一页的延续，\n  特征为 **`Invoice No.` 与首页相同**，或页面标注 `Page 2 of 5` / `Page: 2/5`，\n  或标题为 `Attachment to Invoice` / `Continuation` / 仅有明细延续而无独立合计。\n- **多张独立**（各自一条）：每页有**各自不同**的 `Invoice No.`，且各自有独立的\n  `Total` / `Total Payable` / `GROSS` 合计。\n- 判据优先级：**先比 Invoice No.**（不同即为不同票据），再看页码标记，最后看是否有独立合计。\n\n### 1.0.4 一页多张\n同一页上下拼贴多张小票/发票时，每张各输出一条；`page` 均填该页页码。\n禁止因商家相同、金额相同而合并或去重 —— 同额的两张仍是两条。\n\n### 1.0.5 附件与非票据页\n发票后附的送货单（Delivery Order）、装箱单、对账单、条款页、空白页，\n若**不构成独立的付款凭证**，记为 `docType: other`（仅输出 docType 与 page）；\n不要把它们并进发票，也不要漏掉不输出。\n\n### 1.0.6 输出前清点\n输出 JSON 前，先在心里列出「第几页-单号-合计金额」的清单，再逐条转成记录；\n**记录数必须等于清单条数**。每条记录都要能指认它在第几页；指不出来的不要输出，\n也不要编造票面上不存在的单号或金额。\n\n## 1.1 票据种类分类（docType + invoiceType）\n- **invoice**：正式付款凭证，包含供应商和客户信息、发票号码、日期、税务信息、付款条款、商品或服务明细、总金额。\n  下列子类型一律归为 invoice（即使名称含 quotation / credit / proforma 等）：\n  - Commercial Invoice（标准发票，默认子类）\n  - Proforma Invoice（形式发票；票面含 PROFORMA / PRO FORMA 等关键词）\n  - Credit Note（贷项发票；票面含 AVOIR / CREDIT 等关键词，或 totalAmount < 0）\n  - Tax Invoice（税务发票；票面含 \"Tax Invoice\" / \"Faktur Pajak\"，MY 多数 SST 发票属此类）\n  - Debit Note（借项发票）\n  - Quotation 报价单：若含供应商/客户/明细/金额等 invoice 核心要素，亦归 invoice\n  - Receipt/Tax Invoice 收据税票：含税务信息（如 SST/TIN）的归 invoice\n- **receipt**：小额付款凭证，一般无详细税务信息，如各种小票、收据。\n- **other**：合同、订单确认书等不属 invoice/receipt 的文档。\n\n## 1.2 内容与格式统一要求\n- **语言**：MY 票据以英文为主，部分中/马来文。**保持原文，不翻译**。\n- **货币**：默认 MYR / RM。\n  - 千分位 `,` + 小数点 `.`（同 USD/CNY/GBP）：`6,000.00` → 实际值 `6000.00`；`1,234,567.89` → `1234567.89`。\n  - 注意区分越南 VND / 部分欧洲格式（`.` 千分位、`,` 小数点）—— 若票面出现 VND 等标识或数字规律明显相反，按相反规则解析。\n  - **输出统一为纯数字字符串/数值，严禁保留千分位符号或货币符号。**\n- **税率**：以百分比字符串输出，如 `\"6%\"`、`\"10%\"`。\n- **日期处理（绝对规则，必须严格遵守）**：\n  1. **核心原则：年份必须 ≥ 2015**。任何解析出 < 2015（如 2014/2012/2006）的结果一律抛弃。\n  2. **歧义消除**：MY 主流为 `DD-MM-YYYY`；遇到 `07-09-24` 这种二位年时按上述年份原则筛选；剩余多个合理解析中取最合理者。\n  3. **输出格式**：最终所有日期字段 **统一 YYYY-MM-DD**。\n\n## 1.3 MY 税号/税编强制规定\n- **TIN（Tax Identification Number）**：所有 MY 实体的纳税识别号。\n  - 格式：`C` + 10 位数字（如 `C5884056070`、`C4908240100`）。\n  - 一张票面上若同时出现卖方 TIN 与买方 TIN：\n    - 卖方 TIN → `billFromTaxIdentificationNumber`\n    - 买方 TIN → `billToTaxIdentificationNumber`\n  - 关键词：`TIN`、`TIN No.`、`Supplier TIN`、`Buyer TIN`、`Customer Tin No.`\n- **SSM / Company Reg. No.（业务登记号）**：MY 公司注册号，**仅供应商提取，不取买方**。\n  - 格式：12 位纯数字（新号，如 `199201000276`），或旧号带连字符（如 `518287-T`、`424868-V`），或并列（如 `199701009372 (424868-V)`）—— 完整保留原文。\n  - 关键词：`Company Reg.No`、`Registration No`、`SSM`，或公司名称右侧括号内的 12 位数字。\n  - 字段：`billFromBusinessRegistrationNumber`。\n  - **逐位核读（本字段最易错）**：新式号常紧挨公司名排在同一行、字号偏小，扫描件里\n    易与公司名笔画重叠粘连，**末位尤其容易读错**（如 `…018633` 误读成 `…018630`）。\n    提取后做三项自检：① 去掉括号旧号后应恰为 **12 位纯数字**；\n    ② 前 4 位是注册年份，须在 1950–本年之间；\n    ③ 若该号在票面出现多处（抬头 / 页脚 / 印章 / 条款区），**相互比对取一致值**。\n- **SST Number（销售与服务税号）**：与 TIN / SSM 完全不同，**不要混用**。MY 票面常单独标注 `Sales Tax No.` / `SST ID`。\n  - **严禁将 SST 号当作 invoice number / TIN / SSM**。\n- **发票号 invoiceNumber**：\n  - 关键词：`Invoice No`、`INVOICE NO:`、`E INV NO`、`No.`\n  - 典型格式：`PT-148862`、`S-25/10-0059`、`INV13398`、`IN2601/1024`、`25FC011847`\n  - **严禁将 Sales Tax No 或 SST ID 误取为 invoice number。**\n\n## 1.35 明细行的字段归属（易错，务必按此填）\n明细数组 `detailOfGoodsOrServices` 每行的字段归属**由语义决定，不看票面列头的英文用词**：\n- **`articleName` = 这一行卖的是什么（品名/服务名）**。MY 发票的品名列表头五花八门：\n  `Description`、`Item`、`Item Description`、`Particulars`、`Product`、`Descriptions of Goods`\n  —— **无论表头叫哪个，品名一律填 `articleName`**。\n  只要该行有商品/服务，`articleName` **就不得为空**。\n  例：表头是 `Description`、该行内容是 `LONGKANG TANAH 6\" (WL)`\n  → `articleName` = `LONGKANG TANAH 6\" (WL)`。\n- **`description` = 品名之外的补充说明**（规格、批号、备注列 Remark/Notes、型号、`c/o 某某` 等）。\n  **它不是票面 `Description` 列的对应字段。**\n  若该行只有一段文字（就是品名），`description` **留空**，不要把品名复制一份到这里。\n- 自检：输出前检查每一行——**出现 `articleName` 为空但 `description` 有品名，即为填反了，必须对调**。\n\n## 1.4 必填字段与缺失处理\n- **invoice / receipt 类型**：`docType`、`invoiceType`、`page`、`currency` 必须输出；若票面无 currency，按 MY 上下文推断（默认 MYR）。\n- **other 类型**：仅 `docType`、`page` 必须输出。\n- **缺失信息**：无法找到的字段一律不输出，**不要推断、不要捏造**。\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n# Part 2 · 字段识别规则\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n下方 JSON Schema 中每个字段的 `description` 已经包含了：\n- 该字段的业务含义\n- MY 票面常见关键词与典型格式\n- 取值位置锚点\n- 易混淆字段的辨别要点\n- 数值类字段的取值方法（如税额优先语义匹配 / 严禁推算）\n\n**请严格按 schema 中每字段的 description 提取。**\n\n> 说明：字段识别规则（\"在哪里找、找什么\"）由本 Part 2 + schema description 承担；\n> 输出装配规则（\"找到后怎么组装成 JSON\"）已统一抽到 Part 3 平台契约。\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+  "patch_version": "v5"
+}
