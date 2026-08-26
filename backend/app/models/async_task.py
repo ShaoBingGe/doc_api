@@ -92,6 +92,13 @@ class AsyncTask(TimestampMixin, Base):
     file_hash: Mapped[str] = mapped_column(
         String(128), nullable=False, default="", comment="调用方给的 fileHash，回填到结果里",
     )
+    content_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="", index=True,
+        comment=(
+            "文件字节的 sha256，**服务端自算**。实测对接方 118 次提交只有 8 次"
+            "带了 fileHash，依赖调用方传是不行的；结果缓存按这个值去重。"
+        ),
+    )
     language: Mapped[str] = mapped_column(
         String(32), nullable=False, default="auto", comment="文档 requestParams.language",
     )

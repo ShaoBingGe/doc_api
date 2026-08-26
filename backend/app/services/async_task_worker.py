@@ -193,6 +193,9 @@ async def _loop() -> None:
                 db = SessionLocal()
                 try:
                     tasks.purge_expired(db)
+                    tasks.purge_stale_spools(db)
+                    from app.services import extraction_cache as xcache
+                    xcache.purge_expired(db)
                 except Exception:  # noqa: BLE001
                     logger.exception("清理过期任务失败")
                 finally:
@@ -219,6 +222,7 @@ async def start_worker() -> None:
     try:
         tasks.recover_orphans(db)   # 文档第 8 条：重启恢复未完成任务
         tasks.purge_expired(db)
+        tasks.purge_stale_spools(db)
     except Exception:  # noqa: BLE001
         logger.exception("启动恢复失败（不阻塞服务启动）")
     finally:

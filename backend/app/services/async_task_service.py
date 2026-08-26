@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models.async_task import AsyncTask, TaskStatus
 from app.models.open_api_client import OpenApiClient
+from app.services import extraction_cache as xcache
 from app.services.upload_validation import InvalidUpload, validate_upload
 
 logger = logging.getLogger(__name__)
@@ -125,6 +126,12 @@ def _spool_dir() -> Path:
     return d
 
 
+def _aware(dt: datetime) -> datetime:
+    """SQLite 取回的 datetime 是 naive 的，但存的是 UTC —— 直接和
+    `datetime.now(timezone.utc)` 相减会抛 TypeError。统一补上 UTC 时区。"""
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def create_task(
     db: Session,
     *,
@@ -171,6 +178,35 @@ def create_task(
         )
 
     task_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    chash = xcache.content_hash(file_bytes)
+
+    # 结果缓存命中：仍然建任务行、仍然发 taskId（对接方的流程不变），
+    # 但直接建成 COMPLETED —— 他们第一次轮询就能拿到结果，零模型调用。
+    # 不落盘：既然不用识别，就没有原件要读。
+    cached = xcache.lookup(
+        db, client_id=client.client_id, template_id=str(template_id or "0"),
+        chash=chash, trace_id=task_id[:16].replace("-", ""),
+        source_file_hash=file_hash or "",
+    )
+    if cached is not None:
+        payload, _ = cached
+        task = AsyncTask(
+            id=task_id, client_id=client.client_id, tenant_id=client.tenant_id,
+            template_id=str(template_id or "0"), file_name=filename or "upload",
+            file_hash=file_hash or "", content_hash=chash,
+            callback_url=callback_url or "", spool_path="",
+            page_count=max(1, page_count), status=TaskStatus.COMPLETED,
+            result_json=json.dumps(payload, ensure_ascii=False), errcode=ERR_OK,
+            started_at=now, finished_at=now,
+            expires_at=now + timedelta(days=s.ASYNC_TASK_TTL_DAYS),
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        _cache_terminal(task)
+        logger.info("异步任务 %s 直接命中结果缓存，未调用模型", task_id)
+        return task
 
     # 先落盘再建行：反过来的话，建行成功而落盘失败会留下永远处理不了的任务
     spool = _spool_dir() / f"{task_id}{Path(filename or '').suffix or '.bin'}"
@@ -179,7 +215,6 @@ def create_task(
     except OSError as exc:
         raise AsyncTaskError(ERR_UPLOAD_FAILED, f"写入上传文件失败: {exc}") from exc
 
-    now = datetime.now(timezone.utc)
     task = AsyncTask(
         id=task_id,
         client_id=client.client_id,
@@ -187,6 +222,7 @@ def create_task(
         template_id=str(template_id or "0"),
         file_name=filename or "upload",
         file_hash=file_hash or "",
+        content_hash=chash,
         callback_url=callback_url or "",
         spool_path=str(spool),
         page_count=max(1, page_count),
@@ -257,15 +293,37 @@ def _cache_terminal(task: AsyncTask) -> None:
 
 
 def mark_completed(db: Session, task: AsyncTask, payload: dict) -> None:
-    """置 COMPLETED 并写入结果（序列化成字符串，文档要求 result 是字符串）。"""
+    """置 COMPLETED、写结果、按需留档原件、结果入缓存。"""
+    s = get_settings()
+    now = datetime.now(timezone.utc)
     task.status = TaskStatus.COMPLETED
     task.result_json = json.dumps(payload, ensure_ascii=False)
     task.errcode = ERR_OK
     task.error_message = None
-    task.finished_at = datetime.now(timezone.utc)
-    _drop_spool(task)
+    task.finished_at = now
+
+    # 慢任务留档：识别超过阈值的保留原件，便于事后**单独重跑**以判断
+    # "慢"是文件本身还是并发排队 —— 实测同一批 3 页文件耗时能差 3.5 倍
+    # （24s / 74s / 82s），光看时长分不清。原件由 purge_stale_spools 按
+    # SLOW_SPOOL_TTL_HOURS 清理，不占长期磁盘。
+    dur = (now - _aware(task.started_at)).total_seconds() if task.started_at else 0.0
+    if dur > s.SLOW_TASK_KEEP_SEC and task.spool_path:
+        logger.warning(
+            "慢任务 %s：识别 %.0fs 超过 %.0fs 阈值，原件留档待查 %s",
+            task.id, dur, s.SLOW_TASK_KEEP_SEC, task.spool_path,
+        )
+    else:
+        _drop_spool(task)
+
     db.commit()
     _cache_terminal(task)
+
+    if task.content_hash:
+        xcache.store(
+            db, client_id=task.client_id, template_id=task.template_id,
+            chash=task.content_hash, payload=payload,
+            doc_pages=int(payload.get("docPages") or task.page_count),
+        )
 
 
 def mark_failed(db: Session, task: AsyncTask, errcode: str, message: str) -> None:
@@ -324,6 +382,32 @@ def recover_orphans(db: Session) -> int:
     db.commit()
     if n:
         logger.info("启动恢复：%d 个中断的任务已退回待处理", n)
+    return n
+
+
+def purge_stale_spools(db: Session) -> int:
+    """删除留档超期的原件（只删文件，不删任务行）。→ 删除个数。
+
+    留档的两类：识别超时的慢任务、失败的任务。两者都只为取证，
+    过了 SLOW_SPOOL_TTL_HOURS 就没有价值了，留着白占磁盘。
+    """
+    s = get_settings()
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=s.SLOW_SPOOL_TTL_HOURS)
+    rows = (
+        db.query(AsyncTask)
+        .filter(AsyncTask.spool_path != "",
+                AsyncTask.status.in_(TaskStatus.TERMINAL))
+        .all()
+    )
+    n = 0
+    for r in rows:
+        if r.finished_at is None or _aware(r.finished_at) > cutoff:
+            continue
+        _drop_spool(r)
+        n += 1
+    if n:
+        db.commit()
+        logger.info("清理留档原件 %d 个（超过 %dh）", n, s.SLOW_SPOOL_TTL_HOURS)
     return n
 
 

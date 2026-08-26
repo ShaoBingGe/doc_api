@@ -56,16 +56,25 @@ def db_session():
 # `b"%PDF-1.4 fake"` 这种占位字节 —— 它们是**结构性损坏**的文件，会被正确拒收。
 # 用 PyMuPDF 生成真正合法的最小 PDF/PNG，让用例测的是业务逻辑而不是坏文件路径。
 
-def minimal_pdf(pages: int = 1) -> bytes:
-    """→ 合法的 N 页 PDF 字节。"""
-    import fitz
+_PDF_CACHE: dict[int, bytes] = {}
 
-    doc = fitz.open()
-    for _ in range(pages):
-        doc.new_page()
-    data = doc.tobytes()
-    doc.close()
-    return data
+
+def minimal_pdf(pages: int = 1) -> bytes:
+    """→ 合法的 N 页 PDF 字节。**同一 pages 反复调用返回同一份字节。**
+
+    必须确定性：PyMuPDF 生成的 PDF 内嵌创建时间与 /ID，每次调用字节都不同。
+    结果缓存按内容 sha256 去重，夹具不确定的话"同一份文件二次提交"的用例
+    根本构造不出来 —— 看着在测缓存，其实测的是两份不同文件。
+    """
+    if pages not in _PDF_CACHE:
+        import fitz
+
+        doc = fitz.open()
+        for _ in range(pages):
+            doc.new_page()
+        _PDF_CACHE[pages] = doc.tobytes()
+        doc.close()
+    return _PDF_CACHE[pages]
 
 
 def minimal_png(w: int = 200, h: int = 150) -> bytes:

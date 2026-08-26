@@ -94,6 +94,18 @@ def slow_extract(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_result_cache(monkeypatch):
+    """本文件测的是**提取链路本身**（事件循环、准入闸、响应外壳），
+    结果缓存会把第二次起的相同请求短路掉，让"模型被调用了几次"这类
+    判据失真（实测：上一条用例把结果焐进缓存，下一条就测不到阻塞了）。
+    这里显式关掉；缓存本身由 test_extraction_cache.py 覆盖。"""
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "EXTRACT_CACHE_ENABLED", False,
+                        raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _fresh_gate():
     reset_gate()
     yield
