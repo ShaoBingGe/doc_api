@@ -93,3 +93,36 @@ A-2 让模型对 receipt 收得太紧，把两张手写 `CASH BILL` 现金收据
    `MY_invoice_prompt.yaml`。若跑
    `seed_open_api.refresh_prompt_from_country_template`，补丁会被国家模板
    覆盖掉。要长期保留必须合并进国家模板。
+
+---
+
+## v6：合并进国家模板（`MY_invoice_prompt.yaml` id 7_8 → 7_9）
+
+v5 验证达标后，把五轮迭代的规则**按章节合并进国家模板**（不再是贴在 prompt
+尾部的"专项修正"段）：
+
+| v5 补丁段 | 合并到的位置 |
+|---|---|
+| A 刷卡/POS 小票判 receipt | §1.1 receipt 分类 |
+| A-1 手写现金收据本判 receipt | §1.1 receipt 分类 |
+| A-2 银行卡交易行/对账单判 other | §1.0.5 附件与非票据页 |
+| B nameOfInvoice 票面抬头 | schema `nameOfInvoice` description |
+| C 加油票单号取 Reference No | §1.3 发票号 + schema `invoiceNumber` |
+| D 多币种优先 MYR | §1.2 货币 + schema `totalAmount` / `currency` |
+| F unitPrice 票面有则必填 | schema `unitPrice` description |
+
+v6 走真实装配管线（`template_loader.decompose_country_template("MY")` +
+`build_v1_prompt`）生成，与直接改快照不同——**这是 refresh 之后线上实际会
+得到的 prompt**，不存在"被国家模板覆盖回去"的问题。
+
+### 评测
+
+- claim25（25 页报销贴单）：**8/8 × 4 轮全过**，与 v5 持平
+- 6 页多票据样本（DOC_07_15_25006）回归：**6 票据 / 10 明细 / 零空值 × 2 轮**
+  —— 新分类规则未破坏既有的切分与提取行为
+
+### 影响面提示
+
+国家模板是 **MY 层**改动：影响所有从 MY 模板初始化/刷新的 API，不只
+templateId=7。分类规则在 gemini-3.5-flash 上验证；阿里云跑 qwen 的 MY API
+吃到同一模板后行为**未单独验证**。

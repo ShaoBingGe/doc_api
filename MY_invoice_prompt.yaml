@@ -1,5 +1,5 @@
-id: '7_8'
-remark: gemini json schema, anyof. Design v7 — Part1 (MY country global) + Part2 (defer to schema descriptions) + Part3 (platform output contract reference only; composer injects from assets/global_output_contract.yaml).
+id: '7_9'
+remark: gemini json schema, anyof. Design v7 — Part1 (MY country global) + Part2 (defer to schema descriptions) + Part3 (platform output contract reference only; composer injects from assets/global_output_contract.yaml). 7_9 合并 prompts/tpl7 五轮迭代（v5 · 8/8×4 轮）：刷卡/现金小票判 receipt、银行卡交易行判 other、加油票取 Reference No、多币种优先 MYR、nameOfInvoice/unitPrice 补齐。
 structure_prompt_version: '6'
 # 国家锁定字段（国家规范·不可修改）：识别规则由 Part 1 严格管控，排除出 Part 2
 # 反思/优化范围，客户在自定义面板中不可增删改/改类型。
@@ -50,13 +50,22 @@ prompt_template:
     若**不构成独立的付款凭证**，记为 `docType: other`（仅输出 docType 与 page）；
     不要把它们并进发票，也不要漏掉不输出。
 
+    下列内容即便含刷卡字样，也一律判 `other`，**不要**当成 receipt：
+    - **银行卡 / 电子钱包账单里的单条交易记录**：特征是只有一行「日期 + 商户名 +
+      金额」，金额常带负号（如 `-RM 100.00`）或标注 `Transaction Date:`，
+      **没有商户抬头版块、没有明细行、没有合计行、没有任何单号**。
+      它是账单的一行，不是商户开出的凭证。
+    - **对账单 / 交易流水表**（Transaction History、Statement、账单汇总表）：
+      整页是表格化的多行流水，即便每行有金额也不拆成多张票据。
+
     ### 1.0.6 输出前清点
     输出 JSON 前，先在心里列出「第几页-单号-合计金额」的清单，再逐条转成记录；
     **记录数必须等于清单条数**。每条记录都要能指认它在第几页；指不出来的不要输出，
     也不要编造票面上不存在的单号或金额。
 
     ## 1.1 票据种类分类（docType + invoiceType）
-    - **invoice**：正式付款凭证，包含供应商和客户信息、发票号码、日期、税务信息、付款条款、商品或服务明细、总金额。
+    - **invoice**：正式付款凭证。**只有同时具备「买方抬头 + 供应商税号（TIN/SST）+
+      明确税额行」的正式票据，才判 invoice**；抬头写 `TAX INVOICE` 且有 SST/税额的，判 invoice。
       下列子类型一律归为 invoice（即使名称含 quotation / credit / proforma 等）：
       - Commercial Invoice（标准发票，默认子类）
       - Proforma Invoice（形式发票；票面含 PROFORMA / PRO FORMA 等关键词）
@@ -66,7 +75,24 @@ prompt_template:
       - Quotation 报价单：若含供应商/客户/明细/金额等 invoice 核心要素，亦归 invoice
       - Receipt/Tax Invoice 收据税票：含税务信息（如 SST/TIN）的归 invoice
     - **receipt**：小额付款凭证，一般无详细税务信息，如各种小票、收据。
-    - **other**：合同、订单确认书等不属 invoice/receipt 的文档。
+      - **刷卡支付凭条与收银小票**：马来西亚加油站、便利店、餐饮的刷卡凭条 / POS 小票，
+        **即便票面印有 `INVOICE` / `Current Invoice` 字样，也一律判 receipt**。
+        识别特征（命中任意两条即判 receipt）：
+        - 窄条形票面（收银机 / POS 打印），字段竖排、点阵或热敏打印
+        - 含刷卡交易字段：`Card Name` / `Terminal` / `Site Id` / `Auth Code` /
+          `App ID` / `App Crypt` / `Approved` / `Verification` / `Seq. Number`
+        - 含 `Pump` / `FuelSave` / `BUDI95` / `Subsidy` / `Litr` / `ltr` 等加油字样
+        - **没有买方信息**（无 Bill To / Customer / MESSRS 抬头）
+        - 没有独立的税额拆分表
+      - **手写 / 预印现金收据本**：票面预印表格、手工填写金额的现金收据，判 receipt，
+        **不要因为它有编号就判成 invoice**。识别特征：抬头 `CASH BILL` / `BILL` / `RESIT` /
+        `INVOICE`（预印），右上角预印流水号（如 `No. 10206`）；列头为
+        `Butir-Butir / Particulars`、`Kuantiti / Quantity`、`Harga / Unit Price`、
+        `Nilai / Amount`；底部有 `Terima Oleh / Received By`、`Disahkan Oleh` 签收栏；
+        内容手写体、无税号、无买方公司信息、无税额拆分。
+      - 判据：一张真正的 receipt 必然具备「**商户抬头 + 至少一行消费明细 +
+        一个合计金额**」，三者缺一就不是 receipt（多半是 other，见 §1.0.5）。
+    - **other**：合同、订单确认书、对账单、账单流水等不属 invoice/receipt 的文档（见 §1.0.5）。
 
     ## 1.2 内容与格式统一要求
     - **语言**：MY 票据以英文为主，部分中/马来文。**保持原文，不翻译**。
@@ -74,6 +100,12 @@ prompt_template:
       - 千分位 `,` + 小数点 `.`（同 USD/CNY/GBP）：`6,000.00` → 实际值 `6000.00`；`1,234,567.89` → `1234567.89`。
       - 注意区分越南 VND / 部分欧洲格式（`.` 千分位、`,` 小数点）—— 若票面出现 VND 等标识或数字规律明显相反，按相反规则解析。
       - **输出统一为纯数字字符串/数值，严禁保留千分位符号或货币符号。**
+      - **多币种票面优先取 MYR**：票面同时列出外币与马币两种金额时（典型：境外平台开给
+        马来西亚客户的收据，如 `GRAND TOTAL USD 54.98` 与 `Total Charge MYR 224.97 (USD 54.98)`）：
+        `currency` 取 **MYR**，`totalAmount` 取**马币那一行的数值**（上例为 `224.97`，
+        不是 `54.98`）。判据：马币金额通常出现在 `Total Charge` / `Amount Charged` 一行，
+        是**实际扣款金额**；外币行只是计价币种。
+        票面只有单一外币、完全没有马币行时，照原币种输出，不做换算。
     - **税率**：以百分比字符串输出，如 `"6%"`、`"10%"`。
     - **日期处理（绝对规则，必须严格遵守）**：
       1. **核心原则：年份必须 ≥ 2015**。任何解析出 < 2015（如 2014/2012/2006）的结果一律抛弃。
@@ -102,6 +134,15 @@ prompt_template:
       - 关键词：`Invoice No`、`INVOICE NO:`、`E INV NO`、`No.`
       - 典型格式：`PT-148862`、`S-25/10-0059`、`INV13398`、`IN2601/1024`、`25FC011847`
       - **严禁将 Sales Tax No 或 SST ID 误取为 invoice number。**
+      - **加油 / 刷卡凭条的单号**：先找票面明确的单号标注——`Invoice No` / `Bill No` /
+        `Receipt No` / `Resit No` / `R.No` / `Master Bill` / `Booking No`，**有就优先取它**；
+        上述标注**全部缺失**时才按顺序取：① `Reference No` / `Ref No` / `Ref. No`
+        ② `Approval Code` / `Auth Code`（仅当连 Reference No 也没有）。
+      - **无论何种票据都绝对不要取**下列字段作为 invoiceNumber：
+        `Terminal`（终端号，常见 8 位纯数字）、`Site Id`、`Site Tran No`、`Batch No`、
+        `Card No`、`Seq. Number`、`App ID`、`App Crypt`、`CDB Ref No`。
+      - 自检：同一份文档里若两张**不同**的票出现**相同**的 invoiceNumber，
+        说明取错了字段（多半取成了 Terminal 或 Site Id）——回到票面重新按上表取值。
 
     ## 1.35 明细行的字段归属（易错，务必按此填）
     明细数组 `detailOfGoodsOrServices` 每行的字段归属**由语义决定，不看票面列头的英文用词**：
@@ -192,13 +233,18 @@ prompt_template:
                 - Tax Invoice
             nameOfInvoice:
               type: STRING
-              description: 票面标题，票面上的标题，如'VAT Invoice'、'Debit Note'等。
+              description: |-
+                票面标题：票面上**原样印着的标题文字**，保持原大小写与原文，不翻译。
+                常见取值：INVOICE、TAX INVOICE、Receipt、CASH BILL、Current Invoice、RESIT、Bill。
+                标题可能在票面顶部居中，也可能在商户名之下、明细表之上。
+                票面确实没有任何标题文字时才留空；**不要用 invoiceType 的值去凑**。
             invoiceNumber:
               type: STRING
               description: |-
                 发票号码或收据编号。
                 通用规则：如果找不到，则查找票面的 'Invoice No'、'請求書番号'、'ご請求番号'、'ﾚシートNo'、'発券No'、'伝票番号'、'No.'、'No'。
                 马来西亚发票补充规则：可查找 "Invoice No"、"No."、"INVOICE NO:"、"E INV NO"；典型格式如 PT-148862、S-25/10-0059、INV13398、IN2601/1024、25FC011847；严禁将 Sales Tax No 或 SST ID 提取为发票号。
+                加油/刷卡凭条的取值优先级（票面无明确单号时取 Reference No）与禁取字段（Terminal / Site Id / Card No 等）见 Part 1.3。
             invoiceCode:
               type: STRING
               description: 发票类型代码，如果没有发票类型代码信息, 则查找发票序列号、'Serial'、'Ký hiệu'、'Ký hiệu(Serial)'。'Mã CQT(Code)'不是发票类型代码。
@@ -212,7 +258,10 @@ prompt_template:
                 注意：必须是所有商品/服务项的净额加总。如果票面有多个部分（如本金和佣金），请务必求和后再输出，不要只提取其中一部分的金额作为总净额。
             totalAmount:
               type: NUMBER
-              description: 含税总金额，常见为Ukupan iznos fakture、subTotal、total、รำกวนเรียนทั้งสิ้น等。
+              description: |-
+                含税总金额，常见为 Total、Grand Total、Total Due、Amount Payable 等。
+                票面同时列出外币与马币两种金额时，取**马币（MYR）那一行**的数值
+                （实际扣款金额，常标注 Total Charge / Amount Charged），规则见 Part 1.2。
             totalTaxAmount:
               type: NUMBER
               description: |-
@@ -222,7 +271,10 @@ prompt_template:
                 3. **严禁推算**：严禁仅通过 (TotalAmount - 某个收支项) 简单推算税额，必须在票面找到对应的税金标识。
             currency:
               type: STRING
-              description: 币种，以ISO 4217货币代码形式输出，如：USD, CNY, CAD, AUD, GBP, JPY, DEM, HKD, FRF, CHF, VND等。
+              description: |-
+                币种，以 ISO 4217 货币代码形式输出，如 MYR、USD、SGD、CNY、GBP 等。
+                票面同时出现外币与马币时取 **MYR**（与 totalAmount 同一币种体系，见 Part 1.2）；
+                票面无标注时按 MY 上下文推断，默认 MYR。
             billToName:
               type: STRING
               description: 收票方的名称。如果没有'Bill To'，则找'MESSRS'、'Purchaser'、'Customer'、'Buyer'、'Attention to'或其他和'购买方'同义的词语。
@@ -325,7 +377,13 @@ prompt_template:
                     description: 计量单位，如 pcs、kg、m、hour 等
                   unitPrice:
                     type: NUMBER
-                    description: 商品或服务的单价
+                    description: |-
+                      商品或服务的单价。票面**印有单价列**时必须填：常见形态有
+                      `Price` / `Unit Price` / `Harga` 列、`@` 后的数字、
+                      或 `RM3.370/ltr`、`@RM1.380/ltr` 这类每单位价格（填 3.370 / 1.380）。
+                      数量为 1 且票面只印一个金额时，unitPrice 等于该金额。
+                      票面确实没有单价、也无法直接读出时留空——
+                      **不要用 netAmount ÷ quantity 反推**（除不尽会引入假精度）。
                   netAmount:
                     type: NUMBER
                     description: 不含税金额
