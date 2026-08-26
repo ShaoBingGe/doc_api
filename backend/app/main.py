@@ -11,6 +11,7 @@ API 文档:
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -22,6 +23,30 @@ from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 
 settings = get_settings()
+
+
+def _configure_logging() -> None:
+    """让 `app.*` 的 INFO 日志真正输出。
+
+    此前进程里**没有任何日志配置**：Python 根 logger 默认 WARNING，且无 handler，
+    只有"最后手段 handler"把 WARNING+ 打到 stderr。结果是代码里所有
+    `logger.info(...)` 在生产环境从未出现过——"异步任务完成"、"Calling Gemini
+    model"、准入闸就绪、文本层是否命中，全被静默吞掉，排障时只能看到报错。
+
+    做法：给根装一个 handler（level 0，只做输出不过滤），根自身留在 WARNING
+    以免 sqlalchemy / httpx / google-genai 的 INFO 刷屏；再单独把 `app` 命名空间
+    抬到 INFO。propagate 的记录只受**祖先 handler 的 level** 约束、不再看祖先
+    logger 的 level，所以这个组合能精确放行我们自己的 INFO。
+    """
+    level = getattr(logging, (settings.LOG_LEVEL or "INFO").upper(), logging.INFO)
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+    logging.getLogger("app").setLevel(level)
+
+
+_configure_logging()
 
 
 # ── Lifespan (startup / shutdown) ─────────────────────────────────────────────
