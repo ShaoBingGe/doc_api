@@ -12,6 +12,8 @@ import time
 import uuid
 
 import pytest
+
+from tests.conftest import minimal_pdf
 from fastapi.testclient import TestClient
 
 from app.api.v1 import open_api
@@ -126,7 +128,7 @@ def test_analyze_response_matches_log_shape(client, seeded):
         headers={"client-platform": "common"},
         data={"templateId": str(TEMPLATE_ID), "fileHash": "abc123",
               "clientId": CLIENT_ID},
-        files={"file": ("doc.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        files={"file": ("doc.pdf", io.BytesIO(minimal_pdf()), "application/pdf")},
     )
     assert r.status_code == 200
     body = r.json()
@@ -165,7 +167,7 @@ def test_analyze_rejects_missing_token(client, seeded):
     r = client.post(
         "/ai/knowledge/nlpService/document/analyze",
         data={"templateId": str(TEMPLATE_ID), "clientId": CLIENT_ID},
-        files={"file": ("d.pdf", io.BytesIO(b"x"), "application/pdf")})
+        files={"file": ("d.pdf", io.BytesIO(minimal_pdf()), "application/pdf")})
     assert r.status_code == 200
     assert r.json()["errcode"] != "0000"
     assert r.json()["data"] == []
@@ -176,7 +178,7 @@ def test_analyze_unknown_template(client, seeded):
     r = client.post(
         f"/ai/knowledge/nlpService/document/analyze?access_token={token}",
         data={"templateId": "999999", "clientId": CLIENT_ID},
-        files={"file": ("d.pdf", io.BytesIO(b"x"), "application/pdf")})
+        files={"file": ("d.pdf", io.BytesIO(minimal_pdf()), "application/pdf")})
     assert r.json()["errcode"] != "0000"
 
 
@@ -186,7 +188,7 @@ def test_analyze_client_id_mismatch_rejected(client, seeded):
     r = client.post(
         f"/ai/knowledge/nlpService/document/analyze?access_token={token}",
         data={"templateId": str(TEMPLATE_ID), "clientId": "SOMEONE_ELSE"},
-        files={"file": ("d.pdf", io.BytesIO(b"x"), "application/pdf")})
+        files={"file": ("d.pdf", io.BytesIO(minimal_pdf()), "application/pdf")})
     assert r.json()["errcode"] != "0000"
 
 
@@ -212,7 +214,7 @@ def test_alias_path_returns_same_envelope_as_canonical(client, seeded):
             headers={"client-platform": "common"},
             data={"templateId": str(TEMPLATE_ID), "fileHash": "abc123",
                   "clientId": CLIENT_ID},
-            files={"file": ("doc.pdf", io.BytesIO(b"%PDF-1.4 fake"),
+            files={"file": ("doc.pdf", io.BytesIO(minimal_pdf()),
                             "application/pdf")},
         )
         assert r.status_code == 200
@@ -230,7 +232,7 @@ def test_alias_path_enforces_the_same_auth(client, seeded):
     r = client.post(
         open_api.ANALYZE_PATH_ALIAS,
         data={"templateId": str(TEMPLATE_ID), "clientId": CLIENT_ID},
-        files={"file": ("d.pdf", io.BytesIO(b"x"), "application/pdf")})
+        files={"file": ("d.pdf", io.BytesIO(minimal_pdf()), "application/pdf")})
     assert r.status_code == 200
     assert r.json()["errcode"] != "0000"
     assert r.json()["data"] == []
@@ -389,7 +391,7 @@ def test_multi_invoice_document_returns_all_entities(client, seeded, monkeypatch
     r = client.post(
         f"/ai/knowledge/nlpService/document/analyze?access_token={token}",
         data={"templateId": str(TEMPLATE_ID), "fileHash": "h6", "clientId": CLIENT_ID},
-        files={"file": ("six.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")})
+        files={"file": ("six.pdf", io.BytesIO(minimal_pdf()), "application/pdf")})
     body = r.json()
     assert body["errcode"] == "0000"
     assert len(body["data"]) == 6, f"应返回 6 张，实为 {len(body['data'])}"
@@ -407,6 +409,6 @@ def test_extract_response_keeps_data_contract_and_adds_entities(db_session, monk
         ApiDefinition.external_template_id == TEMPLATE_ID).first()
     res = svc.extract_document(
         db_session, api_code=api.api_code, api_key=None,
-        file_bytes=b"%PDF-1.4", filename="x.pdf")
+        file_bytes=minimal_pdf(), filename="x.pdf")
     assert isinstance(res.data, dict) and res.data["invoiceNumber"] == "A1"
     assert len(res.entities) == 2

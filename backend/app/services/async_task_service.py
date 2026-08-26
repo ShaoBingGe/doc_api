@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models.async_task import AsyncTask, TaskStatus
 from app.models.open_api_client import OpenApiClient
+from app.services.upload_validation import InvalidUpload, validate_upload
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,6 @@ def create_task(
     filename: str,
     file_hash: str = "",
     callback_url: str = "",
-    page_count: int = 1,
 ) -> AsyncTask:
     """落盘 + 建 PENDING 行。返回已 commit 的任务。
 
@@ -143,14 +143,15 @@ def create_task(
     """
     s = get_settings()
 
-    # 文件大小上限：同步路径由 extract_service 把关，异步路径落盘在提取之前，
-    # 必须在这里自己拦——否则超大文件先吃掉磁盘才被拒。
-    if len(file_bytes) > s.max_upload_bytes:
-        raise AsyncTaskError(
-            ERR_UPLOAD_FAILED,
-            f"文件 {len(file_bytes) / 1024 / 1024:.1f} MB 超过上限 "
-            f"{s.MAX_UPLOAD_SIZE_MB} MB",
-        )
+    # 受理期校验：类型/大小/魔数/可解码性/尺寸。**在发 taskId 之前**拦下
+    # 注定失败的文件——发出 taskId 是一个承诺，与其之后毁约（实测两张坏 jpg
+    # 让对接方轮询几分钟、白烧 3 次模型重试），不如当场说清哪儿不对。
+    # 校验顺带返回页数，省掉后面再解析一次。
+    try:
+        page_count = validate_upload(
+            file_bytes, filename, max_bytes=s.max_upload_bytes)
+    except InvalidUpload as exc:
+        raise AsyncTaskError(ERR_UPLOAD_FAILED, exc.reason) from exc
 
     # 队列深度配额：全局挡服务被压垮，单 client 挡一家把队列占满饿死别家
     active = (TaskStatus.PENDING, TaskStatus.RUNNING)
@@ -188,7 +189,7 @@ def create_task(
         file_hash=file_hash or "",
         callback_url=callback_url or "",
         spool_path=str(spool),
-        page_count=max(1, int(page_count or 1)),
+        page_count=max(1, page_count),
         status=TaskStatus.PENDING,
         expires_at=now + timedelta(days=s.ASYNC_TASK_TTL_DAYS),
     )
@@ -268,13 +269,24 @@ def mark_completed(db: Session, task: AsyncTask, payload: dict) -> None:
 
 
 def mark_failed(db: Session, task: AsyncTask, errcode: str, message: str) -> None:
+    """置 FAILED。**保留 spool 文件**以便事后取证。
+
+    成功的任务删原件是对的（结果已入库，原件没有保留价值）；失败的反过来——
+    2026-08-26 两张 jpg 被 Gemini 判 400，想回头看看到底什么问题时，
+    文件已经被删干净了，只剩一句错误消息。失败量本就很少，且仍受
+    `expires_at` 的 10 天清理约束，磁盘可控。
+    """
     task.status = TaskStatus.FAILED
     task.errcode = errcode
     task.error_message = message
     task.finished_at = datetime.now(timezone.utc)
-    _drop_spool(task)
     db.commit()
     _cache_terminal(task)
+    if task.spool_path:
+        logger.warning(
+            "异步任务 %s 失败，原件已保留待查：%s（%s: %s）",
+            task.id, task.spool_path, errcode, message,
+        )
 
 
 def requeue_for_retry(db: Session, task: AsyncTask, reason: str) -> bool:

@@ -46,6 +46,7 @@ from app.services import open_api_auth as auth
 from app.services import open_api_mapper as mapper
 from app.services.async_task_worker import run_extraction
 from app.services.extract_gate import GateTimeout, get_gate
+from app.services.upload_validation import InvalidUpload, validate_upload
 
 logger = logging.getLogger(__name__)
 _settings = get_settings()
@@ -215,8 +216,19 @@ async def analyze_document(
             content=mapper.build_error(exc.errcode, exc.description, trace_id=trace_id),
         )
 
-    # docPages 先算：准入闸按页数扣配额（每页渲染约占 30MB 内存）
-    doc_pages = _count_pages(file_bytes, filename)
+    # 受理期校验 + 取页数。与异步路径同一套判据：坏文件在占闸槽位、
+    # 调模型之前就拦下（实测坏 jpg 会让模型回 400，白等一场）。
+    # 同步契约不新增错误码，复用既有 5000，但描述说清哪儿不对。
+    try:
+        doc_pages = validate_upload(
+            file_bytes, filename, max_bytes=_settings.max_upload_bytes)
+    except InvalidUpload as exc:
+        logger.info("analyze 拒收（文件不可用）: %s", exc.reason)
+        return JSONResponse(
+            status_code=200,
+            content=mapper.build_error(
+                auth.ERR_PROCESS_FAILED, exc.reason, trace_id=trace_id),
+        )
 
     # 闸前先取出后面要用的标量并**归还数据库连接** —— 闸等待可达 120s，
     # 攥着连接等会耗干 QueuePool（默认 5+10），十几个并发 analyze 就能让
@@ -384,7 +396,6 @@ async def analyze_document_async(
             filename=filename or "upload",
             file_hash=file_hash,
             callback_url=callback_url,
-            page_count=_count_pages(file_bytes, filename),
         )
     except tasksvc.AsyncTaskError as exc:
         return JSONResponse(
@@ -464,6 +475,23 @@ async def query_tasks(
                 tasksvc.ERR_FAIL, str(exc), trace_id=trace_id
             ),
         )
+
+    # 结构化审计：记下这次轮询要了哪些 taskId、哪些**在本次被取走了终态结果**。
+    # 访问日志只有 URL，taskId 在 JSON body 里 —— 没有这一行就无法回答
+    # 「结果是什么时候被取走的」，只能按"完成后的第一次轮询"粗略推断。
+    # 单行、字段定长、便于 grep 与脚本解析；taskId 取 8 位前缀（uuid4 前 8 位
+    # 在本量级下碰撞可忽略），避免一行几百字符刷屏。
+    logger.info(
+        "tasks/query client=%s trace=%s n=%d delivered=[%s] pending=[%s] missing=%d",
+        client.client_id,
+        trace_id,
+        len(task_ids),
+        ",".join(f"{t[:8]}:{v.get('status')}"
+                 for t, v in data.items()
+                 if v.get("status") in ("COMPLETED", "FAILED")),
+        ",".join(t[:8] for t, v in data.items() if v.get("status") == "PENDING"),
+        len(task_ids) - len(data),
+    )
 
     # 查不到的 taskId（不存在 / 属于别的 client）直接不出现在 map 里 ——
     # 不区分两者，避免泄露"这个 id 存在"这一信息。

@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     APP_NAME: str = "ApiAnything"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
+    # `app.*` 命名空间的日志级别。第三方库仍留在 WARNING（见 main._configure_logging）。
+    # 置 WARNING 可关掉业务 INFO；DEBUG 会把 prompt/响应长度等细节也打出来。
+    LOG_LEVEL: str = "INFO"
 
     # ── Database ──────────────────────────────────────────────────────────
     # 原型：SQLite；生产：postgresql+asyncpg://...

@@ -15,12 +15,15 @@ import asyncio
 import hashlib
 import io
 import json
+import logging
 import os
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
+
+from tests.conftest import minimal_pdf
 from fastapi.testclient import TestClient
 
 from app.api.v1 import open_api
@@ -116,7 +119,7 @@ def _submit(client: TestClient, token: str, *, template_id=str(TEMPLATE_ID), **e
         f"{open_api.ANALYZE_ASYNC_PATH}?access_token={token}",
         headers={"client-platform": "common"},
         data=data,
-        files={"file": ("doc.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        files={"file": ("doc.pdf", io.BytesIO(minimal_pdf()), "application/pdf")},
     )
 
 
@@ -153,7 +156,7 @@ def test_submit_without_token_is_A0301(client, seeded):
     r = client.post(
         open_api.ANALYZE_ASYNC_PATH,
         data={"templateId": str(TEMPLATE_ID)},
-        files={"file": ("d.pdf", io.BytesIO(b"x"), "application/pdf")})
+        files={"file": ("d.pdf", io.BytesIO(minimal_pdf()), "application/pdf")})
     assert r.status_code == 200
     assert r.json()["errcode"] == tasksvc.ERR_UNAUTHORIZED == "A0301"
 
@@ -298,6 +301,57 @@ def test_cache_hit_still_enforces_isolation(client, seeded, db_session):
 
     token_b = _token(client, client_id=OTHER_CLIENT_ID, secret=OTHER_SECRET)
     assert task_id not in _query(client, token_b, [task_id]).json()["data"]
+
+
+# ── 轮询审计日志 ─────────────────────────────────────────────────────────────
+# 访问日志只有 URL，taskId 在 JSON body 里 —— 没有这行结构化日志就无法回答
+# 「结果是什么时候被取走的」。下面按「能被脚本解析」来断言，而不只是"有输出"。
+
+def test_query_logs_delivered_task_ids(client, seeded, db_session, caplog):
+    """终态任务要出现在 delivered 段，并带上状态。"""
+    token = _token(client)
+    done_id = _submit(client, token).json()["data"]["taskId"]
+    task = db_session.query(AsyncTask).filter(AsyncTask.id == done_id).one()
+    tasksvc.mark_completed(db_session, task, {"errcode": "0000", "data": []})
+
+    with caplog.at_level(logging.INFO, logger="app.api.v1.open_api"):
+        _query(client, token, [done_id])
+
+    line = next(r.getMessage() for r in caplog.records if "tasks/query" in r.getMessage())
+    assert f"delivered=[{done_id[:8]}:COMPLETED]" in line
+    assert "pending=[]" in line
+    assert "missing=0" in line
+    assert f"client={CLIENT_ID}" in line
+
+
+def test_query_log_separates_pending_and_missing(client, seeded, caplog):
+    """处理中 / 查不到 要分别归位，否则报告会把三类混成一类。"""
+    token = _token(client)
+    pending_id = _submit(client, token).json()["data"]["taskId"]
+    ghost = str(uuid.uuid4())
+
+    with caplog.at_level(logging.INFO, logger="app.api.v1.open_api"):
+        _query(client, token, [pending_id, ghost])
+
+    line = next(r.getMessage() for r in caplog.records if "tasks/query" in r.getMessage())
+    assert "delivered=[]" in line
+    assert f"pending=[{pending_id[:8]}]" in line
+    assert "missing=1" in line
+    assert "n=2" in line
+
+
+def test_query_log_counts_foreign_task_as_missing(client, seeded, caplog):
+    """别的 client 的任务算 missing —— 与"不存在"同等对待，不泄露存在性。"""
+    token_a = _token(client)
+    tid = _submit(client, token_a).json()["data"]["taskId"]
+    token_b = _token(client, client_id=OTHER_CLIENT_ID, secret=OTHER_SECRET)
+
+    with caplog.at_level(logging.INFO, logger="app.api.v1.open_api"):
+        _query(client, token_b, [tid])
+
+    line = next(r.getMessage() for r in caplog.records if "tasks/query" in r.getMessage())
+    assert "missing=1" in line
+    assert tid[:8] not in line, "他人任务的 id 不该出现在日志里"
 
 
 # ── 生命周期 ─────────────────────────────────────────────────────────────────

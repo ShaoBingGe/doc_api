@@ -49,3 +49,29 @@ def db_session():
     finally:
         s.rollback()
         s.close()
+
+
+# ── 真实可解析的最小文件 ──────────────────────────────────────────────────────
+# 上传校验（services/upload_validation）会真正解析文件，所以测试夹具不能再用
+# `b"%PDF-1.4 fake"` 这种占位字节 —— 它们是**结构性损坏**的文件，会被正确拒收。
+# 用 PyMuPDF 生成真正合法的最小 PDF/PNG，让用例测的是业务逻辑而不是坏文件路径。
+
+def minimal_pdf(pages: int = 1) -> bytes:
+    """→ 合法的 N 页 PDF 字节。"""
+    import fitz
+
+    doc = fitz.open()
+    for _ in range(pages):
+        doc.new_page()
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def minimal_png(w: int = 200, h: int = 150) -> bytes:
+    """→ 合法 PNG 字节（尺寸默认在校验下限之上）。"""
+    import fitz
+
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, w, h))
+    pix.clear_with(255)
+    return pix.tobytes("png")

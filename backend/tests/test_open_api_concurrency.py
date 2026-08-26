@@ -25,6 +25,8 @@ import uuid
 import httpx
 import pytest
 
+from tests.conftest import minimal_pdf
+
 from app.main import app
 from app.models.api_definition import ApiDefinition, ApiDefinitionStatus
 from app.models.open_api_client import OpenApiClient
@@ -110,7 +112,7 @@ async def _get_token(ac: httpx.AsyncClient) -> str:
 
 
 def _pdf():
-    return {"file": ("d.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")}
+    return {"file": ("d.pdf", io.BytesIO(minimal_pdf()), "application/pdf")}
 
 
 async def _analyze(ac: httpx.AsyncClient, token: str):
