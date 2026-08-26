@@ -60,6 +60,9 @@ def _isolated():
     def _wipe():
         s = SessionLocal()
         try:
+            from app.models.extraction_cache import ExtractionCache
+            for row in s.query(ExtractionCache).all():
+                s.delete(row)
             for row in s.query(AsyncTask).all():
                 if row.spool_path:
                     try:
@@ -352,6 +355,105 @@ def test_query_log_counts_foreign_task_as_missing(client, seeded, caplog):
     line = next(r.getMessage() for r in caplog.records if "tasks/query" in r.getMessage())
     assert "missing=1" in line
     assert tid[:8] not in line, "他人任务的 id 不该出现在日志里"
+
+
+# ── 结果缓存 / 慢任务留档 ────────────────────────────────────────────────────
+
+def test_second_submit_of_same_file_completes_without_model_call(
+        client, seeded, db_session):
+    """同一份文件二次提交：仍发 taskId，但直接 COMPLETED、零模型调用。"""
+    from app.services import extraction_cache as xcache
+
+    token = _token(client)
+    first = _submit(client, token).json()["data"]["taskId"]
+    t1 = db_session.query(AsyncTask).filter(AsyncTask.id == first).one()
+    assert t1.content_hash, "服务端必须自算 content_hash（对接方基本不传 fileHash）"
+    tasksvc.mark_completed(db_session, t1, {
+        "errcode": "0000", "description": "Success", "traceId": "t" * 16,
+        "docPages": 1, "data": []})
+
+    second = _submit(client, token).json()["data"]["taskId"]
+    t2 = db_session.query(AsyncTask).filter(AsyncTask.id == second).one()
+    assert second != first, "仍然是一个新任务，对接方流程不变"
+    assert t2.status == TaskStatus.COMPLETED, "命中缓存应直接终态"
+    assert t2.spool_path == "", "不需要识别就不该落盘"
+    assert t2.result_json
+
+    entry = _query(client, token, [second]).json()["data"][second]
+    assert entry["status"] == "COMPLETED"
+    assert json.loads(entry["result"])["errcode"] == "0000"
+
+
+def test_cache_hit_does_not_cross_clients(client, seeded, db_session):
+    """B 提交同一份文件不得命中 A 的缓存（会泄露"别人传过这份文件"）。"""
+    token_a = _token(client)
+    tid = _submit(client, token_a).json()["data"]["taskId"]
+    task = db_session.query(AsyncTask).filter(AsyncTask.id == tid).one()
+    tasksvc.mark_completed(db_session, task, {
+        "errcode": "0000", "description": "Success", "traceId": "t" * 16,
+        "docPages": 1, "data": []})
+
+    token_b = _token(client, client_id=OTHER_CLIENT_ID, secret=OTHER_SECRET)
+    other = _submit(client, token_b).json()["data"]["taskId"]
+    row = db_session.query(AsyncTask).filter(AsyncTask.id == other).one()
+    assert row.status == TaskStatus.PENDING, "别家的缓存不该被命中"
+
+
+def test_slow_task_keeps_its_source_file(client, seeded, db_session, monkeypatch):
+    """识别超过阈值的任务保留原件 —— 事后能单独重跑，判断是文件慢还是排队慢。"""
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "SLOW_TASK_KEEP_SEC", 0.0, raising=False)
+    token = _token(client)
+    tid = _submit(client, token).json()["data"]["taskId"]
+    task = tasksvc.claim_next(db_session)
+    spool = task.spool_path
+    tasksvc.mark_completed(db_session, task, {
+        "errcode": "0000", "description": "Success", "traceId": "t" * 16,
+        "docPages": 1, "data": []})
+
+    assert task.spool_path == spool, "慢任务的原件不该被删"
+    assert os.path.exists(spool)
+
+
+def test_fast_task_still_drops_its_source_file(client, seeded, db_session, monkeypatch):
+    """正常速度的任务照旧删原件 —— 留档只针对慢的，不能变成全留。"""
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "SLOW_TASK_KEEP_SEC", 9999.0, raising=False)
+    token = _token(client)
+    _submit(client, token)
+    task = tasksvc.claim_next(db_session)
+    spool = task.spool_path
+    tasksvc.mark_completed(db_session, task, {
+        "errcode": "0000", "description": "Success", "traceId": "t" * 16,
+        "docPages": 1, "data": []})
+
+    assert task.spool_path == ""
+    assert not os.path.exists(spool)
+
+
+def test_purge_stale_spools_clears_kept_files(client, seeded, db_session, monkeypatch):
+    """留档过了 TTL 只删文件、不删任务行。"""
+    from app.core.config import get_settings
+
+    s = get_settings()
+    monkeypatch.setattr(s, "SLOW_TASK_KEEP_SEC", 0.0, raising=False)
+    token = _token(client)
+    tid = _submit(client, token).json()["data"]["taskId"]
+    task = tasksvc.claim_next(db_session)
+    spool = task.spool_path
+    tasksvc.mark_completed(db_session, task, {
+        "errcode": "0000", "description": "Success", "traceId": "t" * 16,
+        "docPages": 1, "data": []})
+    assert os.path.exists(spool)
+
+    task.finished_at = datetime.now(timezone.utc) - timedelta(hours=48)
+    db_session.commit()
+    assert tasksvc.purge_stale_spools(db_session) == 1
+    assert not os.path.exists(spool)
+    assert db_session.query(AsyncTask).filter(
+        AsyncTask.id == tid).one().status == TaskStatus.COMPLETED
 
 
 # ── 生命周期 ─────────────────────────────────────────────────────────────────

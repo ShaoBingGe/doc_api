@@ -158,3 +158,9 @@ def ensure_external_template_id_column() -> None:
     """api_definitions 补 external_template_id（开放平台数字模板号，如 templateId=7）。
     nullable：为空表示该 API 不对开放平台暴露，无需回填存量行。"""
     _ensure_column("api_definitions", "external_template_id", sqlite_type="INTEGER")
+
+
+def ensure_async_task_columns() -> None:
+    """async_tasks 补 content_hash（服务端自算的文件 sha256，结果缓存按它去重）。
+    存量行留空即可 —— 空哈希不参与缓存匹配，只是不命中，不会错配。"""
+    _ensure_column("async_tasks", "content_hash", sqlite_type="VARCHAR(64)")

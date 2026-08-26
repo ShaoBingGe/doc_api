@@ -12,6 +12,7 @@ from .api_definition import ApiDefinition, ApiDefinitionStatus
 from .api_key import ApiKey
 from .open_api_client import OpenApiClient, OpenApiToken
 from .async_task import AsyncTask, TaskStatus
+from .extraction_cache import ExtractionCache
 from .usage_record import UsageRecord
 from .user import PLATFORM_ROLES, TENANT_ROLES, Tenant, User, UserRole
 # OCR optimizer subsystem tables — imported here so Base.metadata sees them
@@ -50,6 +51,7 @@ __all__ = [
     # open platform (piaozone-compatible) credentials
     "OpenApiClient",
     "AsyncTask",
+    "ExtractionCache",
     "TaskStatus",
     "OpenApiToken",
     # usage

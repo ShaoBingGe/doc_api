@@ -156,6 +156,22 @@ class Settings(BaseSettings):
     TASK_CACHE_SIZE: int = 256
     TASK_CACHE_TTL_SEC: int = 3600
 
+    # ── 慢任务留档 ────────────────────────────────────────────────────────
+    # 识别耗时超过此值的任务保留原件，便于事后单独重跑取证
+    #（判断"慢"是文件本身还是并发排队 —— 实测同批 3 页文件耗时能差 3.5 倍）。
+    SLOW_TASK_KEEP_SEC: float = 50.0
+    # 留档原件的保留时长；过期只删文件不删任务行。
+    SLOW_SPOOL_TTL_HOURS: int = 24
+
+    # ── 提取结果缓存（同文件不重复烧模型）──────────────────────────────────
+    # 键 = client_id + templateId + 文件内容 sha256（服务端自算，不依赖调用方
+    # 传 fileHash —— 实测他们基本不传）。
+    # TTL 短是刻意的：15 分钟只覆盖"重复提交/重试"这一个场景，同时把模板升级后
+    # 吐旧结果的风险窗口压到最小。**若调长到小时级，必须把 prompt 版本加进键**
+    # （见 models/extraction_cache.py 的说明），否则模板升级会被缓存架空。
+    EXTRACT_CACHE_ENABLED: bool = True
+    EXTRACT_CACHE_TTL_MIN: int = 15
+
     # ── Security ──────────────────────────────────────────────────────────
     SECRET_KEY: str = "CHANGE-ME-IN-PRODUCTION-32-bytes!!"
     API_KEY_PREFIX: str = "sk-"

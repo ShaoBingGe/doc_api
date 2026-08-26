@@ -56,6 +56,7 @@ async def lifespan(app: FastAPI):
     # Startup: ensure DB tables exist (development convenience)
     from app.core.database import (
         create_tables,
+        ensure_async_task_columns,
         ensure_customize_job_columns,
         ensure_external_template_id_column,
         ensure_ocr_module_columns,
@@ -68,6 +69,8 @@ async def lifespan(app: FastAPI):
     ensure_tenant_columns()
     # Idempotent: add api_definitions.external_template_id (开放平台 templateId).
     ensure_external_template_id_column()
+    # Idempotent: async_tasks.content_hash（结果缓存去重键）
+    ensure_async_task_columns()
     # Idempotent: add customize_jobs.options (save-as-new feature) if missing.
     ensure_customize_job_columns()
     # Idempotent: add ocr_optimization_rounds.eval_quality (批次2) if missing.
