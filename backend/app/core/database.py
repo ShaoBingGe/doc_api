@@ -24,8 +24,13 @@ if settings.DATABASE_URL.startswith("sqlite"):
 engine = create_engine(
     settings.DATABASE_URL,
     connect_args=_connect_args,
-    # 生产 PostgreSQL 时建议设置连接池参数：
-    # pool_size=10, max_overflow=20, pool_pre_ping=True
+    # 连接池：默认的 5+10 太小 —— 2026-08-26 线上事故，开放平台并发调用把池
+    # 抽干后，取 token / 轮询 / 识别落库全部先阻塞 30s 再抛 QueuePool timeout。
+    # 根因已在路由层修掉（等准入闸之前先归还连接，见 api/v1/open_api.py），
+    # 这里放宽是第二道防线。SQLite 连接只是文件句柄，WAL 下多读单写，代价很低。
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=settings.DB_MAX_OVERFLOW,
+    pool_pre_ping=True,
     echo=settings.DEBUG,
 )
 

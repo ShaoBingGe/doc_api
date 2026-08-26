@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # ── Database ──────────────────────────────────────────────────────────
     # 原型：SQLite；生产：postgresql+asyncpg://...
     DATABASE_URL: str = "sqlite:///./data/apianything.db"
+    # 连接池。默认 5+10 在开放平台并发下会被抽干（2026-08-26 线上事故：
+    # 取 token / 轮询 / 识别落库集体阻塞 30s 后抛 QueuePool timeout）。
+    DB_POOL_SIZE: int = 20
+    DB_MAX_OVERFLOW: int = 30
 
     # ── File Storage ──────────────────────────────────────────────────────
     STORAGE_BACKEND: str = "local"          # local | s3
@@ -138,6 +142,12 @@ class Settings(BaseSettings):
     ASYNC_POLL_INTERVAL_SEC: float = 2.0
     # 单个任务的处理重试次数（异步接口文档第 9 条：默认最多 3 次）。
     ASYNC_MAX_RETRIES: int = 3
+    # 队列深度上限（PENDING+RUNNING）：全局 + 单 client。没有上限时，一个
+    # 循环提交的 client 能把磁盘写满（spool 文件 10 天才过期）进而拖死 SQLite
+    # 写入。检查在写盘**之前**——超限的提交不在磁盘上留任何字节。
+    # 上界估算：200 × 20MB(上传上限) = 4GB，远低于两台机器的可用磁盘。
+    ASYNC_MAX_QUEUE_DEPTH: int = 200
+    ASYNC_MAX_QUEUE_PER_CLIENT: int = 50
     # 终态结果的内存读缓存条数上限。轮询是高频读，缓存挡在 SQLite 前面；
     # 单条结果 5–50KB，256 条最坏约 12MB，有界。
     TASK_CACHE_SIZE: int = 256

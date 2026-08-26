@@ -135,8 +135,40 @@ def create_task(
     callback_url: str = "",
     page_count: int = 1,
 ) -> AsyncTask:
-    """落盘 + 建 PENDING 行。返回已 commit 的任务。"""
+    """落盘 + 建 PENDING 行。返回已 commit 的任务。
+
+    准入检查全部在写盘**之前**：超限的提交不在磁盘上留任何字节。
+    「计数 → 写盘 → 插行」之间没有 await，单进程事件循环下整段原子，
+    并发提交不会双双越过配额检查。
+    """
     s = get_settings()
+
+    # 文件大小上限：同步路径由 extract_service 把关，异步路径落盘在提取之前，
+    # 必须在这里自己拦——否则超大文件先吃掉磁盘才被拒。
+    if len(file_bytes) > s.max_upload_bytes:
+        raise AsyncTaskError(
+            ERR_UPLOAD_FAILED,
+            f"文件 {len(file_bytes) / 1024 / 1024:.1f} MB 超过上限 "
+            f"{s.MAX_UPLOAD_SIZE_MB} MB",
+        )
+
+    # 队列深度配额：全局挡服务被压垮，单 client 挡一家把队列占满饿死别家
+    active = (TaskStatus.PENDING, TaskStatus.RUNNING)
+    depth = db.query(AsyncTask).filter(AsyncTask.status.in_(active)).count()
+    if depth >= s.ASYNC_MAX_QUEUE_DEPTH:
+        raise AsyncTaskError(ERR_FAIL, "任务队列已满，请稍后重试")
+    mine = (
+        db.query(AsyncTask)
+        .filter(AsyncTask.status.in_(active), AsyncTask.client_id == client.client_id)
+        .count()
+    )
+    if mine >= s.ASYNC_MAX_QUEUE_PER_CLIENT:
+        raise AsyncTaskError(
+            ERR_FAIL,
+            f"该 client 的排队任务已达上限（{s.ASYNC_MAX_QUEUE_PER_CLIENT}），"
+            "请等待部分任务完成后再提交",
+        )
+
     task_id = str(uuid.uuid4())
 
     # 先落盘再建行：反过来的话，建行成功而落盘失败会留下永远处理不了的任务

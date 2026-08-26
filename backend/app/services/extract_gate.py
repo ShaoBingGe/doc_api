@@ -14,8 +14,17 @@
 **只按文档数限流是不安全的** —— 同样是"并发 3"，可能占 90MB 也可能占 1.4GB。
 所以放行需要同时满足两个条件：文档数未满 **且** 在途页数加上本次不超预算。
 
-页数维度还顺带解决了饥饿：大文档不会被小文档无限插队，因为文档数那一维是先到先得的
-FIFO（`asyncio.Condition` 按 await 顺序唤醒），等待者拿不到就继续等，不会被跳过。
+## 排队纪律：严格 FIFO（票号队列）
+
+`asyncio.Condition` 只保证按 await 顺序**唤醒**，不保证按顺序**放行**——每个等待者
+的准入谓词不同（页数不同），后到的小文档谓词先满足就会插队。没有票号队列时，
+一个 16 页任务会被源源不断的小文档无限超车，异步任务 `slot()` 不带超时，
+它就永远卡在 RUNNING：不重试、不失败、还占着 worker 的在途配额（真实缺陷，
+2026-08 code review 抓出）。
+
+所以放行加一条硬规则：**只有队头可以进**。代价是队头阻塞——大文档在队头时，
+后面本来塞得下的小文档也要等；但闸内至多 max_docs 个在途、单次识别分钟级，
+等待有界。饥饿是无界的，队头阻塞是有界的，取后者。
 
 ## 为什么用 asyncio 而不是 threading
 
@@ -28,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
@@ -55,6 +65,9 @@ class ExtractGate:
         self._docs = 0
         self._pages = 0
         self._cond = asyncio.Condition()
+        # FIFO 票号队列：只有 _queue[0] 有资格被放行（防大文档被小文档无限插队）
+        self._queue: deque[int] = deque()
+        self._next_ticket = 0
 
     # ── 观测 ──────────────────────────────────────────────────────────────
     @property
@@ -72,6 +85,7 @@ class ExtractGate:
             "max_docs": self.max_docs,
             "pages": self._pages,
             "max_pages": self.max_pages,
+            "queued": len(self._queue),
         }
 
     # ── 准入 ──────────────────────────────────────────────────────────────
@@ -100,17 +114,33 @@ class ExtractGate:
     async def _acquire(self, pages: int, timeout: float | None) -> None:
         async def _wait() -> None:
             async with self._cond:
-                # wait_for 会在每次 notify 后重新判定谓词，天然处理"惊群"
-                await self._cond.wait_for(lambda: self._can_admit(pages))
+                ticket = self._next_ticket
+                self._next_ticket += 1
+                self._queue.append(ticket)
+                try:
+                    # 严格 FIFO：必须是队头**且**配额够才放行。谓词在每次
+                    # notify 后重判，天然处理"惊群"。
+                    await self._cond.wait_for(
+                        lambda: self._queue[0] == ticket and self._can_admit(pages)
+                    )
+                except BaseException:
+                    # 超时/取消：必须把票撤出队列并唤醒后继——队头的死票会
+                    # 让整条队列永久卡死（比饥饿更糟）。
+                    self._queue.remove(ticket)
+                    self._cond.notify_all()
+                    raise
+                self._queue.popleft()
                 self._docs += 1
                 self._pages += pages
+                # 队头易主，新队头可能同样进得来（如剩余页数还够小文档用）
+                self._cond.notify_all()
 
         try:
             await asyncio.wait_for(_wait(), timeout=timeout)
         except asyncio.TimeoutError:
             raise GateTimeout(
                 f"等待提取槽位超过 {timeout}s（在途 {self._docs}/{self.max_docs} 个文档、"
-                f"{self._pages}/{self.max_pages} 页）"
+                f"{self._pages}/{self.max_pages} 页、排队 {len(self._queue)} 个）"
             ) from None
 
     async def _release(self, pages: int) -> None:

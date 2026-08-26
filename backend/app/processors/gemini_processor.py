@@ -77,6 +77,29 @@ class GeminiProcessor(DocumentProcessor):
         name = (self.model_name or "").lower()
         return "gemini-3" in name
 
+    @staticmethod
+    def _apply_runtime_thinking(merged: dict, runtime_config: dict) -> None:
+        """把 runtime_config 里的思考参数并入 merged（就地改，两个 key 会被 pop）。
+
+        thinking_level（Gemini 3.x：'low'/'high'）优先于 thinking_budget
+        （Gemini 2.x 的 token 预算）。让位判断用本地 flag 而非
+        `"thinking_config" not in merged`——merged 里可能带着 env 继承的
+        thinking_config（GEMINI_THINKING_BUDGET），用 in 判断会让调用方显式传的
+        runtime thinking_budget 被 env 静默压掉（code review 抓出）。
+        """
+        runtime_level_won = False
+        if "thinking_level" in runtime_config:
+            level = runtime_config.pop("thinking_level")
+            if level:
+                merged["thinking_config"] = types.ThinkingConfig(thinking_level=level)
+                runtime_level_won = True
+                logger.info("Using thinking_level=%s", level)
+        if "thinking_budget" in runtime_config:
+            budget = runtime_config.pop("thinking_budget")
+            if isinstance(budget, int) and budget > 0 and not runtime_level_won:
+                merged["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
+                logger.info("Converted thinking_budget %d to ThinkingConfig", budget)
+
     def _build_param_config(self, custom_config: dict) -> dict:
         """Build LLM params from environment variables, merged with custom_config."""
         import os
@@ -178,18 +201,7 @@ class GeminiProcessor(DocumentProcessor):
 
         merged = {**self.llm_param_config}
         if runtime_config:
-            # thinking_level（Gemini 3.x：'low' / 'high'）优先于 thinking_budget
-            # （Gemini 2.x 的 token 预算）。两者互斥，同时给出时以 level 为准。
-            if "thinking_level" in runtime_config:
-                level = runtime_config.pop("thinking_level")
-                if level:
-                    merged["thinking_config"] = types.ThinkingConfig(thinking_level=level)
-                    logger.info("Using thinking_level=%s", level)
-            if "thinking_budget" in runtime_config:
-                budget = runtime_config.pop("thinking_budget")
-                if isinstance(budget, int) and budget > 0 and "thinking_config" not in merged:
-                    merged["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
-                    logger.info("Converted thinking_budget %d to ThinkingConfig", budget)
+            self._apply_runtime_thinking(merged, runtime_config)
             merged.update(runtime_config)
 
         if merged.get("response_schema"):

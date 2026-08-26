@@ -68,12 +68,40 @@ async def run_extraction(
         finally:
             db.close()
 
-    return await anyio.to_thread.run_sync(_work)
+    # abandon_on_cancel=True：取消（停机/客户端断连）时立刻返回、放弃线程 ——
+    # 线程里的模型调用无法被中断，任其跑到进程退出。默认的 False 会让
+    # stop_worker 卡满整场识别（实测可达 200s），超过 systemd 优雅停机窗口后
+    # 被 SIGKILL，结果同样丢失，还白等一场。
+    return await anyio.to_thread.run_sync(_work, abandon_on_cancel=True)
+
+
+def _finalize_completed(db, task: AsyncTask, api_def, structured, doc_pages: int) -> None:
+    """把提取结果组装落库。**全程同步无 await** —— 这保证它在取消传播中
+    也能完整执行（CancelledError 只在 await 点抛出）。"""
+    from app.api.v1 import open_api as routes
+
+    page_limit = routes._page_limit(api_def.processor_type)
+    payload = mapper.build_response(
+        structured,
+        trace_id=task.id[:16].replace("-", ""),
+        doc_pages=doc_pages,
+        source_file_hash=task.file_hash,
+        description=(
+            mapper.TRUNCATED_DESC.format(limit=page_limit)
+            if page_limit and doc_pages > page_limit
+            else mapper.SUCCESS_DESC
+        ),
+    )
+    tasks.mark_completed(db, db.merge(task), payload)
 
 
 async def _process_one(task: AsyncTask) -> None:
     """处理单个已抢占（RUNNING）的任务。异常一律落到 FAILED 或重试，绝不外抛。"""
     db = SessionLocal()
+    # (structured, doc_pages)：提取一旦完成就先存进它。取消若打在出闸的 await 上
+    # （提取已结束、token 已计费），据此落库而不是丢弃重跑——丢弃等于同一份文档
+    # 计费两次（code review 抓出的真实缺陷）。
+    extraction: tuple | None = None
     try:
         spool = Path(task.spool_path)
         if not task.spool_path or not spool.exists():
@@ -104,33 +132,26 @@ async def _process_one(task: AsyncTask) -> None:
                 filename=task.file_name,
             )
             structured = result.entities if result.entities else result.data
-            doc_pages = routes._count_pages(file_bytes, task.file_name)
+            extraction = (structured, routes._count_pages(file_bytes, task.file_name))
             del file_bytes  # 出闸前就还回内存，别拖到函数结束
 
-        page_limit = routes._page_limit(api_def.processor_type)
-        payload = mapper.build_response(
-            structured,
-            trace_id=task.id[:16].replace("-", ""),
-            doc_pages=doc_pages,
-            source_file_hash=task.file_hash,
-            description=(
-                mapper.TRUNCATED_DESC.format(limit=page_limit)
-                if page_limit and doc_pages > page_limit
-                else mapper.SUCCESS_DESC
-            ),
-        )
-        tasks.mark_completed(db, db.merge(task), payload)
-        logger.info("异步任务 %s 完成（%d 页）", task.id, doc_pages)
+        _finalize_completed(db, task, api_def, *extraction)
+        logger.info("异步任务 %s 完成（%d 页）", task.id, extraction[1])
 
     except asyncio.CancelledError:
-        # 停机：退回 PENDING，下次启动继续（不占用重试次数）
         try:
-            fresh = db.merge(task)
-            fresh.status = "PENDING"
-            fresh.started_at = None
-            db.commit()
+            if extraction is not None:
+                # 提取已完成、token 已计费——落库，绝不丢弃重跑
+                _finalize_completed(db, task, api_def, *extraction)
+                logger.info("停机：任务 %s 的已完成结果已落库", task.id)
+            else:
+                # 停机于提取中途：退回 PENDING，下次启动继续（不占用重试次数）
+                fresh = db.merge(task)
+                fresh.status = "PENDING"
+                fresh.started_at = None
+                db.commit()
         except Exception:  # noqa: BLE001
-            logger.warning("停机时退回任务 %s 失败", task.id, exc_info=True)
+            logger.warning("停机时收尾任务 %s 失败", task.id, exc_info=True)
         raise
     except Exception as exc:  # noqa: BLE001 — worker 绝不能因单个任务而死
         logger.exception("异步任务 %s 处理失败", task.id)

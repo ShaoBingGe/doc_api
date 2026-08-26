@@ -222,6 +222,45 @@ async def test_gate_caps_concurrent_extractions(seeded, slow_extract, monkeypatc
     )
 
 
+async def test_gate_wait_does_not_hold_a_db_connection(seeded, slow_extract, monkeypatch):
+    """闸前等待时必须归还数据库连接。
+
+    修复前 analyze 路由攥着 `Depends(get_db)` 的连接等闸（可达 120s），
+    QueuePool 默认 5+10——十几个并发 analyze 就把池抽干，/base/oauth/token
+    跟着 30s 超时：症状与事件循环阻塞一模一样，只是换了个资源在堵。
+    """
+    from app.core.config import get_settings
+    from app.core.database import engine
+
+    s = get_settings()
+    monkeypatch.setattr(s, "GATE_MAX_DOCS", 1, raising=False)
+    monkeypatch.setattr(s, "GATE_MAX_PAGES", 100, raising=False)
+    monkeypatch.setattr(s, "SYNC_GATE_WAIT_SEC", 5.0, raising=False)
+    reset_gate()
+
+    from app.api.v1 import open_api
+    monkeypatch.setattr(open_api, "_settings", s, raising=False)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as ac:
+        token = await _get_token(ac)
+        first = asyncio.create_task(_analyze(ac, token))     # 占住唯一槽位
+        await asyncio.sleep(0.1)
+        second = asyncio.create_task(_analyze(ac, token))    # 在闸前排队
+        await asyncio.sleep(0.15)
+
+        # 排队请求已完成鉴权（用过连接）又尚未进闸——此刻它不得攥着连接
+        checked_out = engine.pool.checkedout()
+        assert checked_out == 0, (
+            f"闸前等待期间仍有 {checked_out} 个连接被攥着——"
+            "十几个并发就会抽干连接池，token 端点跟着超时"
+        )
+
+        r1, r2 = await asyncio.gather(first, second)
+    assert r1.json()["errcode"] == "0000"
+    assert r2.json()["errcode"] == "0000"
+
+
 async def test_busy_gate_returns_retry_hint_not_a_hang(seeded, slow_extract, monkeypatch):
     """闸满且等不到时回明确的'稍后重试'，不是无限挂着让调用方自己超时。"""
     from app.core.config import get_settings
