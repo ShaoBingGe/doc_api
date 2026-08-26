@@ -36,6 +36,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.database import SessionLocal
 from app.core.deps import get_db
 from app.models.api_definition import ApiDefinition, ApiDefinitionStatus
 from app.models.open_api_client import OpenApiClient
@@ -217,6 +218,15 @@ async def analyze_document(
     # docPages 先算：准入闸按页数扣配额（每页渲染约占 30MB 内存）
     doc_pages = _count_pages(file_bytes, filename)
 
+    # 闸前先取出后面要用的标量并**归还数据库连接** —— 闸等待可达 120s，
+    # 攥着连接等会耗干 QueuePool（默认 5+10），十几个并发 analyze 就能让
+    # /base/oauth/token 排队到 30s 超时——正是本次改造要消灭的那个症状，
+    # 只是换了个资源在堵（code review 抓出）。record_usage 阶段再开新会话。
+    api_code = api_def.api_code
+    api_def_id = api_def.id
+    processor_type = api_def.processor_type
+    db.close()
+
     # 复用既有提取管线（prompt 解析 / processor 兜底 / 审计一并沿用）。
     # 两处关键改动，见 services/extract_gate.py 与 async_task_worker.run_extraction：
     #   1) 过准入闸 —— 与异步 worker 共用同一个上限，"全服务并发 N"才是真话；
@@ -225,7 +235,7 @@ async def analyze_document(
     try:
         async with get_gate().slot(doc_pages, timeout=_settings.SYNC_GATE_WAIT_SEC):
             result = await run_extraction(
-                api_code=api_def.api_code,
+                api_code=api_code,
                 file_bytes=file_bytes,
                 filename=filename,
                 request_ip=request.client.host if request.client else "unknown",
@@ -255,7 +265,7 @@ async def analyze_document(
 
     # doc_pages 报**原文档实际页数**（不是送模型的页数），调用方据此判断是否被截断。
     # 上面过闸时已经算过，这里直接复用。
-    page_limit = _page_limit(api_def.processor_type)
+    page_limit = _page_limit(processor_type)
     payload = mapper.build_response(
         structured,
         trace_id=trace_id,
@@ -273,18 +283,24 @@ async def analyze_document(
             doc_pages, page_limit, page_limit, template_id, trace_id,
         )
 
-    # 用量记录（非致命）
+    # 用量记录（非致命）。闸前已把请求会话归还连接池，这里开个短命新会话。
     try:
-        svc.record_usage(
-            db,
-            api_def=api_def,
-            api_key=None,
-            request_id=uuid.uuid4(),
-            status_code=200,
-            latency_ms=int((time.time() - started) * 1000),
-            tokens_used=result.metadata.tokens_used,
-            request_ip=request.client.host if request.client else "unknown",
-        )
+        db2 = SessionLocal()
+        try:
+            api_def_row = db2.get(ApiDefinition, api_def_id)
+            if api_def_row is not None:
+                svc.record_usage(
+                    db2,
+                    api_def=api_def_row,
+                    api_key=None,
+                    request_id=uuid.uuid4(),
+                    status_code=200,
+                    latency_ms=int((time.time() - started) * 1000),
+                    tokens_used=result.metadata.tokens_used,
+                    request_ip=request.client.host if request.client else "unknown",
+                )
+        finally:
+            db2.close()
     except Exception:  # noqa: BLE001
         logger.debug("record_usage failed (non-fatal)", exc_info=True)
 

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
@@ -375,6 +376,140 @@ def test_purge_expired_removes_rows_and_files(client, seeded, db_session):
     assert tasksvc.purge_expired(db_session) >= 1
     assert db_session.query(AsyncTask).filter(AsyncTask.id == task_id).first() is None
     assert not os.path.exists(spool)
+
+
+# ── 提交配额（防磁盘/队列被单一 client 打满）─────────────────────────────────
+
+def test_per_client_queue_cap_rejects_with_1999(client, seeded, monkeypatch):
+    """单 client 排队配额：超限返回 1999，且**不落盘**。"""
+    from app.core.config import get_settings
+
+    s = get_settings()
+    monkeypatch.setattr(s, "ASYNC_MAX_QUEUE_PER_CLIENT", 2, raising=False)
+
+    # spool 目录是共享的，历史遗留文件不该影响判定 —— 只看本用例的增量
+    spool_dir = tasksvc._spool_dir()
+    before = set(spool_dir.iterdir())
+
+    token = _token(client)
+    assert _submit(client, token).json()["errcode"] == "0000"
+    assert _submit(client, token).json()["errcode"] == "0000"
+    third = _submit(client, token).json()
+    assert third["errcode"] == tasksvc.ERR_FAIL == "1999"
+    assert "上限" in third["description"]
+
+    # 超限的提交不留任何字节：只多出前两个成功提交的文件
+    assert len(set(spool_dir.iterdir()) - before) == 2
+
+
+def test_global_queue_cap_rejects_with_1999(client, seeded, monkeypatch):
+    from app.core.config import get_settings
+
+    s = get_settings()
+    monkeypatch.setattr(s, "ASYNC_MAX_QUEUE_DEPTH", 1, raising=False)
+
+    token = _token(client)
+    assert _submit(client, token).json()["errcode"] == "0000"
+    assert _submit(client, token).json()["errcode"] == tasksvc.ERR_FAIL
+
+
+def test_terminal_tasks_do_not_count_against_quota(client, seeded, db_session, monkeypatch):
+    """配额只数 PENDING+RUNNING——已完成的任务不该挡住新提交。"""
+    from app.core.config import get_settings
+
+    s = get_settings()
+    monkeypatch.setattr(s, "ASYNC_MAX_QUEUE_PER_CLIENT", 1, raising=False)
+
+    token = _token(client)
+    tid = _submit(client, token).json()["data"]["taskId"]
+    task = db_session.query(AsyncTask).filter(AsyncTask.id == tid).one()
+    tasksvc.mark_completed(db_session, task, {"errcode": "0000", "data": []})
+
+    assert _submit(client, token).json()["errcode"] == "0000"
+
+
+def test_oversized_upload_rejected_before_spooling(client, seeded, monkeypatch):
+    """超大文件在写盘前拦下（A0700）——不能先吃磁盘再拒绝。"""
+    from app.core.config import get_settings
+
+    s = get_settings()
+    monkeypatch.setattr(s, "MAX_UPLOAD_SIZE_MB", 0, raising=False)
+
+    spool_dir = tasksvc._spool_dir()
+    before = set(spool_dir.iterdir())
+    r = _submit(client, _token(client)).json()
+    assert r["errcode"] == tasksvc.ERR_UPLOAD_FAILED == "A0700"
+    assert set(spool_dir.iterdir()) == before, "被拒的提交不该在磁盘上留字节"
+
+
+# ── 停机语义（code review 修复回归）──────────────────────────────────────────
+
+async def test_cancel_mid_extraction_is_fast_and_requeues(client, seeded, db_session, monkeypatch):
+    """提取中途取消：立即返回（不等线程跑完），任务退回 PENDING 不占重试次数。
+
+    修复前 anyio 默认 abandon_on_cancel=False，stop_worker 会卡满整场识别
+    （实测可达 200s），超过 systemd 优雅停机窗口后被 SIGKILL。
+    """
+    import time as _time
+
+    from app.services import extract_service as svc_mod
+    from app.services.async_task_worker import _process_one
+
+    def _slow_extract(db, **kwargs):
+        _time.sleep(2.0)  # 模拟一场跑不完的识别（取消后线程被放弃，跑完也无人接收）
+        return None
+
+    monkeypatch.setattr(svc_mod, "extract_document", _slow_extract)
+
+    token = _token(client)
+    task_id = _submit(client, token).json()["data"]["taskId"]
+    claimed = tasksvc.claim_next(db_session)
+
+    job = asyncio.create_task(_process_one(claimed))
+    await asyncio.sleep(0.3)  # 让提取真正进到 sleep 里
+    t0 = _time.monotonic()
+    job.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await job
+    elapsed = _time.monotonic() - t0
+
+    assert elapsed < 1.0, f"取消耗时 {elapsed:.2f}s——线程没有被放弃，停机会被拖死"
+    row = db_session.query(AsyncTask).filter(AsyncTask.id == task_id).one()
+    db_session.refresh(row)
+    assert row.status == TaskStatus.PENDING, "中途取消应退回 PENDING 由下次启动接手"
+    assert row.retry_count == 0, "停机不该消耗重试次数"
+
+
+async def test_cancel_after_extraction_persists_the_paid_result(client, seeded, db_session, monkeypatch):
+    """取消打在提取完成之后（如出闸的 await 上）：结果必须落库，不能丢弃重跑。
+
+    修复前统一退回 PENDING——已经计费的识别被丢掉，重启后同一份文档再买一次。
+    """
+    from contextlib import asynccontextmanager
+
+    from app.services import async_task_worker as worker
+
+    class _CancelOnExitGate:
+        @asynccontextmanager
+        async def slot(self, pages, *, timeout=None):
+            try:
+                yield
+            finally:
+                raise asyncio.CancelledError()  # 模拟停机取消打在出闸时刻
+
+    monkeypatch.setattr(worker, "get_gate", lambda: _CancelOnExitGate())
+
+    token = _token(client)
+    task_id = _submit(client, token).json()["data"]["taskId"]
+    claimed = tasksvc.claim_next(db_session)
+
+    with pytest.raises(asyncio.CancelledError):
+        await worker._process_one(claimed)
+
+    row = db_session.query(AsyncTask).filter(AsyncTask.id == task_id).one()
+    db_session.refresh(row)
+    assert row.status == TaskStatus.COMPLETED, "提取已完成（已计费），结果必须保留"
+    assert json.loads(row.result_json)["errcode"] == "0000"
 
 
 # ── 端到端 ───────────────────────────────────────────────────────────────────

@@ -180,6 +180,68 @@ async def test_zero_or_negative_pages_normalised():
 
 
 @pytest.mark.asyncio
+async def test_fifo_big_doc_is_not_starved_by_small_arrivals():
+    """FIFO 回归：排队中的大文档不能被后到的小文档无限超车。
+
+    修复前 `_can_admit` 无排队纪律：16 页任务等在闸前，后到的小文档谓词
+    先满足就插队——异步任务的 slot() 不带超时，大文档永远卡在 RUNNING。
+    """
+    gate = ExtractGate(max_docs=3, max_pages=18)
+    order: list[str] = []
+
+    async def occupy(tag, pages, hold=0.0):
+        async with gate.slot(pages):
+            order.append(tag)
+            await asyncio.sleep(hold)
+
+    first = asyncio.create_task(occupy("small-1", 4, hold=0.08))
+    await asyncio.sleep(0.01)
+    big = asyncio.create_task(occupy("big16", 16))       # 4+16>18 → 排队
+    await asyncio.sleep(0.01)
+    late1 = asyncio.create_task(occupy("late-1", 4))     # 无 FIFO 时会插队进来
+    late2 = asyncio.create_task(occupy("late-2", 4))
+    await asyncio.sleep(0.02)
+
+    assert order == ["small-1"], f"后到的小文档不得越过排队中的大文档: {order}"
+
+    await asyncio.gather(first, big, late1, late2)
+    assert order.index("big16") < order.index("late-1")
+    assert order.index("big16") < order.index("late-2")
+
+
+@pytest.mark.asyncio
+async def test_head_timeout_does_not_jam_the_queue():
+    """队头超时退出后必须撤票并唤醒后继——死票会让整条队列永久卡死。"""
+    gate = ExtractGate(max_docs=1, max_pages=100)
+    done: list[str] = []
+
+    async def holder():
+        async with gate.slot(1):
+            await asyncio.sleep(0.1)
+
+    async def patient(tag):
+        async with gate.slot(1, timeout=5):
+            done.append(tag)
+
+    h = asyncio.create_task(holder())
+    await asyncio.sleep(0.01)
+    # 队头：0.02s 就超时放弃；它身后还有一个耐心等待者
+    with_timeout = asyncio.create_task(_expect_timeout(gate))
+    await asyncio.sleep(0.005)
+    behind = asyncio.create_task(patient("behind"))
+
+    await asyncio.gather(h, with_timeout, behind)
+    assert done == ["behind"], "队头超时后，后面的等待者必须能进"
+    assert gate.snapshot()["queued"] == 0
+
+
+async def _expect_timeout(gate: ExtractGate) -> None:
+    with pytest.raises(GateTimeout):
+        async with gate.slot(1, timeout=0.02):
+            pass
+
+
+@pytest.mark.asyncio
 async def test_concurrent_load_never_exceeds_either_limit():
     """压力下的不变式：任何时刻两个维度都不越界。"""
     gate = ExtractGate(max_docs=3, max_pages=12)
