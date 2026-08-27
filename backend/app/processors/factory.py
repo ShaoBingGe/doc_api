@@ -162,7 +162,7 @@ class ProcessorFactory:
         except Exception:  # pragma: no cover — settings unreadable → only mock is safe
             return proc == "mock"
         key_by_proc = {
-            "gemini": s.GEMINI_API_KEY,
+            "gemini": s.gemini_api_keys,   # 单 key 或多 key 池，配了任意一个即可用
             "openai": s.OPENAI_API_KEY,
             "qwen": s.QWEN_API_KEY,
         }

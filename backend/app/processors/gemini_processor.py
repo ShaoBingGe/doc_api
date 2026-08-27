@@ -52,12 +52,14 @@ class GeminiProcessor(DocumentProcessor):
         from app.core.config import get_settings
         settings = get_settings()
 
-        api_key = settings.GEMINI_API_KEY
-        if not api_key:
+        # 多账号 key 池：client 不在这里绑死，每次 process_document 临时租一个
+        # key（最少在途 + 429 熔断，见 gemini_key_pool.py）。单 key 配置下池里
+        # 只有一个成员，行为与旧实现一致。settings 里一个 key 都没有时才回退
+        # 环境变量 API_KEY（兼容最早期的裸环境用法）。
+        if not settings.gemini_api_keys:
             import os
-            api_key = os.environ.get("API_KEY", "")
-
-        self.client = genai.Client(api_key=api_key)
+            if not os.environ.get("API_KEY"):
+                logger.warning("No Gemini API key configured (GEMINI_API_KEY/GEMINI_API_KEYS)")
         # Fallback chain: explicit ctor arg → settings.GEMINI_MODEL → a
         # safe default. Previous hardcoded "gemini-3.1-pro-preview" is no
         # longer a published Gemini model and would 404.
@@ -223,12 +225,20 @@ class GeminiProcessor(DocumentProcessor):
 
         generate_config = types.GenerateContentConfig(**param_config)
 
-        logger.info("Calling Gemini model: %s", self.model_name)
-        response = self.client.models.generate_content(
-            model=self.model_name,
-            contents=contents,
-            config=generate_config,
-        )
+        # 每次调用向池租一个 key：with 块内失败会按错误类型反馈给池
+        # （429/配额 → 该 key 冷却；坏文件/网络 → 不惩罚 key），成功清退避。
+        from app.processors.gemini_key_pool import get_pool
+
+        with get_pool().lease() as lease:
+            logger.info(
+                "Calling Gemini model: %s (key #…%s)",
+                self.model_name, lease.key[-6:],
+            )
+            response = lease.client().models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=generate_config,
+            )
         logger.info("Gemini response length: %d chars", len(response.text or ""))
 
         json_string = response.text or ""

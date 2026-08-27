@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # ── AI Processors ─────────────────────────────────────────────────────
     DEFAULT_PROCESSOR: str = "mock"         # mock | gemini | openai
     GEMINI_API_KEY: str = ""
+    # 多账号 key 池（分号/逗号分隔）。配了它就覆盖 GEMINI_API_KEY；
+    # 调度用最少在途 + 429 熔断（processors/gemini_key_pool.py），加账号只改这一行。
+    GEMINI_API_KEYS: str = ""
     # Default Gemini model used when an ApiDefinition's model_name is null
     # (production OCR) and as the first chain step's model when
     # LLM_FALLBACK_CHAIN isn't configured. Sensible Q2-2026 default.
@@ -206,6 +209,16 @@ class Settings(BaseSettings):
     @property
     def max_upload_bytes(self) -> int:
         return self.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
+    @property
+    def gemini_api_keys(self) -> list[str]:
+        """key 池的唯一读取入口：GEMINI_API_KEYS（分号/逗号分隔，去重保序）
+        优先；未配则回退单个 GEMINI_API_KEY。空列表 = gemini 不可用。"""
+        raw = self.GEMINI_API_KEYS.replace(",", ";")
+        keys = [k.strip() for k in raw.split(";") if k.strip()]
+        if not keys and self.GEMINI_API_KEY:
+            keys = [self.GEMINI_API_KEY]
+        return list(dict.fromkeys(keys))
 
 
 @lru_cache
