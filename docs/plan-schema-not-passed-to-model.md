@@ -209,7 +209,38 @@ invoice_type 与 line_items 持平。**没有任何字段下降**，核心三字
 JP 黄金集未跑：仓库根缺 `JP_invoice_prompt.yaml`（同一原因让
 `test_bench_harness.py` 的 2 条用例长期红灯），JP 侧无法在本地复现。
 
-### Phase 4 · 灰度上线（腾讯云，唯一在线服务器）
+### Phase 3.6 · 本地收尾 —— ✅ 已完成（2026-08-28）
+
+1. **行级 `response_schema` 跟随激活版本**（遗留项 2 根治）。
+   `activate_version` 此前只同步 `prompt_version_id`；补上 schema 同步，并修掉
+   另两条直接置 active 的路径：`customize_fork`（组装了新 schema 却没回写行级）、
+   `customer_iteration` 的 save-as-new clone（复制的是**源 API 行**的陈旧快照，
+   改为取源**版本**的 composed_schema）。目标版本无 schema 时保留原值不置空。
+   不变量：激活后行级 schema ≡ active 版本 composed_schema（4 条用例锁死）。
+2. **composer 注释与 prompt 措辞更正**。原注释「完整约束已通过 response_schema
+   随每次调用强制」对 ocr_runner 为真、对生产是假话；现改为如实描述，并标明
+   **紧凑字段树是开关关闭时唯一的结构约束**，禁止以「反正有 response_schema」
+   为由删改。prompt 里那句也从「必须符合调用时附带的 response_schema」改为
+   「必须符合下列字段树；若调用附带了 response_schema，以其为完整约束」。
+3. **§1.34 保留，并标注为有意冗余**（见下方「为什么现在不搬」）。
+   维护者说明放在 **YAML 注释层**而非 prompt_format 正文——先前误写进正文，
+   会被逐字送进模型白烧 ~694 字符 token。
+4. **`docs/prompt-system.md` 补「schema description 何时真正到达模型」一节**：
+   三条通道现在同一个开关；开关关闭时 description 是死字、规则须写进 Part 1 正文。
+
+#### 为什么 §1.34 现在**不能**搬回 description
+
+Phase 5 原计划「schema 通了就把 §1.34 搬回 description」。**前提不成立**：
+schema 是否下发由 `PASS_SCHEMA_TO_MODEL` 控制，默认 False 且随时可一键回退。
+只要开关有可能是关的，description 就是死字 —— 把 §1.34 从正文删掉
+= 那两条规则在回退态直接失效。
+**搬迁前提：开关默认值改 True 且灰度稳定之后**（即 Phase 4 完成）。
+在那之前两处保持同步，已在 YAML 注释里写明。
+
+### Phase 4 · 灰度上线（腾讯云，唯一在线服务器）—— ⏸ **暂缓（用户指示不部署）**
+
+> 2026-08-28：用户明确要求**不部署腾讯云**，分支在本地完成开发。
+> 以下步骤已就绪待执行，代码与文档均处于「可随时部署」状态。
 
 1. 合分支 → 部署代码（开关默认 False，上线即无行为变化）；
 2. `.env` 置 `PASS_SCHEMA_TO_MODEL=true` 重启，观察 24–48h：
@@ -218,7 +249,7 @@ JP 黄金集未跑：仓库根缺 `JP_invoice_prompt.yaml`（同一原因让
    - 抽 10 个真实任务的输出与前一日同类样本对照。
 3. 回退 = `.env` 改一行重启（这正是开关存在的意义）。
 
-### Phase 5 · 收尾
+### Phase 5 · 收尾 —— ⏸ **阻塞于 Phase 4**（其中不依赖灰度的部分已在 3.6 完成）
 
 - 稳定后开关默认值改 True，写入部署 runbook；
 - 重新评估 MY §1.34（nameOfInvoice/unitPrice 当年因本缺陷搬进正文的规则）

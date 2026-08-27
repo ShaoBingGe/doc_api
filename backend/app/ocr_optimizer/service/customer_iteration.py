@@ -663,7 +663,11 @@ def _clone_api_for_save_as_new(
         description=src_api.description,
         status=_Status.pending_review,
         version=1,
-        response_schema=copy.deepcopy(src_api.response_schema),
+        # 取**源版本**的 composed_schema 而非源 API 行——后者可能是建 API 时
+        # 的旧快照（迭代重组过 schema 但历史上不回写行级），克隆会把陈旧字段集
+        # 一路复制下去。行级缺失时才回退源 API 行。
+        response_schema=copy.deepcopy(
+            src_version.composed_schema or src_api.response_schema),
         processor_type=src_api.processor_type,
         model_name=src_api.model_name,
         config=cfg,

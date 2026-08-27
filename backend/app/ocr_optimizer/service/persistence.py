@@ -203,10 +203,19 @@ def activate_version(
     target.status = PromptVersionStatus.active.value
     target.activated_at = datetime.now(timezone.utc)
 
-    # Sync ApiDefinition.prompt_version_id
+    # Sync ApiDefinition.prompt_version_id + response_schema
     api_def = db.get(ApiDefinition, api_definition_id)
     if api_def:
         api_def.prompt_version_id = target.id
+        # 行级 response_schema 跟着激活版本走。历史上只同步 prompt_version_id
+        # 不同步 schema，于是「迭代重组了 composed_schema」与「api_def 行还停在
+        # 建 API 时的快照」长期背离——rename / 新增字段全丢。生产提取与 API 文档
+        # 已改为优先取 active 版本（get_active_prompt_and_schema），但
+        # module_initializer（重新分解模块）与 customize_fork（复制 API）仍读行级，
+        # 拿到陈旧字段集。这里让行级成为 active 版本的镜像，从源头消除分裂。
+        # 目标版本没有 composed_schema（如手工建的空版本）时保留原值，不置空。
+        if target.composed_schema:
+            api_def.response_schema = target.composed_schema
 
     db.commit()
     db.refresh(target)

@@ -320,10 +320,9 @@ country_global_text  ← Part 1 国家事实 + Part 2 字段识别要点（templ
 
 GLOBAL_SCHEMA_REFERENCE
 "# 整体输出 Schema
-返回的 JSON 必须符合下列 Schema：
-```json
-<composed_schema>
-```"
+返回的 JSON 必须符合下列字段树；若调用附带了 response_schema，以其为完整约束。
+字段速查（路径 · 类型）：
+<紧凑字段树：path · type · enum 内联>"
 
 GLOBAL_OUTPUT_CONTRACT_DETAILS  ← design v7: Part 3 平台输出契约（从 global_output_contract.yaml 加载）
 "# Part 3 · 输出契约与装配规则（平台统一）
@@ -363,3 +362,31 @@ GLOBAL_SELF_CHECK
 | c1 的 active 被旧 bug 毁了 → 后续 fork 级联失血 | 历史 active = 1 个模块 | 一次性把 c1 active 回滚到 v1（32 模块） |
 | 新字段在不同样本里值不应一样 | drafts 全局共享 | 待修：drafts 改为 per-doc 嵌套 |
 | 字段编辑标注切换文档丢失 | 同上 | 同上 |
+
+---
+
+## 附：schema description 何时真正到达模型（2026-08-28）
+
+国家模板 Part 2 写着「请严格按 schema 中每字段的 description 提取」。
+这句话**只在 `PASS_SCHEMA_TO_MODEL=true` 时成立**。
+
+| 通道 | schema 是否随调用下发 |
+|---|---|
+| 生产提取（`/extract`、开放平台同步/异步） | 由 `PASS_SCHEMA_TO_MODEL` 控制（默认 **False**） |
+| 工作区上传 / 重识别（`reprocess_document`） | 同上，同一开关 |
+| 迭代评测 / 黄金集（`ocr_runner`） | 同上，同一开关（2026-08-28 起收编；此前**恒传**） |
+
+历史缺陷：生产链路从未下发过 `response_schema`（prompt 存在时直接忽略 schema
+参数），而 `ocr_runner` 一直在传 —— **迭代回路在「有硬约束」的世界里选版本、
+生产在「无约束」的世界里运行**，评测认为的好不等于生产的好。
+详见 [plan-schema-not-passed-to-model.md](./plan-schema-not-passed-to-model.md)。
+
+对写模板的人意味着什么：
+
+1. **开关关闭时，schema description 是死字。** 规则若必须生效，写进 Part 1 正文
+   （MY §1.34 就是当年为此搬进正文的，至今保留为**有意冗余**）。
+2. **紧凑字段树是开关关闭时唯一的结构约束**（composer 渲染的 `path · type · enum`），
+   不要以「反正有 response_schema」为由删它或再压缩。
+3. **description 写含糊会有代价。** 开关打开后实测到两处退化，根因都是描述本身
+   有缺口：`Tax Invoice` 判据的「…等关键词」被宽解成「有销售税登记号即税务发票」；
+   BRN 的逐位核读只覆盖 12 位新号、漏了括号内旧号。修法是改描述而非关开关。

@@ -1,6 +1,14 @@
 id: '7_13'
 remark: gemini json schema, anyof. Design v7 — Part1 (MY country global) + Part2 (defer to schema descriptions) + Part3 (platform output contract reference only; composer injects from assets/global_output_contract.yaml). 7_9 合并 prompts/tpl7 五轮迭代（v5 · 8/8×4 轮）：刷卡/现金小票判 receipt、银行卡交易行判 other、加油票取 Reference No、多币种优先 MYR、nameOfInvoice/unitPrice 补齐。7_10 新增 §1.36 马来语（Bahasa Malaysia）票面兼容：马来语标题/字段标签对照、马来语月份日期解析、马来语计量单位；字段名仍英文、字段值保持马来语原文。7_11 报价单（SEBUTHARGA/QUOTATION）改判 other 防重复计账（§1.1.1）；新增 §1.0.7「标题不同=不同文档」优先于内容雷同合并；§1.4 禁止用 0 代替缺失（无税行不得填 tax=0）；补 Deskripsi/Rujukan Kami/Bil. 列头歧义与 RA 类企业注册号。7_12 收紧 Tax Invoice 判据：必须是**标题文字**含 TAX INVOICE/INVOIS CUKAI，仅有 Sales Tax Reg No / SST 列不构成依据（schema 硬约束灰度中实测：6 张标题均为 INVOICE 的发票里，印有 Sales Tax Reg No 的 3 张被误升格为 Tax Invoice）。7_13 BRN 自检扩展到**括号内旧号**（6–7 位数字+字母），列出 8↔6/3↔8/1↔7 高频混淆对——schema 硬约束开启后实测该处稳定误读（1298487-V→1296487-V），旧自检只覆盖 12 位新号。
 structure_prompt_version: '6'
+# ⚠️ §1.34（nameOfInvoice / unitPrice）与 schema 中同名字段的 description
+# **有意重复**，不是待清理的冗余。当年正因「生产链路不传 response_schema、
+# description 是死字」才把规则搬进 Part 1 正文
+# （见 docs/plan-schema-not-passed-to-model.md）。管道现已打通，但是否下发由
+# PASS_SCHEMA_TO_MODEL 控制、默认关且随时可回退——只要开关可能是关的，
+# §1.34 就是这两条规则**唯一生效的载体**。删除前提：开关默认 True 且灰度稳定
+# （该计划 Phase 5）。在那之前改规则请**两处同步**。
+
 # 国家锁定字段（国家规范·不可修改）：识别规则由 Part 1 严格管控，排除出 Part 2
 # 反思/优化范围，客户在自定义面板中不可增删改/改类型。
 locked_fields:

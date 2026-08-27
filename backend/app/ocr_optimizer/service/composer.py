@@ -150,14 +150,20 @@ def assemble_prompt(
         body_parts.append(f"## {i}. {name}\n{ident_line}{body}\n")
 
     schema = assemble_schema(mod_list)
-    # 编译效率：完整 JSON Schema 已通过 response_schema 随每次调用强制
-    # （ocr_runner / extract 均传 composed_schema），prompt 内不再重复
-    # indent=2 的全量 dump（实测占整段 prompt ~28%）。这里只渲染紧凑
-    # 字段树（路径 · 类型），结构信息无损、体积缩到约 1/5。
+    # 编译效率：prompt 内不重复 indent=2 的全量 schema dump（实测占整段
+    # prompt ~28%），只渲染紧凑字段树（路径 · 类型），结构信息无损、体积约 1/5。
+    #
+    # ⚠️ 这里**不能假定** response_schema 一定随调用下发：它由
+    # PASS_SCHEMA_TO_MODEL 控制（默认 False）。本注释历史上写着「已通过
+    # response_schema 随每次调用强制（ocr_runner / extract 均传）」——对
+    # ocr_runner 是真的，对生产 extract 是**假话**，schema 那时从未到达模型
+    # （docs/plan-schema-not-passed-to-model.md）。所以紧凑字段树是
+    # **开关关闭时唯一的结构约束**，不是可有可无的冗余，别按「反正有
+    # response_schema」为由删掉或再压缩它。
     schema_reference = (
         "# 整体输出 Schema\n"
-        "返回的 JSON 必须符合调用时附带的 response_schema（完整约束以其为准）。"
-        "字段速查（路径 · 类型）：\n"
+        "返回的 JSON 必须符合下列字段树；若调用附带了 response_schema，"
+        "以其为完整约束。字段速查（路径 · 类型）：\n"
         f"{_render_schema_tree(schema)}\n"
     )
     country_section = ""
