@@ -253,3 +253,58 @@ def test_async_mixed_document_still_completes(db_session, seeded):
 def test_async_legacy_errcode_points_at_the_sync_twin():
     """两套码在同一服务里并存；legacyErrcode 必须指向同步侧的对应码。"""
     assert tasksvc.LEGACY_OF[tasksvc.ERR_NO_INVOICE_FOUND] == auth.ERR_NO_INVOICE_FOUND
+
+
+# ── other 记录不得携带金额（防重复计账）────────────────────────────────────────
+
+def test_other_entity_carries_no_amount():
+    """`docType: other` 只保留 docType / page —— 模型多吐的金额一律丢弃。
+
+    背景：2026-08-27 实测一份 MY 文档「第1页 SEBUTHARGA 报价单 + 第2页 INVOIS 发票」，
+    两页金额同为 RM800。报价单按 §1.1.1 判 other，但 qwen 仍把 totalAmount=800
+    吐在 other 记录上；下游若不按 docType 过滤就会把同一笔钱加两遍。
+    schema 的 other 分支本就只声明 docType/page，这里做确定性兜底。
+    """
+    out = mapper.map_entity({
+        "docType": "other", "page": [1],
+        "totalAmount": 800, "currency": "MYR", "nameOfInvoice": "SEBUTHARGA",
+        "billFromName": "G CONCEPT EMPIRE", "invoiceNumber": "QUO-(07/26)(2)",
+        "detailOfGoodsOrServices": [{"articleName": "Menu Petang", "netAmount": 750}],
+    }, source_file_hash="h1")
+
+    basic = out["header"]["basic"]
+    assert basic["docType"] == "other"
+    assert basic["page"] == "[1]" or basic["page"] == [1] or "1" in str(basic["page"])
+    assert basic["totalAmount"] == "", "other 记录不得带金额"
+    assert basic["nameOfInvoice"] == ""
+    assert basic["currency"] == ""
+    assert out["header"]["billFrom"]["billFromName"] == ""
+    assert out["detail"]["detailOfGoodsOrServices"] == [], "other 记录不得带明细"
+    assert basic["sourceFileHash"] == "h1", "sourceFileHash 是平台注入的溯源字段，须保留"
+
+
+def test_invoice_entity_keeps_everything():
+    """只影响 other —— invoice/receipt 一个字段都不能少。"""
+    out = mapper.map_entity({
+        "docType": "invoice", "page": [2], "totalAmount": 800,
+        "currency": "MYR", "nameOfInvoice": "INVOIS",
+        "billFromName": "G CONCEPT EMPIRE",
+        "detailOfGoodsOrServices": [{"articleName": "Menu Petang", "netAmount": 750}],
+    }, source_file_hash="h1")
+    basic = out["header"]["basic"]
+    assert basic["totalAmount"] == "800"
+    assert basic["nameOfInvoice"] == "INVOIS"
+    assert out["header"]["billFrom"]["billFromName"] == "G CONCEPT EMPIRE"
+    assert len(out["detail"]["detailOfGoodsOrServices"]) == 1
+
+
+def test_quotation_plus_invoice_totals_only_once():
+    """端到端语义：报价单+发票同一 PDF，全量求和只应得到 800 而不是 1600。"""
+    payload = mapper.build_response(
+        [{"docType": "other", "page": [1], "totalAmount": 800, "currency": "MYR"},
+         {"docType": "invoice", "page": [2], "totalAmount": 800, "currency": "MYR"}],
+        trace_id="t" * 16, doc_pages=2, source_file_hash="h")
+    total = sum(float(((e.get("header") or {}).get("basic") or {}).get("totalAmount") or 0)
+                for e in payload["data"])
+    assert total == 800.0, f"重复计账：合计 {total}，应为 800"
+    assert mapper.has_no_billing_entity(payload) is False, "有一张真发票，不算全 other"

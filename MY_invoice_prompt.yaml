@@ -1,5 +1,5 @@
-id: '7_10'
-remark: gemini json schema, anyof. Design v7 — Part1 (MY country global) + Part2 (defer to schema descriptions) + Part3 (platform output contract reference only; composer injects from assets/global_output_contract.yaml). 7_9 合并 prompts/tpl7 五轮迭代（v5 · 8/8×4 轮）：刷卡/现金小票判 receipt、银行卡交易行判 other、加油票取 Reference No、多币种优先 MYR、nameOfInvoice/unitPrice 补齐。7_10 新增 §1.36 马来语（Bahasa Malaysia）票面兼容：马来语标题/字段标签对照、马来语月份日期解析、马来语计量单位；字段名仍英文、字段值保持马来语原文。
+id: '7_11'
+remark: gemini json schema, anyof. Design v7 — Part1 (MY country global) + Part2 (defer to schema descriptions) + Part3 (platform output contract reference only; composer injects from assets/global_output_contract.yaml). 7_9 合并 prompts/tpl7 五轮迭代（v5 · 8/8×4 轮）：刷卡/现金小票判 receipt、银行卡交易行判 other、加油票取 Reference No、多币种优先 MYR、nameOfInvoice/unitPrice 补齐。7_10 新增 §1.36 马来语（Bahasa Malaysia）票面兼容：马来语标题/字段标签对照、马来语月份日期解析、马来语计量单位；字段名仍英文、字段值保持马来语原文。7_11 报价单（SEBUTHARGA/QUOTATION）改判 other 防重复计账（§1.1.1）；新增 §1.0.7「标题不同=不同文档」优先于内容雷同合并；§1.4 禁止用 0 代替缺失（无税行不得填 tax=0）；补 Deskripsi/Rujukan Kami/Bil. 列头歧义与 RA 类企业注册号。
 structure_prompt_version: '6'
 # 国家锁定字段（国家规范·不可修改）：识别规则由 Part 1 严格管控，排除出 Part 2
 # 反思/优化范围，客户在自定义面板中不可增删改/改类型。
@@ -63,6 +63,19 @@ prompt_template:
     **记录数必须等于清单条数**。每条记录都要能指认它在第几页；指不出来的不要输出，
     也不要编造票面上不存在的单号或金额。
 
+    ### 1.0.7 标题不同 = 不同文档（**优先于**「内容雷同就合并」）
+    判断两页是否同一份文档时，**标题的优先级高于内容相似度**：
+    - 两页标题不同（如第 1 页 `SEBUTHARGA`、第 2 页 `INVOIS`；或 `QUOTATION` vs `INVOICE`；
+      或 `DELIVERY ORDER` vs `INVOICE`）→ **必定是两份独立文档，各自成条**，
+      **即使**明细行、单价、数量、合计金额**完全一样**，**即使**
+      `Rujukan Kami` / `Our Ref` / 参考号两页相同。
+    - 商家把「报价单 + 正式发票」「送货单 + 发票」放进同一个 PDF 是常见做法，
+      两页内容本就应当一致 —— **内容一致恰恰是正常现象，不构成合并理由**。
+    - 只有在标题相同或后续页无标题、且满足 §1.0.3 全部特征（同一 `Invoice No.`、
+      有 `Page 2 of N` 标记、明细延续且无独立合计）时，才合并为跨页单张。
+    - 自检：若你打算把两页合并成一条，先回答「这两页的标题字面上一样吗？」——
+      不一样就**不能合并**。
+
     ## 1.1 票据种类分类（docType + invoiceType）
     - **invoice**：正式付款凭证。**只有同时具备「买方抬头 + 供应商税号（TIN/SST）+
       明确税额行」的正式票据，才判 invoice**；抬头写 `TAX INVOICE` 且有 SST/税额的，判 invoice。
@@ -72,8 +85,8 @@ prompt_template:
       - Credit Note（贷项发票；票面含 AVOIR / CREDIT 等关键词，或 totalAmount < 0）
       - Tax Invoice（税务发票；票面含 "Tax Invoice" / "Faktur Pajak"，MY 多数 SST 发票属此类）
       - Debit Note（借项发票）
-      - Quotation 报价单：若含供应商/客户/明细/金额等 invoice 核心要素，亦归 invoice
       - Receipt/Tax Invoice 收据税票：含税务信息（如 SST/TIN）的归 invoice
+      - **例外：报价单不属于 invoice**，见下方 §1.1.1。
     - **receipt**：小额付款凭证，一般无详细税务信息，如各种小票、收据。
       - **刷卡支付凭条与收银小票**：马来西亚加油站、便利店、餐饮的刷卡凭条 / POS 小票，
         **即便票面印有 `INVOICE` / `Current Invoice` 字样，也一律判 receipt**。
@@ -92,7 +105,31 @@ prompt_template:
         内容手写体、无税号、无买方公司信息、无税额拆分。
       - 判据：一张真正的 receipt 必然具备「**商户抬头 + 至少一行消费明细 +
         一个合计金额**」，三者缺一就不是 receipt（多半是 other，见 §1.0.5）。
-    - **other**：合同、订单确认书、对账单、账单流水等不属 invoice/receipt 的文档（见 §1.0.5）。
+    - **other**：合同、订单确认书、**报价单**、对账单、账单流水等不属 invoice/receipt 的文档
+      （见 §1.0.5、§1.1.1）。
+
+    ### 1.1.1 报价单一律判 other（防重复计账）
+    **标题为 `SEBUTHARGA` / `SEBUT HARGA` / `QUOTATION` / `QUOTE` / `报价单` 的文档，
+    一律 `docType: other`**（仅输出 docType 与 page），即便它具备供应商、客户、
+    明细、金额、甚至签章等全部 invoice 要素。
+
+    理由：报价单是**成交前的要约**，不是付款凭证。实务中商家常把「报价单 + 正式发票」
+    放在同一个 PDF 里（两页金额完全相同），若两者都判 invoice，下游对账会把
+    **同一笔钱计两次**。
+
+    识别锚点（命中任一即为报价单）：
+    - 标题框写 `SEBUTHARGA` / `SEBUT HARGA` / `QUOTATION`；
+    - 正文含 `mengemukakan sebut harga`（提交报价）、`harga yang ditawarkan`（所报价格）、
+      `Sekiranya terdapat sebarang perubahan ... harga ... akan turut berubah`
+      （价格可能变动）等要约措辞；
+    - 单号前缀为 `QUO` / `QT` / `SH`（如 `QUO-(07/26)(2)`）且全文再无 `No. Invois` /
+      `Invoice No`。
+    - **反证**：同一页若另有明确的 `No. Invois` / `Invoice No.` 且标题是 `INVOIS` /
+      `INVOICE`，那它就是发票，不适用本条。
+
+    **注意与跨页合并的关系**：报价单页与发票页**即使内容雷同、参考号相同**
+    （常见 `Rujukan Kami` 两页一致），也**不是**跨页单张 —— 标题不同即为两份不同文档，
+    各自成条（报价单那条是 other）。详见 §1.0.3 与 §1.0.7。
 
     ## 1.2 内容与格式统一要求
     - **语言**：MY 票据以英文为主，部分或**整张**使用中/马来文（Bahasa Malaysia）。
@@ -124,6 +161,12 @@ prompt_template:
       - 关键词：`TIN`、`TIN No.`、`Supplier TIN`、`Buyer TIN`、`Customer Tin No.`
     - **SSM / Company Reg. No.（业务登记号）**：MY 公司注册号，**仅供应商提取，不取买方**。
       - 格式：12 位纯数字（新号，如 `199201000276`），或旧号带连字符（如 `518287-T`、`424868-V`），或并列（如 `199701009372 (424868-V)`）—— 完整保留原文。
+      - **独资/合伙企业（Enterprise / Perniagaan）另有一套号**：两位字母 + 数字 + 连字符字母，
+        如 `RA0085780-K`、`PG0123456-A`，常**直接印在公司名后面的括号里**
+        （例：`G CONCEPT EMPIRE (RA0085780-K)`）。这类号同样填
+        `billFromBusinessRegistrationNumber`，且**必须从公司名里摘出来**——
+        `billFromName` 只留公司名本身（`G CONCEPT EMPIRE`），不要把括号里的注册号
+        一起留在名称字段里。
       - 关键词：`Company Reg.No`、`Registration No`、`SSM`，或公司名称右侧括号内的 12 位数字。
       - 字段：`billFromBusinessRegistrationNumber`。
       - **逐位核读（本字段最易错）**：新式号常紧挨公司名排在同一行、字号偏小，扫描件里
@@ -191,7 +234,9 @@ prompt_template:
 
     ### 1.36.2 字段标签对照（找值时视同英文关键词）
     - **单号**：`No. Invois` / `Nombor Invois` / `No. Resit` / `No. Bil` → invoiceNumber；
-      `No. Rujukan` = Reference No（凭条场景的备选单号，优先级同 §1.3）。
+      `No. Rujukan` / `Rujukan Kami`（我方参考号）= Reference No / Our Ref
+      —— 凭条场景的备选单号，优先级同 §1.3：**有 `No. Invois` 就先取它**，
+      两页共用同一个 `Rujukan Kami` 不代表两页是同一份文档（见 §1.0.7）。
     - **日期**：`Tarikh` = Date；`Tarikh Invois` = Invoice Date；
       `Tarikh Matang` / `Tarikh Akhir Bayaran` = Due Date。
     - **金额**：`Jumlah` = Total；`Jumlah Kecil` = Subtotal；
@@ -203,9 +248,13 @@ prompt_template:
       （两者合起来即 SST）；`CBP`（Cukai Barang & Perkhidmatan）= GST。
       `No. Cukai Jualan` = Sales Tax No. —— 与英文版同规：**严禁**当作
       invoiceNumber / TIN / SSM 写入。
-    - **明细列头**：`Butir-Butir` / `Butiran` / `Perihal` / `Keterangan` =
+    - **明细列头**：`Butir-Butir` / `Butiran` / `Perihal` / `Keterangan` / `Deskripsi` =
       Description/Particulars → 品名进 articleName（§1.35 归属规则不变）；
-      `Kuantiti` / `Kti` = Quantity；`Harga` / `Harga Seunit` = Unit Price。
+      `Kuantiti` / `Kti` = Quantity；`Harga` / `Harga Seunit` = Unit Price；
+      明细表最右列的 `Jumlah` = 该行金额 → netAmount（表底那一行 `JUMLAH` 才是总计）。
+      **`Bil.` 作为明细表列头时是「序号」（Bilangan），不是单据类型、更不是金额**——
+      不要因为看到 `Bil.` 就把文档判成 BIL/账单（对比 §1.36.1 的标题 `BIL`：
+      只有出现在**标题位置**时才是单据类型）。
     - **买卖双方**：`Kepada` = To（买方抬头）→ billTo*；`Pelanggan` = Customer、
       `Pembeli` = Buyer → billTo*；`Pembekal` = Supplier、`Penjual` = Seller → billFrom*；
       `Alamat` = 地址（进对应 Composite 字段）。
@@ -235,6 +284,11 @@ prompt_template:
     - **invoice / receipt 类型**：`docType`、`invoiceType`、`page`、`currency` 必须输出；若票面无 currency，按 MY 上下文推断（默认 MYR）。
     - **other 类型**：仅 `docType`、`page` 必须输出。
     - **缺失信息**：无法找到的字段一律不输出，**不要推断、不要捏造**。
+    - **严禁用 0 代替「没有」**：票面**没有税行**时 `totalTaxAmount` 与
+      `detailOfTaxSummary` 一律**留空/不输出**，不要填 `0`——`0` 是「税额确为零」的
+      断言，与「票面根本没提税」是两回事，下游据此做税务核对会得出错误结论。
+      同理适用于 `totalNetAmount`、`quantity`、`unitPrice` 等一切数值字段：
+      **找不到就不输出，绝不用 0 占位**。
 
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # Part 2 · 字段识别规则
@@ -283,7 +337,11 @@ prompt_template:
           properties:
             docType:
               type: STRING
-              description: 票据类型：invoice 或 receipt 
+              description: |-
+                票据类型：invoice 或 receipt。
+                **报价单（SEBUTHARGA / SEBUT HARGA / QUOTATION）不在此列，判 other**
+                （规则见 Part 1.1.1：报价单是成交前要约，不是付款凭证，
+                与同 PDF 内的正式发票金额相同会造成重复计账）。
               enum:
                 - invoice
                 - receipt
@@ -345,7 +403,9 @@ prompt_template:
             totalTaxAmount:
               type: NUMBER
               description: |-
-                总税额。提取逻辑如下：
+                总税额。**票面没有任何税行时留空、不输出，严禁填 0**
+                （0 表示「税额确为零」，与「票面未提税」是两回事，见 Part 1.4）。
+                提取逻辑如下：
                 1. **语义优先**：优先提取明确标识为 'Tax', 'VAT', 'GST', 'IVA', 'Tax Amount' 等字段的数值总和。
                 2. **结构识别**：在存在多行税率汇总表（Tax Summary）的情况下，应提取表中各税种金额的加总，而不是提取表中的 'Total' 或 'Subtotal' 字段。
                 3. **严禁推算**：严禁仅通过 (TotalAmount - 某个收支项) 简单推算税额，必须在票面找到对应的税金标识。

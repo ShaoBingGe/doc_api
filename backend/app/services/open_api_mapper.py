@@ -215,9 +215,24 @@ def _rows(value: Any, fields: list[str]) -> list[dict[str, str]]:
 
 # ── 主映射 ────────────────────────────────────────────────────────────────────
 
+#: `docType: other` 的记录允许保留的字段。国家模板的 schema 里 other 分支
+#: **只声明了 docType 与 page**，但模型不一定守规矩——实测 qwen 会把报价单页的
+#: totalAmount(800) 一并吐出来。留着它下游一旦不按 docType 过滤就会把
+#: 「报价单 + 正式发票」同一笔钱加两遍，正是判 other 想根除的问题。
+#: 这里做确定性兜底，与模型无关，两台服务器结果一致。
+_OTHER_KEPT_FIELDS = frozenset({"docType", "page", "sourceFileHash"})
+
+
+def _strip_non_billing(entity: dict) -> dict:
+    """other 记录只保留 docType / page / sourceFileHash，其余一律丢弃。"""
+    return {k: v for k, v in entity.items() if k in _OTHER_KEPT_FIELDS}
+
+
 def map_entity(entity: dict, *, source_file_hash: str = "") -> dict:
     """一条扁平票据 → 一个 {header, detail} 对象。"""
     enriched = apply_aliases(entity)
+    if str(enriched.get("docType") or "").strip().lower() == "other":
+        enriched = _strip_non_billing(enriched)
     # sourceFileHash 由调用方注入（模型不产出它）；实体自带则以自带为准
     enriched.setdefault("sourceFileHash", source_file_hash)
     if not enriched.get("sourceFileHash"):
