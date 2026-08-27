@@ -10,15 +10,15 @@ import threading
 import pytest
 
 from app.core.config import Settings, get_settings
-from app.processors import gemini_key_pool as kp
-from app.processors.gemini_key_pool import GeminiKeyPool, is_quota_error
+from app.processors import key_pool as kp
+from app.processors.key_pool import KeyPool, is_quota_error
 
 
 @pytest.fixture(autouse=True)
 def _fresh_pool():
-    kp.reset_pool()
+    kp.reset_pools()
     yield
-    kp.reset_pool()
+    kp.reset_pools()
 
 
 # ── 配置解析 ─────────────────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ def test_factory_is_available_accepts_multi_key_config(monkeypatch):
 
 def test_sequential_calls_alternate_between_two_keys():
     """串行场景（每次一进一出）：平局按累计次数轮转 → 严格交替。"""
-    pool = GeminiKeyPool(["a", "b"])
+    pool = KeyPool(["a", "b"])
     seen = []
     for _ in range(6):
         with pool.lease() as lease:
@@ -66,7 +66,7 @@ def test_sequential_calls_alternate_between_two_keys():
 def test_new_lease_avoids_the_busy_key():
     """最少在途优先：a 被一个慢任务占着时，后续请求全部落到 b——
     这正是轮询做不到的（轮询会把第 3 个请求再砸给 a）。"""
-    pool = GeminiKeyPool(["a", "b"])
+    pool = KeyPool(["a", "b"])
     slow = pool.lease()          # a: in_flight=1，不释放
     assert slow.key == "a"
     with pool.lease() as l2:
@@ -78,7 +78,7 @@ def test_new_lease_avoids_the_busy_key():
 
 def test_three_keys_spread_evenly_under_concurrency():
     """10 个并发槽位摊到 3 个账号：占用数最多差 1（4/3/3）。"""
-    pool = GeminiKeyPool(["a", "b", "c"])
+    pool = KeyPool(["a", "b", "c"])
     leases = [pool.lease() for _ in range(10)]
     counts = {}
     for l in leases:
@@ -90,7 +90,7 @@ def test_three_keys_spread_evenly_under_concurrency():
 
 def test_threaded_leases_stay_balanced_and_leak_free():
     """80 线程并发租/还后：计数归零、累计次数均匀（线程安全冒烟）。"""
-    pool = GeminiKeyPool(["a", "b"])
+    pool = KeyPool(["a", "b"])
     barrier = threading.Barrier(8)
 
     def work():
@@ -126,7 +126,7 @@ def _burn(pool, err=None):
 
 
 def test_quota_error_cools_the_key_and_shifts_traffic():
-    pool = GeminiKeyPool(["a", "b"])
+    pool = KeyPool(["a", "b"])
     burned = _burn(pool, _Quota429("429 RESOURCE_EXHAUSTED: quota exceeded"))
     # 冷却期内接下来的请求全部落到另一个 key
     other = "b" if burned == "a" else "a"
@@ -136,7 +136,7 @@ def test_quota_error_cools_the_key_and_shifts_traffic():
 
 def test_non_quota_error_does_not_cool_the_key():
     """400 坏文件是这份文档的问题，不该让账号背锅。"""
-    pool = GeminiKeyPool(["a", "b"])
+    pool = KeyPool(["a", "b"])
     _burn(pool, ValueError("400 INVALID_ARGUMENT: Unable to process input image"))
     seen = {_burn(pool) for _ in range(2)}
     assert seen == {"a", "b"}, "非配额错误不应把 key 踢出轮转"
@@ -145,7 +145,7 @@ def test_non_quota_error_does_not_cool_the_key():
 def test_cooldown_expires_and_key_rejoins(monkeypatch):
     fake_now = [1000.0]
     monkeypatch.setattr(kp.time, "monotonic", lambda: fake_now[0])
-    pool = GeminiKeyPool(["a", "b"])
+    pool = KeyPool(["a", "b"])
     burned = _burn(pool, _Quota429("429"))
     fake_now[0] += 31.0          # 首次退避 30s，过期后应归队
     seen = {_burn(pool) for _ in range(3)}
@@ -155,7 +155,7 @@ def test_cooldown_expires_and_key_rejoins(monkeypatch):
 def test_backoff_doubles_and_resets_on_success(monkeypatch):
     fake_now = [1000.0]
     monkeypatch.setattr(kp.time, "monotonic", lambda: fake_now[0])
-    pool = GeminiKeyPool(["a"])   # 单 key：每次都租到它
+    pool = KeyPool(["a"])   # 单 key：每次都租到它
     _burn(pool, _Quota429("429"))
     first = pool._states[0].cooldown_until - fake_now[0]
     fake_now[0] += first + 1
@@ -172,7 +172,7 @@ def test_all_cooling_fails_open_to_earliest_expiry(monkeypatch):
     """全灭时不拒绝服务：选冷却到期最早的硬用。"""
     fake_now = [1000.0]
     monkeypatch.setattr(kp.time, "monotonic", lambda: fake_now[0])
-    pool = GeminiKeyPool(["a", "b"])
+    pool = KeyPool(["a", "b"])
     _burn(pool, _Quota429("429"))                 # a 冷却 30s
     fake_now[0] += 10.0
     _burn(pool, _Quota429("quota exceeded"))      # b 冷却 30s（到期更晚）
@@ -192,6 +192,6 @@ def test_is_quota_error_classification():
 def test_get_pool_reads_settings_and_is_singleton(monkeypatch):
     s = get_settings()
     monkeypatch.setattr(s, "GEMINI_API_KEYS", "k1;k2", raising=False)
-    p1 = kp.get_pool()
+    p1 = kp.get_pool("gemini")
     assert p1.size == 2
-    assert kp.get_pool() is p1
+    assert kp.get_pool("gemini") is p1

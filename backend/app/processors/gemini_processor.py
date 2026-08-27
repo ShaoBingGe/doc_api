@@ -53,7 +53,7 @@ class GeminiProcessor(DocumentProcessor):
         settings = get_settings()
 
         # 多账号 key 池：client 不在这里绑死，每次 process_document 临时租一个
-        # key（最少在途 + 429 熔断，见 gemini_key_pool.py）。单 key 配置下池里
+        # key（最少在途 + 429 熔断，见 key_pool.py）。单 key 配置下池里
         # 只有一个成员，行为与旧实现一致。settings 里一个 key 都没有时才回退
         # 环境变量 API_KEY（兼容最早期的裸环境用法）。
         if not settings.gemini_api_keys:
@@ -227,14 +227,15 @@ class GeminiProcessor(DocumentProcessor):
 
         # 每次调用向池租一个 key：with 块内失败会按错误类型反馈给池
         # （429/配额 → 该 key 冷却；坏文件/网络 → 不惩罚 key），成功清退避。
-        from app.processors.gemini_key_pool import get_pool
+        from app.processors.key_pool import get_pool
 
-        with get_pool().lease() as lease:
+        with get_pool("gemini").lease() as lease:
             logger.info(
                 "Calling Gemini model: %s (key #…%s)",
                 self.model_name, lease.key[-6:],
             )
-            response = lease.client().models.generate_content(
+            client = lease.client(lambda: genai.Client(api_key=lease.key))
+            response = client.models.generate_content(
                 model=self.model_name,
                 contents=contents,
                 config=generate_config,

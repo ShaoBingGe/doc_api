@@ -1,4 +1,7 @@
-"""Gemini API key 池 —— 多账号并发均衡 + 故障熔断。
+"""多账号 API key 池 —— 并发均衡 + 配额熔断 + 饱和度观测。
+
+Provider 无关：Gemini 和 Qwen 各持一个池实例（`get_pool("gemini")` /
+`get_pool("qwen")`），加账号只改 `.env` 里对应的 `*_API_KEYS` 一行。
 
 ## 为什么是「最少在途」而不是轮询
 
@@ -18,16 +21,18 @@
 非配额类错误（400 坏文件、超时等）**不冷却**：那是这份文档或网络的问题，
 不是这个账号的问题，冷却只会让好账号替坏文件背锅。
 
+## 饱和度
+
+`is_saturated()` 回答「这个 provider 现在还接得住吗」，供主备切换判定用
+（见 factory.resolve_chain）：全部 key 在冷却 → 饱和；或**每个** key 的
+在途都 ≥ 阈值 → 饱和。注意是 min 而非 sum：只要还有一个账号相对空闲，
+就该继续用主力，而不是因为总量大就整体切备份。
+
 ## 线程安全
 
 提取跑在 anyio 线程池里（多个 worker 线程并发调 process_document），
-所有状态改动都在 `threading.Lock` 内。`genai.Client` 按 key 缓存复用
-（官方 SDK 的 Client 线程安全，且每次新建有握手开销）。
-
-## 横向扩展
-
-`.env` 配 `GEMINI_API_KEYS=key1;key2;key3`（分号或逗号分隔），加账号只改
-这一行。不配则回退到单个 `GEMINI_API_KEY`，行为与无池时代逐字节一致。
+所有状态改动都在 `threading.Lock` 内。provider 的 client 对象按 key
+缓存复用（建连有握手开销）。
 """
 
 from __future__ import annotations
@@ -35,7 +40,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +50,10 @@ _COOLDOWN_MAX_SEC = 600.0
 
 #: 只有这些特征的错误才算「账号级」故障（该冷却这个 key）；
 #: 其余（坏文件 400、网络超时…）是请求级问题，不惩罚 key。
-_QUOTA_MARKERS = ("429", "resource_exhausted", "quota", "rate limit", "rate_limit")
+_QUOTA_MARKERS = (
+    "429", "resource_exhausted", "quota", "rate limit", "rate_limit",
+    "too many requests", "throttl",
+)
 
 
 def is_quota_error(exc: BaseException) -> bool:
@@ -60,23 +68,24 @@ class _KeyState:
     total: int = 0              # 累计发起次数（平局轮转依据）
     consecutive_failures: int = 0
     cooldown_until: float = 0.0  # monotonic 时刻；0 = 健康
-    client: object = None        # genai.Client，惰性建、按 key 复用
+    client: object = None        # provider client，惰性建、按 key 复用
 
 
-class GeminiKeyPool:
-    """进程内单例（`get_pool()`）。所有公开方法线程安全。"""
+class KeyPool:
+    """一个 provider 的 key 池。所有公开方法线程安全。"""
 
-    def __init__(self, keys: list[str]):
+    def __init__(self, keys: list[str], *, provider: str = "?"):
         deduped = list(dict.fromkeys(k.strip() for k in keys if k.strip()))
         if not deduped:
-            raise ValueError("GeminiKeyPool needs at least one non-empty key")
+            raise ValueError(f"KeyPool({provider}) needs at least one non-empty key")
+        self.provider = provider
         self._states = [_KeyState(key=k) for k in deduped]
         self._lock = threading.Lock()
 
     # ── 调度 ─────────────────────────────────────────────────────────────────
 
     def lease(self) -> "_Lease":
-        """选一个 key 并占坑。用法：``with pool.lease() as (key, client_slot):``
+        """选一个 key 并占坑。用法：``with pool.lease() as lease:``
         离开 with 块自动归还 in_flight（无论成败）。"""
         with self._lock:
             state = self._pick_locked()
@@ -90,12 +99,12 @@ class GeminiKeyPool:
         if healthy:
             # 最少在途优先；平局取累计次数最少（等价于该并发档内轮转）
             return min(healthy, key=lambda s: (s.in_flight, s.total))
-        # 全灭：选冷却到期最早的硬用。fail-open——上游有 retry，
+        # 全灭：选冷却到期最早的硬用。fail-open——上游有 retry/备份 provider，
         # 多挨一次 429 好过直接拒绝服务。
         state = min(self._states, key=lambda s: s.cooldown_until)
         logger.warning(
-            "Gemini key 池全部在冷却中，fail-open 选用 #%d（%.0fs 后到期）",
-            self._states.index(state), state.cooldown_until - now,
+            "%s key 池全部在冷却中，fail-open 选用 #%d（%.0fs 后到期）",
+            self.provider, self._states.index(state), state.cooldown_until - now,
         )
         return state
 
@@ -117,10 +126,38 @@ class GeminiKeyPool:
             )
             state.cooldown_until = time.monotonic() + backoff
             logger.warning(
-                "Gemini key #%d 配额受限（连续 %d 次），冷却 %.0fs：%s",
-                self._states.index(state), state.consecutive_failures,
-                backoff, str(exc)[:120],
+                "%s key #%d 配额受限（连续 %d 次），冷却 %.0fs：%s",
+                self.provider, self._states.index(state),
+                state.consecutive_failures, backoff, str(exc)[:120],
             )
+
+    # ── 健康 / 饱和 ──────────────────────────────────────────────────────────
+
+    def healthy_count(self) -> int:
+        now = time.monotonic()
+        with self._lock:
+            return sum(1 for s in self._states if s.cooldown_until <= now)
+
+    def is_saturated(self, per_key_limit: int) -> bool:
+        """「主力扛不住了」的判定，供主备切换用。
+
+        两种情形算饱和：
+          1. 全部 key 在冷却（配额打满/账号故障）；
+          2. **每个**健康 key 的在途都 ≥ per_key_limit。
+
+        用 min 而非 sum：只要还有一个账号相对空闲就该继续走主力——
+        总量大不等于扛不住，2 个账号各 3 个在途和 1 个账号 6 个在途，
+        对单账号 RPM 的压力完全不同。
+        per_key_limit ≤ 0 表示关闭饱和切换（只在全冷却时才算饱和）。
+        """
+        now = time.monotonic()
+        with self._lock:
+            healthy = [s for s in self._states if s.cooldown_until <= now]
+            if not healthy:
+                return True
+            if per_key_limit <= 0:
+                return False
+            return min(s.in_flight for s in healthy) >= per_key_limit
 
     # ── 观测 ─────────────────────────────────────────────────────────────────
 
@@ -144,9 +181,9 @@ class GeminiKeyPool:
 
 
 class _Lease:
-    """一次调用对一个 key 的占用。惰性建并缓存该 key 的 genai.Client。"""
+    """一次调用对一个 key 的占用。"""
 
-    def __init__(self, pool: GeminiKeyPool, state: _KeyState):
+    def __init__(self, pool: KeyPool, state: _KeyState):
         self._pool = pool
         self._state = state
 
@@ -154,13 +191,15 @@ class _Lease:
     def key(self) -> str:
         return self._state.key
 
-    def client(self):
-        """该 key 的 genai.Client（按 key 复用；双检锁惰性创建）。"""
+    def client(self, factory):
+        """该 key 的 provider client（按 key 复用；双检锁惰性创建）。
+
+        factory: 无参可调用，返回一个新 client（provider 各自提供）。
+        """
         if self._state.client is None:
             with self._pool._lock:
                 if self._state.client is None:
-                    from google import genai
-                    self._state.client = genai.Client(api_key=self._state.key)
+                    self._state.client = factory()
         return self._state.client
 
     def __enter__(self) -> "_Lease":
@@ -170,32 +209,44 @@ class _Lease:
         self._pool._report(self._state, exc)
 
 
-# ── 进程级单例 ────────────────────────────────────────────────────────────────
+# ── 进程级单例（按 provider）──────────────────────────────────────────────────
 
-_pool: GeminiKeyPool | None = None
-_pool_lock = threading.Lock()
-
-
-def get_pool() -> GeminiKeyPool:
-    """按当前 settings 建池（首次调用时）。keys 来源见 config.gemini_api_keys。"""
-    global _pool
-    if _pool is None:
-        with _pool_lock:
-            if _pool is None:
-                import os
-
-                from app.core.config import get_settings
-                keys = get_settings().gemini_api_keys
-                if not keys and os.environ.get("API_KEY"):
-                    # 兼容最早期的裸环境用法（settings 没配、只有环境变量）
-                    keys = [os.environ["API_KEY"]]
-                _pool = GeminiKeyPool(keys)
-                logger.info("Gemini key 池就绪：%d 个账号", _pool.size)
-    return _pool
+_pools: dict[str, KeyPool] = {}
+_pools_lock = threading.Lock()
 
 
-def reset_pool() -> None:
-    """测试用：丢弃单例，下次 get_pool 重读 settings。"""
-    global _pool
-    with _pool_lock:
-        _pool = None
+def keys_for(provider: str) -> list[str]:
+    """该 provider 配置的 key 列表（`.env` 的 <PROVIDER>_API_KEYS 优先，
+    回退单数版）。空列表 = 未配置。"""
+    from app.core.config import get_settings
+
+    s = get_settings()
+    if provider == "gemini":
+        keys = s.gemini_api_keys
+        if not keys:
+            import os
+            if os.environ.get("API_KEY"):   # 兼容最早期的裸环境用法
+                keys = [os.environ["API_KEY"]]
+        return keys
+    if provider == "qwen":
+        return s.qwen_api_keys
+    return []
+
+
+def get_pool(provider: str) -> KeyPool:
+    """该 provider 的池（首次调用时按 settings 建）。未配置 key 会 raise。"""
+    pool = _pools.get(provider)
+    if pool is None:
+        with _pools_lock:
+            pool = _pools.get(provider)
+            if pool is None:
+                pool = KeyPool(keys_for(provider), provider=provider)
+                _pools[provider] = pool
+                logger.info("%s key 池就绪：%d 个账号", provider, pool.size)
+    return pool
+
+
+def reset_pools() -> None:
+    """测试用：丢弃全部单例，下次 get_pool 重读 settings。"""
+    with _pools_lock:
+        _pools.clear()

@@ -55,9 +55,24 @@ class Settings(BaseSettings):
 
     # ── AI Processors ─────────────────────────────────────────────────────
     DEFAULT_PROCESSOR: str = "mock"         # mock | gemini | openai
+    # ── 主力 / 备份模型（两台服务器配置一致，见 factory.resolve_chain）────────
+    # 主力优先；主力**不可用**（没配 key / 全部账号熔断）或**严重满负荷**时
+    # 走备份。两边同一份配置：新加坡机器有 gemini key → 走 gemini；
+    # 大陆机器没有（Gemini 网络不可达）→ 主力天然不可用，直接走 qwen，
+    # 不产生任何一次注定超时的 gemini 尝试。
+    PRIMARY_PROCESSOR: str = "gemini"
+    BACKUP_PROCESSOR: str = "qwen"
+    # 「严重满负荷」阈值：主力池里**每个**健康账号的在途都 ≥ 该值时切备份。
+    # 用 min 而非总量——只要还有账号相对空闲就该继续用主力。
+    # 0 = 关闭饱和切换（只在主力全部熔断时才切）。
+    PRIMARY_SATURATION_PER_KEY: int = 4
+    # 主力调用失败后是否用备份重试同一份文档。只对 **provider 级** 故障生效
+    # （配额耗尽 / 网络不可达 / 鉴权失败）；文档级错误（400 坏文件）不重试——
+    # 换个模型同样会失败，只是把一次失败变成两次、延迟翻倍。
+    ENABLE_BACKUP_FAILOVER: bool = True
     GEMINI_API_KEY: str = ""
     # 多账号 key 池（分号/逗号分隔）。配了它就覆盖 GEMINI_API_KEY；
-    # 调度用最少在途 + 429 熔断（processors/gemini_key_pool.py），加账号只改这一行。
+    # 调度用最少在途 + 429 熔断（processors/key_pool.py），加账号只改这一行。
     GEMINI_API_KEYS: str = ""
     # Default Gemini model used when an ApiDefinition's model_name is null
     # (production OCR) and as the first chain step's model when
@@ -70,6 +85,8 @@ class Settings(BaseSettings):
     # 阿里云百炼 / DashScope（qwen-vl-ocr 视觉 OCR + qwen-plus 文本），OpenAI 兼容端点。
     # 大陆云实例用它替代不可达的 Gemini。
     QWEN_API_KEY: str = ""
+    # qwen 多账号 key 池（分号/逗号分隔），与 GEMINI_API_KEYS 同一套调度。
+    QWEN_API_KEYS: str = ""
     QWEN_MODEL: str = "qwen-vl-plus"         # 生产 OCR（视觉）；vl-plus 抽取质量/速度均衡
     QWEN_TEXT_MODEL: str = "qwen-plus"       # 反思/优化（文本）
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -210,15 +227,22 @@ class Settings(BaseSettings):
     def max_upload_bytes(self) -> int:
         return self.MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
+    @staticmethod
+    def _split_keys(plural: str, singular: str) -> list[str]:
+        """`<X>_API_KEYS`（分号/逗号分隔，去重保序）优先；未配则回退
+        单个 `<X>_API_KEY`。空列表 = 该 provider 未配置 = 不可用。"""
+        keys = [k.strip() for k in plural.replace(",", ";").split(";") if k.strip()]
+        if not keys and singular.strip():
+            keys = [singular.strip()]
+        return list(dict.fromkeys(keys))
+
     @property
     def gemini_api_keys(self) -> list[str]:
-        """key 池的唯一读取入口：GEMINI_API_KEYS（分号/逗号分隔，去重保序）
-        优先；未配则回退单个 GEMINI_API_KEY。空列表 = gemini 不可用。"""
-        raw = self.GEMINI_API_KEYS.replace(",", ";")
-        keys = [k.strip() for k in raw.split(";") if k.strip()]
-        if not keys and self.GEMINI_API_KEY:
-            keys = [self.GEMINI_API_KEY]
-        return list(dict.fromkeys(keys))
+        return self._split_keys(self.GEMINI_API_KEYS, self.GEMINI_API_KEY)
+
+    @property
+    def qwen_api_keys(self) -> list[str]:
+        return self._split_keys(self.QWEN_API_KEYS, self.QWEN_API_KEY)
 
 
 @lru_cache

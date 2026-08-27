@@ -13,6 +13,7 @@ ExtractService — 公有 API 文档提取核心逻辑。
 from __future__ import annotations
 
 import base64
+import logging
 import time
 import urllib.request
 import uuid
@@ -33,6 +34,8 @@ from app.models.api_key import ApiKey
 from app.models.document import Document, DocumentStatus, ProcessingResult
 from app.models.usage_record import UsageRecord
 from app.schemas.extract import ExtractMetadata, ExtractResponse
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -101,13 +104,12 @@ def extract_document(
         # 在当前环境不可达而识别失效 —— 与 reprocess_document 的 env-first
         # 契约一致；按模板 prompt 识别不变，仅换可用的执行引擎）。
         from app.processors.factory import ProcessorFactory
-        proc_used, model_pref = ProcessorFactory.resolve_spec(
+        chain = ProcessorFactory.resolve_chain(
             api_def.processor_type, api_def.model_name
         )
-        raw_output, structured_data, model_name, tokens_used = _run_processor(
+        raw_output, structured_data, model_name, tokens_used, proc_used = _run_with_failover(
+            chain=chain,
             storage_path=temp_path,
-            processor_type=proc_used,
-            model_name=model_pref,
             prompt=active_prompt,
             schema=api_def.response_schema,
         )
@@ -224,6 +226,74 @@ def _cleanup_temp(path: str) -> None:
 
 
 # ── Processor call ────────────────────────────────────────────────────────────
+
+#: provider **级**故障的特征 —— 只有这些才值得换个模型重试一次。
+#: 反例：400 坏文件 / 不支持的 MIME / 文档解析失败，换 provider 同样会失败，
+#: 重试只是把一次失败变成两次、把延迟翻倍、把成本翻倍。
+_PROVIDER_FAILURE_MARKERS = (
+    "429", "resource_exhausted", "quota", "rate limit", "rate_limit",
+    "too many requests", "throttl",                       # 配额
+    "timeout", "timed out", "connection", "unreachable",  # 网络
+    "temporarily unavailable", "503", "502", "500",       # 上游故障
+    "unauthenticated", "401", "403", "api key", "permission denied",  # 鉴权
+)
+
+
+def is_provider_failure(exc: BaseException) -> bool:
+    """这次失败是「这个 provider 现在不行」还是「这份文档不行」？"""
+    text = f"{type(exc).__name__} {exc}".lower()
+    return any(m in text for m in _PROVIDER_FAILURE_MARKERS)
+
+
+def _run_with_failover(
+    *,
+    chain: list[tuple[str, str | None]],
+    storage_path: str,
+    prompt: str | None,
+    schema: dict | None,
+) -> tuple[dict, dict, str, int | None, str]:
+    """按主备链依次尝试，返回 (..., 实际使用的 processor_type)。
+
+    只在 **provider 级** 故障时换下一个（见 `is_provider_failure`）；
+    文档级错误直接抛出。最后一环失败也直接抛——此时已无备份可换。
+    """
+    from app.core.config import get_settings
+
+    try:
+        failover_on = get_settings().ENABLE_BACKUP_FAILOVER
+    except Exception:  # pragma: no cover
+        failover_on = True
+
+    attempts = chain if failover_on else chain[:1]
+    last_exc: BaseException | None = None
+
+    for i, (proc, model) in enumerate(attempts):
+        try:
+            raw, structured, actual_model, tokens = _run_processor(
+                storage_path=storage_path,
+                processor_type=proc,
+                model_name=model,
+                prompt=prompt,
+                schema=schema,
+            )
+            if i > 0:
+                logger.warning(
+                    "主力失败后由备份 %s 完成识别（原因：%s）",
+                    proc, str(last_exc)[:160],
+                )
+            return raw, structured, actual_model, tokens, proc
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            is_last = i == len(attempts) - 1
+            if is_last or not is_provider_failure(exc):
+                raise
+            logger.warning(
+                "%s 调用失败（provider 级），切备份 %s 重试：%s",
+                proc, attempts[i + 1][0], str(exc)[:160],
+            )
+
+    raise last_exc if last_exc else RuntimeError("empty processor chain")
+
 
 def _run_processor(
     storage_path: str,

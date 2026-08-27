@@ -24,14 +24,34 @@ def settings_sandbox(monkeypatch):
     yield s, monkeypatch
 
 
-def test_unavailable_preferred_falls_back_to_default(settings_sandbox):
+def test_unavailable_preferred_falls_back_to_backup(settings_sandbox):
+    """行里钉着 gemini、本机没有 gemini key（大陆机器 + 历史行）→ 落到备份 qwen。
+
+    这正是本文件开头那个「迭代进度始终为 0」缺陷要的效果：行级 provider 是
+    **偏好不是契约**，不可用时必须换成一个**能干活**的引擎。2026-08-27 起
+    这一步由主备策略接管（PRIMARY=gemini → BACKUP=qwen），比旧的
+    「落到 DEFAULT_PROCESSOR」更强——DEFAULT 若是 mock，迭代照样全 0 分。
+    """
     s, mp = settings_sandbox
     mp.setattr(s, "GEMINI_API_KEY", "", raising=False)
+    mp.setattr(s, "GEMINI_API_KEYS", "", raising=False)
+    mp.setattr(s, "QWEN_API_KEY", "fake-qwen-key", raising=False)
     mp.setattr(s, "DEFAULT_PROCESSOR", "mock", raising=False)
     proc, model = ProcessorFactory.resolve_spec("gemini", "gemini-2.5-flash")
-    assert proc == "mock"
-    # 降级时丢弃外族 model_name，避免 mock/qwen 收到 gemini 的模型名
+    assert proc == "qwen"
+    # 降级时丢弃外族 model_name，避免 qwen 收到 gemini 的模型名
     assert model is None
+
+
+def test_no_backup_configured_still_degrades_to_mock(settings_sandbox):
+    """主力和备份都没配 → 仍然落回 mock（既有降级语义不变）。"""
+    s, mp = settings_sandbox
+    mp.setattr(s, "GEMINI_API_KEY", "", raising=False)
+    mp.setattr(s, "GEMINI_API_KEYS", "", raising=False)
+    mp.setattr(s, "QWEN_API_KEY", "", raising=False)
+    mp.setattr(s, "QWEN_API_KEYS", "", raising=False)
+    mp.setattr(s, "DEFAULT_PROCESSOR", "mock", raising=False)
+    assert ProcessorFactory.resolve_spec("gemini", "gemini-2.5-flash") == ("mock", None)
 
 
 def test_available_preferred_is_kept(settings_sandbox):

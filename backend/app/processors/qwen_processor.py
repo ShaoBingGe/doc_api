@@ -78,9 +78,10 @@ class QwenProcessor(DocumentProcessor):
         from app.core.config import get_settings
 
         s = get_settings()
-        self.api_key = s.QWEN_API_KEY
-        if not self.api_key:
-            raise ImportError("QWEN_API_KEY is not configured")
+        # key 不在这里绑死：每次调用向池租一个（见 _chat）。构造时只校验
+        # 「至少配了一个」，这样 ProcessorFactory.create 仍能早失败。
+        if not s.qwen_api_keys:
+            raise ImportError("QWEN_API_KEY / QWEN_API_KEYS is not configured")
         self.base_url = (s.DASHSCOPE_BASE_URL or "").rstrip("/")
         self.vision_model = s.QWEN_MODEL or "qwen-vl-ocr"
         self.text_model = s.QWEN_TEXT_MODEL or "qwen-plus"
@@ -149,13 +150,21 @@ class QwenProcessor(DocumentProcessor):
         # 显式声明「输出为 JSON 数组」）。Gemini 链路才有 schema 硬约束。
         if as_json and not self._is_vision_name(model):
             body["response_format"] = {"type": "json_object"}
-        resp = httpx.post(
-            f"{self.base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            json=body,
-            timeout=_HTTP_TIMEOUT,
-        )
-        resp.raise_for_status()
+        # 多账号 key 池：与 gemini 同一套调度（最少在途 + 429 熔断）。
+        # 单 key 配置下池里只有一个成员，行为与旧实现一致。
+        from app.processors.key_pool import get_pool
+
+        with get_pool("qwen").lease() as lease:
+            logger.info("Calling Qwen model: %s (key #…%s)", model, lease.key[-6:])
+            resp = httpx.post(
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {lease.key}"},
+                json=body,
+                timeout=_HTTP_TIMEOUT,
+            )
+            # raise_for_status 必须在 with 内：429 要被池看见才能触发熔断，
+            # 放到块外等于把限流信号吞掉，池永远以为这个账号是健康的。
+            resp.raise_for_status()
         data = resp.json()
         try:
             return data["choices"][0]["message"]["content"] or ""

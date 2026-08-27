@@ -164,7 +164,7 @@ class ProcessorFactory:
         key_by_proc = {
             "gemini": s.gemini_api_keys,   # 单 key 或多 key 池，配了任意一个即可用
             "openai": s.OPENAI_API_KEY,
-            "qwen": s.QWEN_API_KEY,
+            "qwen": s.qwen_api_keys,       # 同上，单 key 或多 key 池
         }
         if proc in key_by_proc:
             return bool(key_by_proc[proc])
@@ -191,26 +191,105 @@ class ProcessorFactory:
         if pref and cls.is_available(pref):
             return pref, model_name
 
+        # 行偏好不可用 → 交给主备策略（PRIMARY → BACKUP → DEFAULT_PROCESSOR
+        # → mock）。resolve_chain 的链首就是「此刻该用哪个引擎」的答案，
+        # 两者共用同一套判据，不会各说各话。
+        head_proc, head_model = cls.resolve_chain(None, None)[0]
+        if pref and head_proc != "mock":
+            logger.warning(
+                "Processor %r unavailable (missing key/deps) — falling back to "
+                "%r; stale model_name %r dropped",
+                pref, head_proc, model_name,
+            )
+        return head_proc, head_model
+
+    @classmethod
+    def is_saturated(cls, proc_type: Optional[str]) -> bool:
+        """该 provider 的 key 池是否「严重满负荷」。未配置/无池 → 不算饱和
+        （不可用是另一条判据，由 is_available 负责，别把两者混成一个信号）。"""
+        proc = (proc_type or "").strip().lower()
+        if proc in ("", "mock"):
+            return False
         try:
             from app.core.config import get_settings
-            default = (get_settings().DEFAULT_PROCESSOR or "").strip().lower()
-        except Exception:  # pragma: no cover
-            default = ""
-        if default and default != pref and cls.is_available(default):
-            if pref:
-                logger.warning(
-                    "Processor %r unavailable (missing key/deps) — falling back to "
-                    "DEFAULT_PROCESSOR=%r; stale model_name %r dropped",
-                    pref, default, model_name,
-                )
-            return default, None
+            from app.processors.key_pool import get_pool, keys_for
 
-        if pref or default:
+            if not keys_for(proc):
+                return False
+            limit = get_settings().PRIMARY_SATURATION_PER_KEY
+            return get_pool(proc).is_saturated(limit)
+        except Exception:  # noqa: BLE001 — 观测失败不该拖垮识别
+            return False
+
+    @classmethod
+    def resolve_chain(
+        cls,
+        preferred: Optional[str] = None,
+        model_name: Optional[str] = None,
+    ) -> List[tuple[str, Optional[str]]]:
+        """主备执行链：`[(proc, model), ...]`，按先后顺序尝试。
+
+        策略（两台服务器同一份配置）：
+          1. 行级 `preferred` 若可用 → 排第一（客户显式指定的引擎优先）；
+          2. 否则 PRIMARY_PROCESSOR（默认 gemini）可用即排第一；
+          3. BACKUP_PROCESSOR（默认 qwen）可用则**永远**附在后面做兜底；
+          4. 主力**饱和**（每个账号都压满 / 全部熔断）时把备份提到前面 ——
+             这就是「主力严重满负荷时用备份」；
+          5. 都不可用 → `[("mock", None)]`（保持既有降级语义）。
+
+        「主力不可用」在大陆机器上是**零成本**判定：没配 GEMINI_API_KEY →
+        is_available 直接 False，不会发起任何一次注定超时的 Gemini 请求。
+
+        降级到别的 provider 时丢弃 model_name —— 旧行里残留的
+        "gemini-2.5-flash" 对 qwen 无意义。
+        """
+        try:
+            from app.core.config import get_settings
+            s = get_settings()
+            primary = (s.PRIMARY_PROCESSOR or "").strip().lower()
+            backup = (s.BACKUP_PROCESSOR or "").strip().lower()
+        except Exception:  # pragma: no cover
+            primary, backup = "", ""
+
+        pref = (preferred or "").split("|", 1)[0].strip().lower() or None
+
+        chain: List[tuple[str, Optional[str]]] = []
+        seen: set[str] = set()
+
+        def add(proc: Optional[str], model: Optional[str]) -> None:
+            if proc and proc not in seen and cls.is_available(proc):
+                chain.append((proc, model))
+                seen.add(proc)
+
+        add(pref, model_name)
+        add(primary, model_name if primary == pref else None)
+        add(backup, None)
+
+        # 主力饱和 → 备份提到最前。只在「主力确实在链首」时重排，
+        # 避免把客户显式指定的引擎也一并挪走。
+        if len(chain) > 1 and cls.is_saturated(chain[0][0]):
+            head = chain[0][0]
+            chain = chain[1:] + [chain[0]]
             logger.warning(
-                "Neither preferred=%r nor DEFAULT_PROCESSOR=%r is available — using mock",
-                pref, default,
+                "主力 %s 严重满负荷（账号全忙或全部熔断），本次改走 %s",
+                head, chain[0][0],
             )
-        return "mock", None
+
+        if not chain:
+            # 保持与 resolve_spec 一致的最终兜底
+            try:
+                from app.core.config import get_settings
+                default = (get_settings().DEFAULT_PROCESSOR or "").strip().lower()
+            except Exception:  # pragma: no cover
+                default = ""
+            if default and cls.is_available(default):
+                return [(default, None)]
+            logger.warning(
+                "主力 %r / 备份 %r / 偏好 %r 均不可用 —— 使用 mock",
+                primary, backup, pref,
+            )
+            return [("mock", None)]
+        return chain
 
     @classmethod
     def is_degraded_to_mock(cls, resolved_proc: Optional[str], preferred: Optional[str]) -> bool:
