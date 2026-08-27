@@ -40,7 +40,7 @@ def _build():
         full = base_prompt + (
             ("\n\n# 技能补充规则（最高优先级）\n" + skill_doc) if (skill_doc or "").strip() else ""
         )
-        out = b._parse_entity(proc.process_document(str(pdf), full, {"schema": schema}))
+        out = b._parse_entity(proc.process_document(str(pdf), full, {"response_schema": schema}))
         cache[key] = out
         return out
 

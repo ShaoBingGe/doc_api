@@ -43,6 +43,27 @@ def get_active_composed_prompt(db: Session, api_definition_id: uuid.UUID) -> str
     return v.composed_prompt if v else None
 
 
+def get_active_prompt_and_schema(
+    db: Session, api_definition_id: uuid.UUID
+) -> tuple[str | None, dict | None]:
+    """active 版本的 (composed_prompt, composed_schema) —— **同一行取两样**。
+
+    schema 必须与 prompt 同源：客户迭代每建新版本都会重组 composed_schema，
+    但激活时**不回写** `api_def.response_schema`——分开取（prompt 取版本、
+    schema 取 api_def 行）会让迭代过的 API 传建 API 时的陈旧字段集
+    （丢 rename / 新字段）。调用方在版本缺 schema 时自行回退 api_def 行。
+    """
+    v = (
+        db.query(OcrPromptVersion)
+        .filter(OcrPromptVersion.api_definition_id == api_definition_id)
+        .filter(OcrPromptVersion.status == PromptVersionStatus.active.value)
+        .first()
+    )
+    if v is None:
+        return None, None
+    return v.composed_prompt, v.composed_schema
+
+
 def get_active_version(db: Session, api_definition_id: uuid.UUID) -> OcrPromptVersion | None:
     return (
         db.query(OcrPromptVersion)

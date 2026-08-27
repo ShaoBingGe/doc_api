@@ -96,9 +96,14 @@ def extract_document(
     # ── 4. Run extraction ─────────────────────────────────────────────────
     start_ms = int(time.time() * 1000)
     try:
-        # Fetch active modular OCR prompt if available
-        from app.ocr_optimizer import get_active_composed_prompt
-        active_prompt = get_active_composed_prompt(db, api_def.id)
+        # Fetch active modular OCR prompt + schema if available。
+        # schema 与 prompt **必须同源取 active 版本**（迭代重组 composed_schema
+        # 但不回写 api_def.response_schema，分开取会传陈旧字段集）；
+        # 无版本（api_def 直建、未走优化器）才回退行级 response_schema。
+        from app.ocr_optimizer import get_active_prompt_and_schema
+        active_prompt, active_schema = get_active_prompt_and_schema(db, api_def.id)
+        if active_schema is None:
+            active_schema = api_def.response_schema
 
         # Availability-aware resolution（已发布 API 不能因行里钉死的 provider
         # 在当前环境不可达而识别失效 —— 与 reprocess_document 的 env-first
@@ -111,7 +116,7 @@ def extract_document(
             chain=chain,
             storage_path=temp_path,
             prompt=active_prompt,
-            schema=api_def.response_schema,
+            schema=active_schema,
         )
     except Exception as exc:
         raise ProcessingError(f"Extraction failed: {exc}") from exc
@@ -322,7 +327,19 @@ def _run_processor(
             "Extract all structured data from this document and return it as valid JSON."
         )
 
-    raw_text = processor.process_document(storage_path, instruction)
+    # PASS_SCHEMA_TO_MODEL（灰度开关，默认 False）：把 schema 作为
+    # response_schema 随调用下发——Gemini 硬约束输出形状，qwen/mock 忽略。
+    # 历史缺陷：prompt 存在时 schema 从未到达模型（评测链路 ocr_runner 一直
+    # 在传，生产没传，两者不同构），详见 docs/plan-schema-not-passed-to-model.md。
+    # 开关关闭时传 None——与旧的双参调用逐字节等价。
+    from app.core.config import get_settings
+
+    runtime_config = (
+        {"response_schema": schema}
+        if schema and get_settings().PASS_SCHEMA_TO_MODEL
+        else None
+    )
+    raw_text = processor.process_document(storage_path, instruction, runtime_config)
 
     # Parse JSON from returned text
     try:

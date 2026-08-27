@@ -19,8 +19,14 @@ from app.processors.factory import ProcessorFactory
 
 @pytest.fixture()
 def settings_sandbox(monkeypatch):
-    """Mutate the cached Settings object safely per-test."""
+    """Mutate the cached Settings object safely per-test.
+
+    单数与复数 key 变量都要清——可用性判定走 `gemini_api_keys` 属性
+    （GEMINI_API_KEYS 优先、回退 GEMINI_API_KEY），本机 .env 配了复数版时
+    只清单数版等于没清（2026-08-27 本地 .env 加多账号池后现形）。"""
     s = get_settings()
+    for attr in ("GEMINI_API_KEYS", "QWEN_API_KEYS"):
+        monkeypatch.setattr(s, attr, "", raising=False)
     yield s, monkeypatch
 
 

@@ -257,7 +257,7 @@ def real_predictor(country: str = "JP", processor_type: str = "qwen") -> Predict
     proc = ProcessorFactory.create(processor_type)
 
     def predict(pdf_path: Path) -> dict:
-        raw = proc.process_document(str(pdf_path), prompt, {"schema": schema})
+        raw = proc.process_document(str(pdf_path), prompt, {"response_schema": schema})
         return _parse_entity(raw)
 
     return predict

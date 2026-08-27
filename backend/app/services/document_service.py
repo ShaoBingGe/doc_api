@@ -419,7 +419,15 @@ def _call_processor(
     # processors 消费的键是 "response_schema"（gemini 借此硬约束输出形状）。
     # 历史键名 "schema" 没有任何 processor 读取，被 extra-ignore 静默吞掉——
     # 上传识别一直没有 schema 硬约束（结构审查 F12 死参数）。
-    runtime_config = {"response_schema": schema} if schema else None
+    # PASS_SCHEMA_TO_MODEL 灰度开关与开放平台链路共用（extract_service），
+    # 关闭时传 None = 旧行为逐字节不变。
+    from app.core.config import get_settings as _gs
+
+    runtime_config = (
+        {"response_schema": schema}
+        if schema and _gs().PASS_SCHEMA_TO_MODEL
+        else None
+    )
 
     raw_text = processor.process_document(storage_path, instruction, runtime_config)
     model_name = processor.get_model_version()
@@ -781,8 +789,15 @@ def reprocess_document(
     #      country-template flow where v1.composed_prompt is the raw yaml text.
     #   3. None → _call_processor uses its generic default instruction
     prompt = body.prompt
+    schema: dict | None = None
     if prompt is None and doc.api_definition_id:
         prompt = _resolve_active_composed_prompt(db, doc.api_definition_id)
+    if doc.api_definition_id:
+        # schema 与 prompt 同源取 active 版本（PASS_SCHEMA_TO_MODEL 开启时才会
+        # 真正下发，见 _call_processor）。此前 _call_processor 的
+        # runtime_config 管道修好了但这条调用链恒传 None——修了管道没放水。
+        from app.ocr_optimizer import get_active_prompt_and_schema
+        _, schema = get_active_prompt_and_schema(db, doc.api_definition_id)
     if body.extra_fields:
         existing_fields = []
         if latest and latest.structured_data and isinstance(latest.structured_data, dict):
@@ -800,7 +815,8 @@ def reprocess_document(
         )
 
     result = _run_extraction(
-        db, doc, processor_type=processor, prompt=prompt, previous_version=prev_version
+        db, doc, processor_type=processor, prompt=prompt, schema=schema,
+        previous_version=prev_version,
     )
     db.commit()
     db.refresh(result)
