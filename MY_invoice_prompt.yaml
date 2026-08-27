@@ -1,5 +1,5 @@
-id: '7_9'
-remark: gemini json schema, anyof. Design v7 — Part1 (MY country global) + Part2 (defer to schema descriptions) + Part3 (platform output contract reference only; composer injects from assets/global_output_contract.yaml). 7_9 合并 prompts/tpl7 五轮迭代（v5 · 8/8×4 轮）：刷卡/现金小票判 receipt、银行卡交易行判 other、加油票取 Reference No、多币种优先 MYR、nameOfInvoice/unitPrice 补齐。
+id: '7_10'
+remark: gemini json schema, anyof. Design v7 — Part1 (MY country global) + Part2 (defer to schema descriptions) + Part3 (platform output contract reference only; composer injects from assets/global_output_contract.yaml). 7_9 合并 prompts/tpl7 五轮迭代（v5 · 8/8×4 轮）：刷卡/现金小票判 receipt、银行卡交易行判 other、加油票取 Reference No、多币种优先 MYR、nameOfInvoice/unitPrice 补齐。7_10 新增 §1.36 马来语（Bahasa Malaysia）票面兼容：马来语标题/字段标签对照、马来语月份日期解析、马来语计量单位；字段名仍英文、字段值保持马来语原文。
 structure_prompt_version: '6'
 # 国家锁定字段（国家规范·不可修改）：识别规则由 Part 1 严格管控，排除出 Part 2
 # 反思/优化范围，客户在自定义面板中不可增删改/改类型。
@@ -95,7 +95,10 @@ prompt_template:
     - **other**：合同、订单确认书、对账单、账单流水等不属 invoice/receipt 的文档（见 §1.0.5）。
 
     ## 1.2 内容与格式统一要求
-    - **语言**：MY 票据以英文为主，部分中/马来文。**保持原文，不翻译**。
+    - **语言**：MY 票据以英文为主，部分或**整张**使用中/马来文（Bahasa Malaysia）。
+      **字段值保持票面原文，不翻译**——马来语内容原样输出（如品名 `NASI LEMAK BUNGKUS`、
+      商户名 `KEDAI RUNCIT MAJU`），输出的 JSON **字段名**仍是英文 schema 字段。
+      整张马来语票面的标签识别按 §1.36 对照表执行。
     - **货币**：默认 MYR / RM。
       - 千分位 `,` + 小数点 `.`（同 USD/CNY/GBP）：`6,000.00` → 实际值 `6000.00`；`1,234,567.89` → `1234567.89`。
       - 注意区分越南 VND / 部分欧洲格式（`.` 千分位、`,` 小数点）—— 若票面出现 VND 等标识或数字规律明显相反，按相反规则解析。
@@ -168,6 +171,65 @@ prompt_template:
       **它不是票面 `Description` 列的对应字段。**
       若该行只有一段文字（就是品名），`description` **留空**，不要把品名复制一份到这里。
     - 自检：输出前检查每一行——**出现 `articleName` 为空但 `description` 有品名，即为填反了，必须对调**。
+
+    ## 1.36 马来语（Bahasa Malaysia）票面兼容
+    票面可能整张或部分使用马来语。**JSON 字段名不变（仍是英文 schema 字段），
+    字段值照抄票面马来语原文，不翻译成英文**。识别时把马来语标签视同下表的英文关键词。
+
+    ### 1.36.1 标题与单据类型（docType / invoiceType / nameOfInvoice）
+    - `INVOIS` = Invoice；`INVOIS CUKAI` = Tax Invoice —— 判 invoice 的门槛与英文版
+      §1.1 完全一致（买方抬头 + 供应商税号 + 明确税额行），不因语言放宽或收紧。
+    - `RESIT` / `RESIT RASMI`（正式收据）/ `BIL` / `BIL TUNAI`（现金单）→ receipt 线索，
+      判据仍是 §1.1 的「商户抬头 + 明细行 + 合计」三要素。
+    - `NOTA KREDIT` → invoiceType = Credit Note；`NOTA DEBIT` → Debit Note（归 invoice）。
+    - `INVOIS PROFORMA` → Proforma Invoice；`SEBUT HARGA`（报价单）→ 按英文版
+      Quotation 规则处理（含核心要素才归 invoice）。
+    - `PENYATA` / `PENYATA AKAUN`（对账单/账单）→ **other**（对应 §1.0.5 的 Statement）。
+    - **`nameOfInvoice` 照抄马来语原文**（如 `RESIT RASMI`、`INVOIS CUKAI`），不得翻译；
+      **`invoiceType` 的 enum 值仍输出英文**（Tax Invoice / Credit Note …）——
+      分类结论用英文枚举，票面标题原文进 nameOfInvoice，两者各司其职。
+
+    ### 1.36.2 字段标签对照（找值时视同英文关键词）
+    - **单号**：`No. Invois` / `Nombor Invois` / `No. Resit` / `No. Bil` → invoiceNumber；
+      `No. Rujukan` = Reference No（凭条场景的备选单号，优先级同 §1.3）。
+    - **日期**：`Tarikh` = Date；`Tarikh Invois` = Invoice Date；
+      `Tarikh Matang` / `Tarikh Akhir Bayaran` = Due Date。
+    - **金额**：`Jumlah` = Total；`Jumlah Kecil` = Subtotal；
+      `Jumlah Besar` / `Jumlah Keseluruhan` = Grand Total → totalAmount；
+      `Jumlah Perlu Dibayar` / `Jumlah Kena Dibayar` = Amount Payable → totalAmount；
+      `Amaun` / `Nilai` = Amount；`Diskaun` = Discount；`Baki` = Balance；
+      `Bayaran` = Payment；`Tunai` = Cash。
+    - **税**：`Cukai` = Tax；`Cukai Jualan` = Sales Tax、`Cukai Perkhidmatan` = Service Tax
+      （两者合起来即 SST）；`CBP`（Cukai Barang & Perkhidmatan）= GST。
+      `No. Cukai Jualan` = Sales Tax No. —— 与英文版同规：**严禁**当作
+      invoiceNumber / TIN / SSM 写入。
+    - **明细列头**：`Butir-Butir` / `Butiran` / `Perihal` / `Keterangan` =
+      Description/Particulars → 品名进 articleName（§1.35 归属规则不变）；
+      `Kuantiti` / `Kti` = Quantity；`Harga` / `Harga Seunit` = Unit Price。
+    - **买卖双方**：`Kepada` = To（买方抬头）→ billTo*；`Pelanggan` = Customer、
+      `Pembeli` = Buyer → billTo*；`Pembekal` = Supplier、`Penjual` = Seller → billFrom*；
+      `Alamat` = 地址（进对应 Composite 字段）。
+    - **注册号**：`No. Pendaftaran` / `No. Pendaftaran Syarikat` = Company Registration No.
+      → billFromBusinessRegistrationNumber（格式与自检同 §1.3）。
+    - **单据链**：`No. Pesanan` / `Pesanan Belian` = PO No. → purchaseOrderNumber；
+      `Nota Serahan` / `Nota Hantaran` = Delivery Order → deliveryOrderNumber。
+    - **其他**：`Terima Oleh` / `Diterima Oleh` = Received By；`Disahkan Oleh` = Verified By
+      （签收栏，是 receipt/现金单线索，见 §1.1）；`Jurujual` = Salesperson；
+      `Muka Surat` = Page；`Akaun` = Account；`Cek` = Cheque。
+
+    ### 1.36.3 马来语日期解析
+    月份名（含缩写）→ 月份数字：
+    `Januari/Jan`=01、`Februari/Feb`=02、**`Mac`=03**（不是 May！）、`April/Apr`=04、
+    `Mei`=05、`Jun`=06、`Julai/Jul`=07、**`Ogos/Ogo`=08**、`September/Sep`=09、
+    `Oktober/Okt`=10、`November/Nov`=11、**`Disember/Dis`=12**。
+    `hb` 是「日」的后缀（haribulan）：`31hb Mac 2025` → `2025-03-31`；
+    `5 Ogos 2025` → `2025-08-05`。输出仍统一 YYYY-MM-DD，年份规则同 §1.2。
+    易错提醒：`Mac` 是 3 月不是 5 月；`Mei` 才是 5 月；`Jun` 是 6 月不是 1 月。
+
+    ### 1.36.4 马来语计量单位（unitOfMeasure 照抄原文）
+    `biji`（个/粒）、`keping`（张/片）、`kotak`（盒）、`bungkus`（包）、`botol`（瓶）、
+    `pasang`（对/双）、`helai`（件/张）、`tin`（罐）、`paket`（小包）——
+    **保持原文输出，不翻译**（与英文 pcs/kg 同等对待）。
 
     ## 1.4 必填字段与缺失处理
     - **invoice / receipt 类型**：`docType`、`invoiceType`、`page`、`currency` 必须输出；若票面无 currency，按 MY 上下文推断（默认 MYR）。
@@ -247,7 +309,8 @@ prompt_template:
               type: STRING
               description: |-
                 票面标题：票面上**原样印着的标题文字**，保持原大小写与原文，不翻译。
-                常见取值：INVOICE、TAX INVOICE、Receipt、CASH BILL、Current Invoice、RESIT、Bill。
+                常见取值：INVOICE、TAX INVOICE、Receipt、CASH BILL、Current Invoice、RESIT、Bill；
+                马来语标题照抄原文：INVOIS、INVOIS CUKAI、RESIT RASMI、BIL TUNAI、NOTA KREDIT。
                 标题可能在票面顶部居中，也可能在商户名之下、明细表之上。
                 票面确实没有任何标题文字时才留空；**不要用 invoiceType 的值去凑**。
             invoiceNumber:
@@ -255,14 +318,17 @@ prompt_template:
               description: |-
                 发票号码或收据编号。
                 通用规则：如果找不到，则查找票面的 'Invoice No'、'請求書番号'、'ご請求番号'、'ﾚシートNo'、'発券No'、'伝票番号'、'No.'、'No'。
-                马来西亚发票补充规则：可查找 "Invoice No"、"No."、"INVOICE NO:"、"E INV NO"；典型格式如 PT-148862、S-25/10-0059、INV13398、IN2601/1024、25FC011847；严禁将 Sales Tax No 或 SST ID 提取为发票号。
+                马来西亚发票补充规则：可查找 "Invoice No"、"No."、"INVOICE NO:"、"E INV NO"，马来语标签 "No. Invois"、"Nombor Invois"、"No. Resit"、"No. Bil" 同义；典型格式如 PT-148862、S-25/10-0059、INV13398、IN2601/1024、25FC011847；严禁将 Sales Tax No / SST ID / No. Cukai Jualan 提取为发票号。
                 加油/刷卡凭条的取值优先级（票面无明确单号时取 Reference No）与禁取字段（Terminal / Site Id / Card No 等）见 Part 1.3。
             invoiceCode:
               type: STRING
               description: 发票类型代码，如果没有发票类型代码信息, 则查找发票序列号、'Serial'、'Ký hiệu'、'Ký hiệu(Serial)'。'Mã CQT(Code)'不是发票类型代码。
             invoiceDate:
               type: STRING
-              description: 发票发行日期。
+              description: |-
+                发票发行日期。马来语标签 "Tarikh" / "Tarikh Invois" 同 Date / Invoice Date。
+                马来语月份：Mac=03、Ogos=08、Disember=12（完整表见 Part 1.36.3；
+                `31hb Mac 2025` → `2025-03-31`）。输出统一 YYYY-MM-DD。
             totalNetAmount:
               type: NUMBER
               description: |-
@@ -271,7 +337,9 @@ prompt_template:
             totalAmount:
               type: NUMBER
               description: |-
-                含税总金额，常见为 Total、Grand Total、Total Due、Amount Payable 等。
+                含税总金额，常见为 Total、Grand Total、Total Due、Amount Payable 等；
+                马来语标签 Jumlah / Jumlah Besar / Jumlah Keseluruhan / Jumlah Perlu Dibayar 同义
+                （Jumlah Kecil 是 Subtotal，不要取）。
                 票面同时列出外币与马币两种金额时，取**马币（MYR）那一行**的数值
                 （实际扣款金额，常标注 Total Charge / Amount Charged），规则见 Part 1.2。
             totalTaxAmount:
@@ -289,7 +357,7 @@ prompt_template:
                 票面无标注时按 MY 上下文推断，默认 MYR。
             billToName:
               type: STRING
-              description: 收票方的名称。如果没有'Bill To'，则找'MESSRS'、'Purchaser'、'Customer'、'Buyer'、'Attention to'或其他和'购买方'同义的词语。
+              description: 收票方的名称。如果没有'Bill To'，则找'MESSRS'、'Purchaser'、'Customer'、'Buyer'、'Attention to'，马来语 'Kepada'（致）、'Pelanggan'（客户）、'Pembeli'（买方），或其他和'购买方'同义的词语。
             billToComposite:
               type: STRING
               description: 收票方的完整地址信息。
@@ -306,7 +374,7 @@ prompt_template:
                 马来西亚发票补充规则：查找 "TIN"、"TIN No."、"TIN Number"、"Supplier TIN"、"Buyer TIN"、"Customer Tin No."；格式必须为 "C" 开头 + 10 位数字（例如 C5884056070、C4908240100），不符合此格式的不要写入该字段；当票面同时存在供应商 TIN 与买方 TIN 时，只取买方 TIN。
             billFromName:
               type: STRING
-              description: 开票方的名称。如果没有'From'信息, 或者'From'信息不像一个公司名称，则找：'Account Name'、'Beneficiary Name'、'Seller'、'Remit to'、底部签名处或者标题、收据或小票的商家名称。
+              description: 开票方的名称。如果没有'From'信息, 或者'From'信息不像一个公司名称，则找：'Account Name'、'Beneficiary Name'、'Seller'、'Remit to'，马来语 'Pembekal'（供应商）、'Penjual'（卖方），底部签名处或者标题、收据或小票的商家名称。
             billFromComposite:
               type: STRING
               description: 开票方的完整地址信息。
@@ -364,7 +432,8 @@ prompt_template:
                       商品或服务名称（提取完整信息）。
                       **无论票面那一列的表头叫什么，商品/服务名都填这里**：MY 发票的品名列
                       常见表头有 `Description`、`Item`、`Item Description`、`Particulars`、
-                      `Product`、`Descriptions of Goods` 等——表头用词不影响归属，
+                      `Product`、`Descriptions of Goods`，马来语 `Butir-Butir` / `Butiran` /
+                      `Perihal` / `Keterangan` 等——表头用词不影响归属，
                       只要是"这一行卖的是什么"，一律进 articleName。
                       **该明细行只要有商品/服务，本字段就不得为空。**
                       例：表头为 `Description`、内容为 `LONGKANG TANAH 6" (WL)`
