@@ -36,6 +36,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="OCR backend; omit to follow DEFAULT_PROCESSOR "
                          "(大陆部署=qwen / 海外=gemini)")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--no-schema", action="store_true",
+                    help="不向模型下发 response_schema —— 模拟 PASS_SCHEMA_TO_MODEL=False "
+                         "的生产行为。本工具默认传 schema（ocr_runner 一贯如此），"
+                         "该 flag 让「传/不传」的 A/B 成为可能，见 "
+                         "docs/plan-schema-not-passed-to-model.md Phase 3。")
     args = ap.parse_args(argv)
 
     # Don't hard-pin gemini — the production processor is deployment-specific
@@ -68,7 +73,8 @@ def main(argv: list[str] | None = None) -> int:
 
         report, deviations, batch = golden_strict_batch(
             db, country=args.country, modules=module_specs_from_orm(mods),
-            composed_prompt=v.composed_prompt or "", composed_schema=v.composed_schema,
+            composed_prompt=v.composed_prompt or "",
+            composed_schema=None if args.no_schema else v.composed_schema,
             size=args.size, threshold=args.threshold, rng_seed=args.seed,
             processor_spec=args.processor, model_name=getattr(api, "model_name", None),
         )
@@ -82,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     eval_valid = n_errors < batch["batch_size"]
     payload = {
         "country": args.country, "candidate": args.candidate,
+        "schema_passed": not args.no_schema,
         "batch_size": batch["batch_size"], "pool_size": batch["pool_size"],
         "core_fields": batch["core_fields"],
         "strict_overall_accuracy": round(report.overall_accuracy, 4),

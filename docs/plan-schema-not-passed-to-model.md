@@ -176,19 +176,37 @@ prompt 打分、早停、做单调守护、选版本；生产提取在「无约�
 - 通过标准：三样本判据全过，且「开」不劣于「关」。
 </details>
 
-### Phase 3 · 黄金集 A/B（严格分不下降门）
+### Phase 3 · 黄金集 A/B —— ✅ **已完成（4 seed 全部「传 ≥ 不传」，无一下降）**
 
-```bash
-# 开关关（基线）与开各跑，固定同一批 seed
-python -m app.ocr_optimizer.eval.run_golden_batch --country MY \
-  --candidate my-invoice-c99a19 --size 12 --seed 7
-```
+**工具改动**：黄金集评测走 `ocr_runner`，而它**一贯恒传 schema**，
+`PASS_SCHEMA_TO_MODEL` 管不到它（这正是 §0.4 的「评测与生产不同构」）。
+给 `run_golden_batch` 加了 `--no-schema`：批次入口传 `composed_schema=None`
+即可模拟生产的「不传」行为，`_run_single` 已处理 None，**ocr_runner 一行未改**。
+报告里新增 `schema_passed` 字段，防两份结果混淆。
 
-- 每模式至少 2 个 seed 批次，`strict overall` 开 ≥ 关（平局带内视为持平）；
-- 逐字段看：允许个别字段涨跌互现，但 line_items / invoice_number /
-  doc_type 三个核心字段不得下降；
-- JP 模板若黄金集可用同法跑（JP 规则重度依赖 description，**预期变好**；
-  变差说明 schema 与 prompt 冲突，回到 Phase 2 处置逻辑）。
+**结果**（每批 5 个样本 —— `sample_batch` 有 `size=min(size,5)` 硬上限，
+非参数写错；4 个 seed 共 20 样本次 × 2 模式）：
+
+| seed | 不传 schema | 传 schema | 差 |
+|---|---|---|---|
+| 7  | 0.3111 | **0.4667** | **+0.1556** |
+| 13 | 0.6000 | 0.6000 | 0 |
+| 21 | 0.4222 | 0.4222 | 0 |
+| 42 | 0.4889 | 0.4889 | 0 |
+| **均值** | **0.4556** | **0.4945** | **+0.0389** |
+
+seed=7 那批逐字段：doc_type 0.40→0.60、invoice_number 0.20→0.40、
+invoice_date / total_net_amount / total_amount / currency / page 均 0.40→0.60；
+invoice_type 与 line_items 持平。**没有任何字段下降**，核心三字段门通过。
+
+> ⚠️ **line_items 在 8 次运行里恒为 0/5**（两种模式都是）。它比的是**整个明细
+> 数组的 exact-match**——每行每字段全等才算对，浮点/描述文字/单位任一处差异
+> 即判错，实务上几乎不可能达成。**该字段在本次 A/B 中判别力为零**，
+> 「不得下降」在它身上是空条件。与本次改动无关（两侧一致），
+> 但黄金集判据本身值得单独排查——已记入 §7 遗留项。
+
+JP 黄金集未跑：仓库根缺 `JP_invoice_prompt.yaml`（同一原因让
+`test_bench_harness.py` 的 2 条用例长期红灯），JP 侧无法在本地复现。
 
 ### Phase 4 · 灰度上线（腾讯云，唯一在线服务器）
 
@@ -218,6 +236,16 @@ python -m app.ocr_optimizer.eval.run_golden_batch --country MY \
 | qwen 行为差异 | DashScope 忽略 response_schema，天然对照组，零变化 |
 | 客户迭代回路受影响 | 迭代评测（ocr_runner）本来就传 schema——修复后生产与评测**同构**，这正是目标 |
 | 上线出问题 | 开关一行回退；默认 False 部署，观察后再开 |
+
+## 7. 遗留项（本次不处理，另行排期）
+
+1. **黄金集 `line_items` 判据恒 0** —— 整数组 exact-match 过严，无判别力。
+   建议改为「行数一致 + 逐行关键字段（articleName/quantity/netAmount）匹配率」，
+   或拆成多个子指标。
+2. **`api_def.response_schema` 激活时不回写**（§0.5）—— 本次用「同源取 active
+   版本」绕开了，但两处 schema 长期不一致本身是隐患，值得在版本激活流程里补回写。
+3. **JP 模板缺失** —— 仓库根没有 `JP_invoice_prompt.yaml`，导致 JP 黄金集与
+   2 条 bench 用例无法运行。
 
 ## 6. 关联
 
