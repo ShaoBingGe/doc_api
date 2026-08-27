@@ -169,3 +169,43 @@ def test_workspace_call_processor_honors_switch(monkeypatch, tmp_path):
                         raising=False)
     ds._call_processor(str(f), "mock", prompt="P", schema=SCHEMA)
     assert captured["runtime"] == {"response_schema": SCHEMA}
+
+
+# ── 评测链路（ocr_runner）同一开关 —— 评测与生产同构 ─────────────────────────
+
+def test_ocr_runner_follows_switch(monkeypatch, tmp_path):
+    """迭代/黄金集评测的 schema 下发跟随 PASS_SCHEMA_TO_MODEL。
+
+    历史行为是恒传，而生产从来没传过——迭代回路在「有约束」的世界里选版本、
+    生产在「无约束」的世界里运行（§0.4 评测与生产不同构）。修复后开关怎么拨，
+    两边就同时在哪个世界。
+    """
+    from app.ocr_optimizer.service import ocr_runner
+
+    captured = {}
+
+    class _P:
+        def process_document(self, path, instruction, runtime_config=None):
+            captured["runtime"] = runtime_config
+            return '{"a": 1}'
+        def get_model_version(self):
+            return "spy|m"
+
+    from app.processors.factory import ProcessorFactory
+    monkeypatch.setattr(ProcessorFactory, "create",
+                        classmethod(lambda cls, *a, **kw: _P()))
+    f = tmp_path / "x.pdf"; f.write_bytes(b"%PDF-1.4")
+
+    monkeypatch.setattr(get_settings(), "PASS_SCHEMA_TO_MODEL", False,
+                        raising=False)
+    ocr_runner._run_single(file_path=str(f), composed_prompt="P",
+                           composed_schema=SCHEMA, processor_spec="mock",
+                           model_name=None)
+    assert captured["runtime"] is None, "开关关：评测也不许传（与生产同构）"
+
+    monkeypatch.setattr(get_settings(), "PASS_SCHEMA_TO_MODEL", True,
+                        raising=False)
+    ocr_runner._run_single(file_path=str(f), composed_prompt="P",
+                           composed_schema=SCHEMA, processor_spec="mock",
+                           model_name=None)
+    assert captured["runtime"] == {"response_schema": SCHEMA}

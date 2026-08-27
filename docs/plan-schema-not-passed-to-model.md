@@ -178,11 +178,12 @@ prompt 打分、早停、做单调守护、选版本；生产提取在「无约�
 
 ### Phase 3 · 黄金集 A/B —— ✅ **已完成（4 seed 全部「传 ≥ 不传」，无一下降）**
 
-**工具改动**：黄金集评测走 `ocr_runner`，而它**一贯恒传 schema**，
-`PASS_SCHEMA_TO_MODEL` 管不到它（这正是 §0.4 的「评测与生产不同构」）。
-给 `run_golden_batch` 加了 `--no-schema`：批次入口传 `composed_schema=None`
-即可模拟生产的「不传」行为，`_run_single` 已处理 None，**ocr_runner 一行未改**。
-报告里新增 `schema_passed` 字段，防两份结果混淆。
+**工具改动（初版 `--no-schema`，后升级）**：黄金集评测走 `ocr_runner`，
+它历史上**恒传 schema**，`PASS_SCHEMA_TO_MODEL` 管不到（§0.4 的不同构实体）。
+Phase 3 先用 `--no-schema` 在批次入口传 None 做 A/B；**Phase 3.5 根治**：
+`ocr_runner._run_single` 直接跟随开关（评测与生产同一个世界），
+`run_golden_batch` 的 flag 升级为 `--schema {auto,on,off}` —— auto 跟随配置，
+on/off 进程内改写开关供 A/B。报告 `schema_passed` 记录实际生效值。
 
 **结果**（每批 5 个样本 —— `sample_batch` 有 `size=min(size,5)` 硬上限，
 非参数写错；4 个 seed 共 20 样本次 × 2 模式）：
@@ -237,11 +238,26 @@ JP 黄金集未跑：仓库根缺 `JP_invoice_prompt.yaml`（同一原因让
 | 客户迭代回路受影响 | 迭代评测（ocr_runner）本来就传 schema——修复后生产与评测**同构**，这正是目标 |
 | 上线出问题 | 开关一行回退；默认 False 部署，观察后再开 |
 
+## 5.5 Phase 3.5 · 两处评测基建修复 —— ✅ 已完成（2026-08-28）
+
+1. **评测链路收编进开关**：`ocr_runner._run_single` 的 schema 下发改为跟随
+   `PASS_SCHEMA_TO_MODEL` —— 客户迭代、黄金集、灰度全部与生产同构；开关怎么拨，
+   评测和生产就同时在哪个世界。`run_golden_batch --schema {auto,on,off}`
+   （auto=跟随配置；on/off=进程内强制，供 A/B）。
+2. **行表判据重写**（`harness._score_row_table_strict`）：line_items/tax_summary
+   从「整数组 exact-match」改为**行数一致（gate）+ 逐行关键字段匹配率**。
+   关键字段=articleName/quantity/unitPrice/netAmount（商品行）与
+   taxCategory/taxRate/tax/netTaxableAmount（税表行）；description/unitOfMeasure
+   不参与——GT 把品名复制进了 description 而模板 §1.35 要求那种情况留空，
+   比它等于惩罚正确行为。数值比较容差 1e-6（6 vs 6.0 相等）。
+   **验证**：seed=7 重跑，line_items 从恒 0/5 变为 off=0.33 / on=0.37——
+   有判别力了，且传 schema 仍 ≥ 不传（overall 0.3481 vs 0.3519）。
+   注：黄金集分数存在跨运行抖动（同 seed 两次 off 分别 0.3111/0.3481），
+   **结论只依赖同一运行内的两模式对照**，不依赖跨运行绝对值。
+
 ## 7. 遗留项（本次不处理，另行排期）
 
-1. **黄金集 `line_items` 判据恒 0** —— 整数组 exact-match 过严，无判别力。
-   建议改为「行数一致 + 逐行关键字段（articleName/quantity/netAmount）匹配率」，
-   或拆成多个子指标。
+1. ~~黄金集 line_items 判据恒 0~~ → **已修**（见 §5.5）。
 2. **`api_def.response_schema` 激活时不回写**（§0.5）—— 本次用「同源取 active
    版本」绕开了，但两处 schema 长期不一致本身是隐患，值得在版本激活流程里补回写。
 3. **JP 模板缺失** —— 仓库根没有 `JP_invoice_prompt.yaml`，导致 JP 黄金集与
