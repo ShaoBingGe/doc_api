@@ -1,0 +1,204 @@
+{
+ "S1_single_invoice.pdf|无schema|r0": {
+  "root": "array",
+  "n": 1,
+  "docTypes": [
+   "invoice"
+  ],
+  "invoiceTypes": [
+   "Commercial Invoice"
+  ],
+  "invoiceNumbers": [
+   "INV2507-293"
+  ],
+  "totals": [
+   5286.12
+  ],
+  "brn": [
+   "201801036457 (1298487-V)"
+  ],
+  "origRefs": [],
+  "lineRows": [
+   2
+  ]
+ },
+ "S1_single_invoice.pdf|传schema|r0": {
+  "root": "array",
+  "n": 1,
+  "docTypes": [
+   "invoice"
+  ],
+  "invoiceTypes": [
+   "Commercial Invoice"
+  ],
+  "invoiceNumbers": [
+   "INV2507-293"
+  ],
+  "totals": [
+   5286.12
+  ],
+  "brn": [
+   "201801036457 (1298487-V)"
+  ],
+  "origRefs": [],
+  "lineRows": [
+   2
+  ]
+ },
+ "S2_six_invoices.pdf|无schema|r0": {
+  "root": "array",
+  "n": 6,
+  "docTypes": [
+   "invoice",
+   "invoice",
+   "invoice",
+   "invoice",
+   "invoice",
+   "invoice"
+  ],
+  "invoiceTypes": [
+   "Commercial Invoice",
+   "Commercial Invoice",
+   "Commercial Invoice",
+   "Commercial Invoice",
+   "Commercial Invoice",
+   "Commercial Invoice"
+  ],
+  "invoiceNumbers": [
+   "0020723",
+   "0150725",
+   "0310725",
+   "0490725",
+   "0500725",
+   "0540725"
+  ],
+  "totals": [
+   110.0,
+   7260.0,
+   1931.6,
+   8855.0,
+   2599.8,
+   1062.6
+  ],
+  "brn": [
+   "198601003000",
+   "198601003000",
+   "198601003000",
+   "198601003000",
+   "198601003000",
+   "198601003000"
+  ],
+  "origRefs": [],
+  "lineRows": [
+   1,
+   1,
+   3,
+   1,
+   2,
+   2
+  ]
+ },
+ "S2_six_invoices.pdf|传schema|r0": {
+  "root": "array",
+  "n": 6,
+  "docTypes": [
+   "invoice",
+   "invoice",
+   "invoice",
+   "invoice",
+   "invoice",
+   "invoice"
+  ],
+  "invoiceTypes": [
+   "Commercial Invoice",
+   "Tax Invoice",
+   "Commercial Invoice",
+   "Tax Invoice",
+   "Tax Invoice",
+   "Commercial Invoice"
+  ],
+  "invoiceNumbers": [
+   "0020723",
+   "0150725",
+   "0310725",
+   "0490725",
+   "0500725",
+   "0540725"
+  ],
+  "totals": [
+   110.0,
+   7260.0,
+   1931.6,
+   8855.0,
+   2599.8,
+   1062.6
+  ],
+  "brn": [
+   "198601003000",
+   "198601003000",
+   "198601003000",
+   "198601003000",
+   "198601003000",
+   "198601003000"
+  ],
+  "origRefs": [],
+  "lineRows": [
+   1,
+   1,
+   3,
+   1,
+   2,
+   2
+  ]
+ },
+ "S3_credit_note.pdf|无schema|r0": {
+  "root": "array",
+  "n": 1,
+  "docTypes": [
+   "invoice"
+  ],
+  "invoiceTypes": [
+   "Credit Note"
+  ],
+  "invoiceNumbers": [
+   "CN-2025/519"
+  ],
+  "totals": [
+   -709.25
+  ],
+  "brn": [
+   "201201031154 (1015640-A)"
+  ],
+  "origRefs": [
+   1
+  ],
+  "lineRows": [
+   1
+  ]
+ },
+ "S3_credit_note.pdf|传schema|r0": {
+  "root": "array",
+  "n": 1,
+  "docTypes": [
+   "invoice"
+  ],
+  "invoiceTypes": [
+   "Credit Note"
+  ],
+  "invoiceNumbers": [
+   "CN-2025/519"
+  ],
+  "totals": [
+   -709.25
+  ],
+  "brn": [
+   "201201031154 (1015640-A)"
+  ],
+  "origRefs": [
+   1
+  ],
+  "lineRows": [
+   1
+  ]
+ }
+}
