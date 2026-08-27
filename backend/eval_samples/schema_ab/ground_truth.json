@@ -1,0 +1,32 @@
+{
+  "_note": "Phase 2 人工裁决的 GT。S2 为无文本层扫描件，逐页渲染标题区看图判定（2026-08-27）。",
+  "S1_single_invoice.pdf": {
+    "_source": "EBM INV2507-293，1 页扫描件",
+    "n": 1,
+    "docTypes": ["invoice"],
+    "invoiceTypes": ["Commercial Invoice"],
+    "invoiceNumbers": ["INV2507-293"],
+    "totals": [5286.12],
+    "brn": ["201801036457 (1298487-V)"],
+    "lineRows": [2]
+  },
+  "S2_six_invoices.pdf": {
+    "_source": "DOC_07_15_25006，6 页 6 张独立发票，无文本层",
+    "_adjudication": "逐页渲染标题区确认：6 页标题全部为 'INVOICE'，无一页印 'TAX INVOICE'。按模板 invoiceType 判据（票面含 Tax Invoice / Faktur Pajak 关键词才判 Tax Invoice），6 张全部为 Commercial Invoice。p2/p4/p5 票面另印有 (Sales Tax Reg No: W10-1808-21032194)，但销售税登记号≠税务发票标题，不构成 Tax Invoice 依据。",
+    "n": 6,
+    "docTypes": ["invoice", "invoice", "invoice", "invoice", "invoice", "invoice"],
+    "invoiceTypes": ["Commercial Invoice", "Commercial Invoice", "Commercial Invoice", "Commercial Invoice", "Commercial Invoice", "Commercial Invoice"],
+    "invoiceNumbers": ["0020723", "0150725", "0310725", "0490725", "0500725", "0540725"],
+    "_pages_with_sales_tax_reg_no": [2, 4, 5]
+  },
+  "S3_credit_note.pdf": {
+    "_source": "CN-2025/519 PP CHIN HIN",
+    "n": 1,
+    "docTypes": ["invoice"],
+    "invoiceTypes": ["Credit Note"],
+    "invoiceNumbers": ["CN-2025/519"],
+    "totals": [-709.25],
+    "brn": ["201201031154 (1015640-A)"],
+    "origRefs": [1]
+  }
+}

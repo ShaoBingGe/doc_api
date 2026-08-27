@@ -1,5 +1,5 @@
-id: '7_11'
-remark: gemini json schema, anyof. Design v7 — Part1 (MY country global) + Part2 (defer to schema descriptions) + Part3 (platform output contract reference only; composer injects from assets/global_output_contract.yaml). 7_9 合并 prompts/tpl7 五轮迭代（v5 · 8/8×4 轮）：刷卡/现金小票判 receipt、银行卡交易行判 other、加油票取 Reference No、多币种优先 MYR、nameOfInvoice/unitPrice 补齐。7_10 新增 §1.36 马来语（Bahasa Malaysia）票面兼容：马来语标题/字段标签对照、马来语月份日期解析、马来语计量单位；字段名仍英文、字段值保持马来语原文。7_11 报价单（SEBUTHARGA/QUOTATION）改判 other 防重复计账（§1.1.1）；新增 §1.0.7「标题不同=不同文档」优先于内容雷同合并；§1.4 禁止用 0 代替缺失（无税行不得填 tax=0）；补 Deskripsi/Rujukan Kami/Bil. 列头歧义与 RA 类企业注册号。
+id: '7_13'
+remark: gemini json schema, anyof. Design v7 — Part1 (MY country global) + Part2 (defer to schema descriptions) + Part3 (platform output contract reference only; composer injects from assets/global_output_contract.yaml). 7_9 合并 prompts/tpl7 五轮迭代（v5 · 8/8×4 轮）：刷卡/现金小票判 receipt、银行卡交易行判 other、加油票取 Reference No、多币种优先 MYR、nameOfInvoice/unitPrice 补齐。7_10 新增 §1.36 马来语（Bahasa Malaysia）票面兼容：马来语标题/字段标签对照、马来语月份日期解析、马来语计量单位；字段名仍英文、字段值保持马来语原文。7_11 报价单（SEBUTHARGA/QUOTATION）改判 other 防重复计账（§1.1.1）；新增 §1.0.7「标题不同=不同文档」优先于内容雷同合并；§1.4 禁止用 0 代替缺失（无税行不得填 tax=0）；补 Deskripsi/Rujukan Kami/Bil. 列头歧义与 RA 类企业注册号。7_12 收紧 Tax Invoice 判据：必须是**标题文字**含 TAX INVOICE/INVOIS CUKAI，仅有 Sales Tax Reg No / SST 列不构成依据（schema 硬约束灰度中实测：6 张标题均为 INVOICE 的发票里，印有 Sales Tax Reg No 的 3 张被误升格为 Tax Invoice）。7_13 BRN 自检扩展到**括号内旧号**（6–7 位数字+字母），列出 8↔6/3↔8/1↔7 高频混淆对——schema 硬约束开启后实测该处稳定误读（1298487-V→1296487-V），旧自检只覆盖 12 位新号。
 structure_prompt_version: '6'
 # 国家锁定字段（国家规范·不可修改）：识别规则由 Part 1 严格管控，排除出 Part 2
 # 反思/优化范围，客户在自定义面板中不可增删改/改类型。
@@ -83,7 +83,11 @@ prompt_template:
       - Commercial Invoice（标准发票，默认子类）
       - Proforma Invoice（形式发票；票面含 PROFORMA / PRO FORMA 等关键词）
       - Credit Note（贷项发票；票面含 AVOIR / CREDIT 等关键词，或 totalAmount < 0）
-      - Tax Invoice（税务发票；票面含 "Tax Invoice" / "Faktur Pajak"，MY 多数 SST 发票属此类）
+      - Tax Invoice（税务发票）：**判据是票面的标题文字**含 `TAX INVOICE` /
+        `INVOIS CUKAI` / `Faktur Pajak`。**仅有销售税登记号不算**——
+        `Sales Tax Reg No` / `No. Cukai Jualan` / `SST ID` 是卖方的税务登记信息，
+        很多标题只写 `INVOICE` 的普通发票也印着它；标题是 `INVOICE` 就归
+        Commercial Invoice，不要因为票面出现税号或 SST/TAX 列就升格成 Tax Invoice。
       - Debit Note（借项发票）
       - Receipt/Tax Invoice 收据税票：含税务信息（如 SST/TIN）的归 invoice
       - **例外：报价单不属于 invoice**，见下方 §1.1.1。
@@ -169,11 +173,14 @@ prompt_template:
         一起留在名称字段里。
       - 关键词：`Company Reg.No`、`Registration No`、`SSM`，或公司名称右侧括号内的 12 位数字。
       - 字段：`billFromBusinessRegistrationNumber`。
-      - **逐位核读（本字段最易错）**：新式号常紧挨公司名排在同一行、字号偏小，扫描件里
+      - **逐位核读（本字段最易错）**：注册号常紧挨公司名排在同一行、字号偏小，扫描件里
         易与公司名笔画重叠粘连，**末位尤其容易读错**（如 `…018633` 误读成 `…018630`）。
-        提取后做三项自检：① 去掉括号旧号后应恰为 **12 位纯数字**；
+        提取后做四项自检：① 去掉括号旧号后应恰为 **12 位纯数字**；
         ② 前 4 位是注册年份，须在 1950–本年之间；
-        ③ 若该号在票面出现多处（抬头 / 页脚 / 印章 / 条款区），**相互比对取一致值**。
+        ③ **括号内旧号（`6–7 位数字 + 连字符 + 字母`，如 `1298487-V`）也要逐位核读**——
+        它字号更小，`8`↔`6`、`3`↔`8`、`1`↔`7` 是最高频误读；分不清时看闭合环数量
+        （`8` 两个环、`6` 一个下环）；
+        ④ 若该号在票面出现多处（抬头 / 页脚 / 印章 / 条款区），**相互比对取一致值**。
     - **SST Number（销售与服务税号）**：与 TIN / SSM 完全不同，**不要混用**。MY 票面常单独标注 `Sales Tax No.` / `SST ID`。
       - **严禁将 SST 号当作 invoice number / TIN / SSM**。
     - **发票号 invoiceNumber**：
@@ -357,7 +364,12 @@ prompt_template:
                   - 'Commercial Invoice' (正式发票)：默认类型，若非 'Proforma Invoice' 或 'Credit Note'，则归为此类。
                   - 'Proforma Invoice' (形式发票)：如果票面包含 "PROFORMA", "PRO FORMA", "Záloha", "Facture d'Avance", "Prepayment", "Vorkassenrechnung" 等关键词。
                   - 'Credit Note' (贷项发票)：如果票面包含 "AVOIR", "CREDIT" 等关键词，或 totalAmount < 0。
-                  - 'Tax Invoice' (税务发票)：如果票面包含 "'Tax Invoice", "Faktur Pajak" 等关键词。
+                  - 'Tax Invoice' (税务发票)：**仅当票面标题文字**为 "TAX INVOICE" /
+                    "INVOIS CUKAI" / "Faktur Pajak" 时才判此类。
+                    **只有销售税登记号不构成依据**：`Sales Tax Reg No` / `No. Cukai Jualan` /
+                    `SST ID` 是卖方税务登记信息，标题写 `INVOICE` 的普通发票同样会印它；
+                    也不要因为明细表有 TAX / SST 列就升格——那些是税额列，不是标题。
+                    标题只写 `INVOICE` → 归 'Commercial Invoice'。
               enum:
                 - Commercial Invoice
                 - Proforma Invoice
@@ -456,12 +468,15 @@ prompt_template:
                 开票方（供应商）的商业登记号 / 注册号 / SSM 号码。
                 通用规则：提取 Company No. / Co. Reg. No. / Registration No. / Company Reg No. / BRN 后面的编号，注意可能包含新旧号、括号、连字符，例如 200201024195 或 199501005689 (New)。
                 马来西亚发票补充规则：查找 "Company Reg.No"、"Registration No"、"SSM"，或公司名称旁括号内的 12 位数字；典型格式如 199201000276、199501005689、518287-T、199701009372 (424868-V)；严禁提取买方的注册号；票面同时出现新旧号时按原文完整保留。
-                **逐位核读（本字段最易错）**：新式注册号是 **12 位纯数字**，且常紧挨公司名
-                排在同一行、字号偏小，扫描件里易与公司名笔画重叠粘连，末位尤其容易读错
-                （如 `...633` 误读成 `...630`）。提取后请做三项自检：
-                ① 数一遍位数——新式号去掉括号旧号后应恰为 12 位；
+                **逐位核读（本字段最易错）**：注册号常紧挨公司名排在同一行、字号偏小，
+                扫描件里易与公司名笔画重叠粘连。提取后请做四项自检：
+                ① 数一遍位数——新式号去掉括号旧号后应恰为 **12 位纯数字**；
                 ② 前 4 位是注册年份，应在 1950–本年之间（如 `2007…`）；
-                ③ 若该号在票面出现多处（抬头、页脚、印章、条款区），**相互比对取一致值**。
+                ③ **括号内的旧号同样要逐位核读**——格式是「6–7 位数字 + 连字符 + 单个字母」
+                （如 `1298487-V`、`518287-T`）。它字号更小、常被误读，
+                **`8`↔`6`、`3`↔`8`、`1`↔`7`、`0`↔`O` 是最高频的混淆对**；
+                拿不准时放大该处笔画，看清闭合环的数量（`8` 有两个闭合环、`6` 只有一个下环）；
+                ④ 若该号在票面出现多处（抬头、页脚、印章、条款区），**相互比对取一致值**。
             purchaseOrderNumber:
               type: STRING
               description: |-

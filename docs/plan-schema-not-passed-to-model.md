@@ -142,7 +142,30 @@ prompt 打分、早停、做单调守护、选版本；生产提取在「无约�
    - qwen 路径：传了也无害（DashScope 忽略）；
    - 全量 `pytest -q` 不新增失败。
 
-### Phase 2 · 三样本中途验证（本地，改后代码）
+### Phase 2 · 三样本中途验证 —— ✅ **已完成（18/18 全过，开=关）**
+
+**裁决**：S2 六页逐页渲染标题区看图确认，**6 页标题全是 `INVOICE`**，
+无一页印 `TAX INVOICE` → GT 全部 Commercial Invoice（见 `ground_truth.json`）。
+
+**发现并修掉的两处退化**（都是「开 < 关」，按预案修 description 而非关开关）：
+
+| # | 现象 | 根因 | 处置 |
+|---|---|---|---|
+| 1 | 传 schema 后 6 张里的 3 张 invoiceType 被升格为 Tax Invoice | 翻转的恰是票面印有 `(Sales Tax Reg No: W10-1808-21032194)` 的 p2/p4/p5。schema description 原文「票面包含 "Tax Invoice"…**等**关键词」的"等"字被宽解成「有销售税登记号＝税务发票」 | 模板 7_12：判据收紧为**标题文字**含 TAX INVOICE / INVOIS CUKAI；明写「仅有 Sales Tax Reg No / SST 列不构成依据」 |
+| 2 | 传 schema 后 BRN 稳定误读 `1298487-V` → `1296487-V`（3/3 轮一致，非抖动；关闭时 3/3 轮正确）| BRN 的「逐位核读」自检**只覆盖 12 位新号**，括号内旧号无任何校验；schema 硬约束下模型对模糊字符辨识变差，恰好暴露这个缺口 | 模板 7_13：自检扩展到括号内旧号（6–7 位数字+字母），列出 `8↔6`/`3↔8`/`1↔7` 高频混淆对与「数闭合环」的辨字方法 |
+
+**这两处都是 schema description 长期是死字才留下的债** —— 描述从没被模型读过，
+写得含糊/有缺口也没人发现。schema 一通，问题当场显形并被修掉，
+两处修复对「关」的一侧同样有益（规则本身更严密了）。
+
+最终：3 样本 × 2 模式 × 3 轮 = 18/18 全过，开与关逐项持平。
+复现：`.venv/bin/python eval_samples/schema_ab/phase2_verify.py --rounds 3`
+
+> 同构性修正：过程中发现本地 `api_def.model_name` 是 `gemini-2.5-flash`
+> 而线上是 `gemini-3.5-flash`（行级 model_name 覆盖 `.env`），已对齐——
+> 否则 A/B 比的是两个不同模型。
+
+<details><summary>原计划（已执行）</summary>
 
 - 走**完整生产调用链**（起本地服务，经 `/document/analyze`），不再直调 processor——
   验证的是管道，不只是模型行为。
@@ -151,6 +174,7 @@ prompt 打分、早停、做单调守护、选版本；生产提取在「无约�
 - 出现「开 < 关」的字段 → 定位是 schema description 与 prompt 正文冲突，
   修描述（国别层）而不是关开关，修完重跑。
 - 通过标准：三样本判据全过，且「开」不劣于「关」。
+</details>
 
 ### Phase 3 · 黄金集 A/B（严格分不下降门）
 
