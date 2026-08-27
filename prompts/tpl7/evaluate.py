@@ -1,14 +1,17 @@
 """template 7 prompt 版本评测器。
 
-对同一份 25 页报销贴单（July Claim）跑一次识别，按 8 条判据打分：
-6 条是待修的问题（P1–P6），2 条是**已经正确、不许改坏**的行为（K1–K2）。
+对同一份 25 页报销贴单（July Claim）跑一次识别，按 7 条判据打分：
+5 条是待修的问题（P1/P2/P4/P5/P6），2 条是**已经正确、不许改坏**的行为（K1–K2）。
 
 判据全部来自人工核对过的票面事实，不是模型自评：
   P1 第 2、3 页是 Shell 加油刷卡小票 → 必须 receipt（票面虽印 INVOICE，
      但无买方、无税额拆分，属小额支付凭证）
   P2 nameOfInvoice 是票面抬头，票面有就要输出
-  P3 加油小票的单号取 Reference No —— 此前取了 Terminal（8 位数字），
-     导致第 2 页 124.82 与第 3 页 121.2 出现同号 84202913
+  （原「加油小票取 Reference No」一条已**放弃**：live / v6 / aws 三个模板
+    在同一份样本上全部失败——AWS 取 2–3 位短号、我们取 8 位 Terminal，
+    三方都没取对。这些小票是传真质量点阵打印，`Reference No` 那一行本身
+    就糊到读不出来，不是 prompt 写法能解决的。要修只能在 mapper 层做
+    确定性后处理，不该继续在 prompt 上耗。）
   P4 第 6 页 Agoda：GRAND TOTAL USD 54.98，但 Total Charge MYR 224.97
      实际扣款是 MYR → 马来西亚场景优先取 MYR
   P5 明细行 unitPrice 票面有就要填
@@ -76,14 +79,11 @@ def score(payload: dict) -> dict:
     p2 = {"pass": bool(real) and named / len(real) >= 0.6,
           "detail": f"{named}/{len(real)} 有票面抬头"}
 
-    # ── P3 加油小票单号：不得是 8 位纯数字（Terminal），且不得重号 ─────────
+    # 加油小票单号：**已放弃**（三模板全败，见模块头）。仍作为观察项统计，
+    # 但不计入通过与否 —— 将来在 mapper 层做兜底时这组数字是基线。
     nums = [str(_basic(e).get("invoiceNumber") or "").strip() for e in fuel]
-    terminal_like = sum(1 for n in nums if n.isdigit() and len(n) == 8)
-    dup = len(nums) - len(set(n for n in nums if n))
-    filled = sum(1 for n in nums if n)
-    p3 = {"pass": bool(fuel) and terminal_like == 0 and dup == 0 and filled == len(fuel),
-          "detail": f"疑似 Terminal 号 {terminal_like} 个、重号 {dup} 个、"
-                    f"已填 {filled}/{len(fuel)}"}
+    obs_terminal = sum(1 for n in nums if n.isdigit() and len(n) == 8)
+    obs_dup = len(nums) - len(set(n for n in nums if n))
 
     # ── P4 Agoda 取 MYR ─────────────────────────────────────────────────
     ag = next((e for e in ents if AGODA_PAGE in (_basic(e).get("page") or [])
@@ -126,12 +126,13 @@ def score(payload: dict) -> dict:
           "detail": f"13–25 页 {len(tail)} 条，全为 other={tail_other}"}
 
     checks = {"P1 加油票判receipt": p1, "P2 nameOfInvoice": p2,
-              "P3 加油票取RefNo": p3, "P4 Agoda取MYR": p4,
+              "P4 Agoda取MYR": p4,
               "P5 unitPrice": p5, "P6 现金收据判receipt": p6,
               "K1 第1页other": k1, "K2 尾页other": k2}
     passed = sum(1 for c in checks.values() if c["pass"])
     return {"checks": checks, "passed": passed, "total": len(checks),
-            "entities": len(ents), "real": len(real), "lines": len(all_lines)}
+            "entities": len(ents), "real": len(real), "lines": len(all_lines),
+            "obs_fuel_no": f"Terminal 号 {obs_terminal}、重号 {obs_dup}（已放弃，仅观察）"}
 
 
 def run(version_file: str, save_raw: bool = False) -> dict:
@@ -139,16 +140,35 @@ def run(version_file: str, save_raw: bool = False) -> dict:
 
     cfg = json.loads(Path(version_file).read_text())
     prompt, schema = cfg["composed_prompt"], cfg["composed_schema"]
-    from app.core.config import get_settings
-    proc, model = ProcessorFactory.resolve_spec(
-        "gemini", get_settings().GEMINI_MODEL)
+    # processor 按**本机 templateId=7 的行级偏好**解析（红线⑥），
+    # 这样同一个脚本在腾讯云跑 gemini、在阿里云跑 qwen，测的都是该机真实链路。
+    from app.core.database import SessionLocal
+    from app.models.api_definition import ApiDefinition
+
+    db = SessionLocal()
+    try:
+        a = db.query(ApiDefinition).filter(
+            ApiDefinition.external_template_id == 7).one()
+        pref, pref_model = a.processor_type, a.model_name
+    finally:
+        db.close()
+    proc, model = ProcessorFactory.resolve_spec(pref, pref_model)
     p = ProcessorFactory.create(proc, model_name=model)
 
     t0 = time.time()
     raw = p.process_document(PDF, prompt, {"response_schema": schema})
     sec = time.time() - t0
 
-    data = json.loads(raw)
+    # 与生产链路同款兜底：qwen 常把 JSON 包在 ```json 代码块里，
+    # 直接 json.loads 会炸（评测器早期版本因此把 qwen 误判成"全轮失败"）。
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        from app.processors.base import extract_json
+        blocks = extract_json(raw or "")
+        if not blocks:
+            raise
+        data = json.loads(blocks[0])
     if isinstance(data, dict):
         data = [data]
 
@@ -199,7 +219,7 @@ def report(name: str, m: dict) -> str:
     n = m["runs"]
     lines = [
         f"### {name}　{n} 轮：得分 {m['scores']}"
-        f"　均值 {sum(m['scores']) / n:.1f}/8　（{m['seconds']}s · {m['model']}）",
+        f"　均值 {sum(m['scores']) / n:.1f}/7　（{m['seconds']}s · {m['model']}）",
         f"实体数 {m['entities']}", "",
     ]
     for k, a in m["agg"].items():

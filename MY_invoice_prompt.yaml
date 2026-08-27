@@ -144,6 +144,18 @@ prompt_template:
       - 自检：同一份文档里若两张**不同**的票出现**相同**的 invoiceNumber，
         说明取错了字段（多半取成了 Terminal 或 Site Id）——回到票面重新按上表取值。
 
+    ## 1.34 票面抬头与单价（易漏，必须输出）
+    - **`nameOfInvoice` = 票面上原样印着的标题文字**，保持原大小写与原文，不翻译。
+      常见取值：`INVOICE`、`TAX INVOICE`、`Receipt`、`CASH BILL`、`Current Invoice`、
+      `RESIT`、`Bill`。标题可能在票面顶部居中，也可能在商户名之下、明细表之上。
+      票面确实没有任何标题文字时才留空；**不要用 `invoiceType` 的值去凑**。
+    - **明细行 `unitPrice`**：票面**印有单价列**时必须填。常见形态：
+      `Price` / `Unit Price` / `Harga` 列、`@` 后的数字，或 `RM3.370/ltr`、
+      `@RM1.380/ltr` 这类每单位价格（填 `3.370` / `1.380`）。
+      数量为 1 且票面只印一个金额时，`unitPrice` 等于该金额。
+      票面确实没有单价、也无法直接读出时留空——
+      **不要用 `netAmount ÷ quantity` 反推**（除不尽会引入假精度）。
+
     ## 1.35 明细行的字段归属（易错，务必按此填）
     明细数组 `detailOfGoodsOrServices` 每行的字段归属**由语义决定，不看票面列头的英文用词**：
     - **`articleName` = 这一行卖的是什么（品名/服务名）**。MY 发票的品名列表头五花八门：

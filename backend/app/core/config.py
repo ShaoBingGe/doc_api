@@ -145,6 +145,11 @@ class Settings(BaseSettings):
     ASYNC_POLL_INTERVAL_SEC: float = 2.0
     # 单个任务的处理重试次数（异步接口文档第 9 条：默认最多 3 次）。
     ASYNC_MAX_RETRIES: int = 3
+    # 整份文档一张票据都没识别出来（全是 docType=other）时判为失败，而不是
+    # 返回一份「errcode=0000 但 data 全是空壳」的成功。实测 2026-08-26 下午
+    # 203 个任务里有 39 个是这种形态，对接方看到的就是「整个文件不能识别」。
+    # 置 False 可退回旧行为（当成成功返回空壳）。
+    FAIL_WHEN_NO_INVOICE_FOUND: bool = True
     # 队列深度上限（PENDING+RUNNING）：全局 + 单 client。没有上限时，一个
     # 循环提交的 client 能把磁盘写满（spool 文件 10 天才过期）进而拖死 SQLite
     # 写入。检查在写盘**之前**——超限的提交不在磁盘上留任何字节。

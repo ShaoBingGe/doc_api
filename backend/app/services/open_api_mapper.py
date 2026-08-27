@@ -280,6 +280,35 @@ def build_response(
     }
 
 
+def has_no_billing_entity(payload: dict) -> bool:
+    """整份文档**一张票据都没识别出来**（全是 `docType: other`）→ True。
+
+    为什么要单独判：这种结果的 `errcode` 是 `0000`（识别流程本身没出错），
+    但 `data` 里全是空壳记录——只有 `docType` 与 `page`，其余 29 个字段全空。
+    对接方按成功处理就会拿到一堆空数据，最典型的表现是只读 `data[0]` 时
+    看到「什么都没识别出来」，进而报「整个文件不能识别」。
+
+    实测 2026-08-26 16:00–20:19 的 203 个异步任务里有 **39 个（19%）** 是这种形态，
+    绝大多数是单页 `.jpg`。
+
+    注意「空文档」与「全 other」的区别：
+      * `data` 为空数组 —— 模型什么都没返回，属于识别失败，同样算 True；
+      * `data` 有记录但全是 other —— 模型明确判定「这些页都不是票据」，
+        也算 True（对调用方而言同样是「没拿到票据」）。
+    真正的「文档里确实没有票据」（如整份是银行对账单）也会落进来——这是
+    刻意的：对调用方而言，「没有票据可取」本就该是一个明确的失败信号，
+    而不是一个空壳成功。
+    """
+    entities = payload.get("data") or []
+    if not entities:
+        return True
+    for e in entities:
+        doc_type = ((e.get("header") or {}).get("basic") or {}).get("docType")
+        if doc_type and doc_type != "other":
+            return False
+    return True
+
+
 def build_error(errcode: str, description: str, *, trace_id: str) -> dict:
     """错误响应：保持同一外壳，data 为空数组（调用方无需分支解析）。"""
     return {
