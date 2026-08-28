@@ -1,0 +1,20 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "料金口座振替のお知らせ",
+    "invoiceNumber": "0101-782-260",
+    "invoiceDate": "2025-06-16",
+    "currency": "JPY",
+    "totalAmount": 43096,
+    "totalTaxAmount": 3917,
+    "billFromName": "NTTコミュニケーションズ株式会社",
+    "billFromTaxIdentificationNumber": "T7010001064648",
+    "billToName": "TVS REGZA株式会社",
+    "page": [
+      1,
+      2,
+      3,
+      4
+    ]
+  }
+]

@@ -1,0 +1,16 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "請求書",
+    "invoiceDate": "2013-06-16",
+    "currency": "JPY",
+    "totalAmount": 78100,
+    "totalTaxAmount": 7100,
+    "billFromName": "東洋紙業株式会社",
+    "billFromTaxIdentificationNumber": "T2120001039189",
+    "billToName": "TVS REGZA(株)",
+    "page": [
+      1
+    ]
+  }
+]

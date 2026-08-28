@@ -69,10 +69,18 @@ def _core_count(entity: dict) -> int:
     return sum(1 for k in _CORE_SCALARS if _nonempty(entity.get(k)))
 
 
-def _load_candidates(min_core: int) -> list[dict]:
-    """Return ranked single-entity, core-rich train samples (richest first)."""
-    labels_dir = os.path.join(_TRAIN_DIR, "labels")
-    docs_dir = os.path.join(_TRAIN_DIR, "docs")
+def _load_candidates(min_core: int, train_dir: str = "") -> list[dict]:
+    """Return ranked single-entity, core-rich train samples (richest first).
+
+    train_dir 布局二选一（后者是 2026-08 现存的 japan/ 数据集布局）：
+      <dir>/labels/*.pdf.json + <dir>/docs/     （Japan-inv/train 旧约定）
+      <dir>/result/*.pdf.json + <dir>/docs/     （japan/ 现约定）
+    """
+    base = train_dir or _TRAIN_DIR
+    labels_dir = os.path.join(base, "labels")
+    if not os.path.isdir(labels_dir):
+        labels_dir = os.path.join(base, "result")
+    docs_dir = os.path.join(base, "docs")
     out: list[dict] = []
     for fn in sorted(os.listdir(labels_dir)):
         if not fn.endswith(".pdf.json"):
@@ -132,6 +140,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--min-core", type=int, default=8, help="min non-empty core scalar fields per sample")
     ap.add_argument("--reuse", default="", help="add docs to an existing jp-invoice api_code instead of creating one")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--train-dir", default="",
+                    help="样本目录（默认 Japan-inv/train；japan/ 的 result+docs 布局也可）")
     args = ap.parse_args(argv)
 
     from app.core.config import get_settings
@@ -141,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     from app.models.document import Document, DocumentStatus
     from app.ocr_optimizer.service import preset_init
 
-    cands = _load_candidates(args.min_core)
+    cands = _load_candidates(args.min_core, args.train_dir)
     print(f"[seed:JP] candidates (single-entity, >={args.min_core} core fields): {len(cands)}")
     if len(cands) < args.limit:
         print(f"  note: only {len(cands)} candidates available, seeding all of them")

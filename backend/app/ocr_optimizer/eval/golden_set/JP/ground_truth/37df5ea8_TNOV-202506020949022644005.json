@@ -1,0 +1,16 @@
+[
+  {
+    "docType": "receipt",
+    "nameOfInvoice": "領収書",
+    "invoiceNumber": "TNOV-202506020949022644005",
+    "invoiceDate": "2025-06-20",
+    "currency": "USD",
+    "totalAmount": 119,
+    "billFromName": "Octopus Data Inc.",
+    "billFromTaxIdentificationNumber": "47-2872528",
+    "billToName": "聖上坏",
+    "page": [
+      1
+    ]
+  }
+]

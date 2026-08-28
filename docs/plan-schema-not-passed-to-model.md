@@ -319,13 +319,14 @@ schema description（2.54k 字符）—— 是「schema 不下发＝规则死掉
 1. ~~黄金集 line_items 判据恒 0~~ → **已修**（见 §5.5）。
 2. **`api_def.response_schema` 激活时不回写**（§0.5）—— 本次用「同源取 active
    版本」绕开了，但两处 schema 长期不一致本身是隐患，值得在版本激活流程里补回写。
-3. **JP 模板未接入平台** —— 用户已提供 `japan/JP_invoice_receipt.yaml`
-   （Phase 3.7 已用它完成验证），但它**不在仓库根**且**文件名不符约定**
-   （加载器扫 `<COUNTRY>_invoice_prompt.yaml`），另缺 `# Part 1` 标记。
-   要让 JP 进入平台流程（国家模板库 / 黄金集 / bench 用例）需一并处理；
-   `test_bench_harness.py` 的 2 条长期红灯也源于此。
-4. **JP 黄金集不可用** —— `golden_set/JP/` 有 20 份 GT 但 manifest `items` 为空、
-   原件不在仓库；Phase 3.7 改用 `japan/` 的 dev/test/val 三分数据完成验证。
+3. ~~JP 模板未接入平台~~ → **已接入**（Phase 3.8，2026-08-28）：
+   仓库根 `JP_invoice_prompt.yaml`（Part 1/2/3 标记 + locked_fields，正文一字未动，
+   平台组装版 3 样本 sanity 不降反微升）；`test_bench_harness.py` 2 条红灯转绿。
+4. ~~JP 黄金集不可用~~ → **已建成**（Phase 3.8）：`seed_jp_golden --train-dir ../japan`
+   （新加 --train-dir 兼容 japan/ 的 result+docs 布局）seed 20 份 →
+   `build_golden_set --country JP` manifest 0→20 items（含原件副本）→
+   `run_golden_batch --country JP` 端到端跑通：strict **开 0.82 / 关 0.68**，
+   黄金集口径再次印证 schema 收益。全量测试首次全绿（601 passed，0 failed）。
 
 ## 6. 关联
 

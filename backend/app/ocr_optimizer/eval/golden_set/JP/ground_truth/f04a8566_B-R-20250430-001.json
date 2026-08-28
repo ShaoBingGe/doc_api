@@ -1,0 +1,17 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "御請求書",
+    "invoiceNumber": "B-R-20250430-001",
+    "invoiceDate": "2025-04-30",
+    "currency": "JPY",
+    "totalAmount": 48400,
+    "billFromName": "株式会社バックスグループ",
+    "billFromTaxIdentificationNumber": "T3-0110-0101-8770",
+    "billToName": "TVS REGZA株式会社",
+    "page": [
+      1,
+      2
+    ]
+  }
+]

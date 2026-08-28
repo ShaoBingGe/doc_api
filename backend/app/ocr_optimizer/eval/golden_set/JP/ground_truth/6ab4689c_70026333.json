@@ -1,0 +1,16 @@
+[
+  {
+    "docType": "receipt",
+    "nameOfInvoice": "領収書\nRECEIPT",
+    "invoiceNumber": "70026333",
+    "invoiceDate": "2025-05-19",
+    "currency": "JPY",
+    "totalAmount": 14520,
+    "billFromName": "東海旅客鉄道株式会社\nCentral Japan Railway Company",
+    "billFromTaxIdentificationNumber": "T3180001031569",
+    "billToName": "ハイセンスジャパン株式会社",
+    "page": [
+      1
+    ]
+  }
+]

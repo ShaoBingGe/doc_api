@@ -1,0 +1,16 @@
+[
+  {
+    "docType": "receipt",
+    "nameOfInvoice": "ご利用票兼領収書",
+    "invoiceNumber": "E384301226652120501",
+    "invoiceDate": "2025-05-14",
+    "currency": "JPY",
+    "totalAmount": 5220,
+    "billFromName": "東日本旅客鉄道株式会社",
+    "billFromTaxIdentificationNumber": "T9011001029597",
+    "billToName": "Hisense Japan 株式会社 山村英彦様",
+    "page": [
+      1
+    ]
+  }
+]

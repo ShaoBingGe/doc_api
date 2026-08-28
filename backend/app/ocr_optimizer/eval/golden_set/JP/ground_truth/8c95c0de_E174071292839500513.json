@@ -1,0 +1,16 @@
+[
+  {
+    "docType": "receipt",
+    "nameOfInvoice": "ご利用票兼領収書",
+    "invoiceNumber": "E174071292839500513",
+    "invoiceDate": "2025-05-12",
+    "currency": "JPY",
+    "totalAmount": 10640,
+    "billFromName": "東日本旅客鉄道株式会社",
+    "billFromTaxIdentificationNumber": "T9011001029597",
+    "billToName": "TVS REGZA株式会社 石橋泰博 様",
+    "page": [
+      1
+    ]
+  }
+]
