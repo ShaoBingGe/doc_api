@@ -22,9 +22,9 @@
   {
    "doc": "316628d2-e844-43b6-8a5e-1661a5416234",
    "A": 0.0,
-   "B": 0.7463,
-   "diff": 0.7463,
-   "self_jitter": 0.0221,
+   "B": 0.7059,
+   "diff": 0.7059,
+   "self_jitter": 0.0,
    "cls": "SYSTEMATIC"
   },
   {
@@ -62,10 +62,10 @@
   {
    "doc": "8dd45e48-45d1-4b68-8f67-23064ba5d419",
    "A": 0.9167,
-   "B": 0.9167,
-   "diff": 0.0,
+   "B": 0.9583,
+   "diff": 0.0417,
    "self_jitter": 0.0,
-   "cls": "EQ"
+   "cls": "SYSTEMATIC"
   },
   {
    "doc": "9521b051-f67d-483c-b604-b0a77b1738b0",
@@ -102,9 +102,9 @@
   {
    "doc": "a724cdfb-554d-4489-be96-35bb615e1d1c",
    "A": 0.7786,
-   "B": 0.775,
-   "diff": -0.0036,
-   "self_jitter": 0.0071,
+   "B": 0.7786,
+   "diff": 0.0,
+   "self_jitter": 0.0,
    "cls": "EQ"
   },
   {
@@ -126,16 +126,16 @@
   {
    "doc": "b89cfebb-f570-489a-8c40-283bb39cc46e",
    "A": 0.8,
-   "B": 0.85,
-   "diff": 0.05,
-   "self_jitter": 0.1,
-   "cls": "JITTER"
+   "B": 0.8,
+   "diff": 0.0,
+   "self_jitter": 0.0,
+   "cls": "EQ"
   },
   {
    "doc": "bf9eb2d7-de7b-4adb-be2b-db1b0b548b18",
    "A": 0.675,
-   "B": 0.7667,
-   "diff": 0.0917,
+   "B": 0.775,
+   "diff": 0.1,
    "self_jitter": 0.2,
    "cls": "JITTER"
   },
@@ -174,18 +174,18 @@
   {
    "doc": "e095ecac-7396-45f5-934f-878c8591cc97",
    "A": 0.6184,
-   "B": 0.8224,
-   "diff": 0.2039,
-   "self_jitter": 0.0,
+   "B": 0.7664,
+   "diff": 0.148,
+   "self_jitter": 0.0066,
    "cls": "SYSTEMATIC"
   },
   {
    "doc": "e2030276-d58c-4d9f-9f11-b154db78383a",
    "A": 0.663,
-   "B": 0.7645,
-   "diff": 0.1014,
-   "self_jitter": 0.0,
-   "cls": "SYSTEMATIC"
+   "B": 0.6558,
+   "diff": -0.0072,
+   "self_jitter": 0.0435,
+   "cls": "EQ"
   },
   {
    "doc": "f54eeba2-bbb3-4e4b-8c97-a4e3b676547c",
