@@ -184,6 +184,21 @@ class QwenProcessor(DocumentProcessor):
         as_json = runtime_config.get("response_mime_type", "application/json") != "text/plain"
         suffix = pathlib.Path(file_path).suffix.lower()
 
+        # DashScope 视觉模型不支持 response_schema（见 _chat 的说明），收到只能丢弃。
+        # 模板把字段规则迁进 schema description 后，这等于「切到 qwen 备份就丢掉
+        # 那些规则」——主备两条路按两套规则识别。这里把 description 渲染成文本
+        # 附录补进 instruction：单一事实源仍在 schema，qwen 付这笔 token、
+        # Gemini 走免费的结构化通道。见 processors/schema_text.py。
+        schema = runtime_config.get("response_schema")
+        if schema:
+            from app.processors.schema_text import render_schema_descriptions
+
+            appendix = render_schema_descriptions(schema)
+            if appendix:
+                instruction = instruction + appendix
+                logger.info("qwen: schema description 已渲染为文本附录（%d 字符）",
+                            len(appendix))
+
         # ── text completion (reflection / optimizer) ──
         if suffix == ".txt":
             user_text = pathlib.Path(file_path).read_text(encoding="utf-8", errors="replace")
