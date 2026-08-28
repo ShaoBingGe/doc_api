@@ -21,11 +21,11 @@
   },
   {
    "doc": "316628d2-e844-43b6-8a5e-1661a5416234",
-   "A": 0.0,
-   "B": 0.7059,
-   "diff": 0.7059,
-   "self_jitter": 0.0,
-   "cls": "SYSTEMATIC"
+   "A": 0.7059,
+   "B": 0.7206,
+   "diff": 0.0147,
+   "self_jitter": 0.0294,
+   "cls": "EQ"
   },
   {
    "doc": "3323d5ca-6148-46a9-93bb-c544e7287ccc",
@@ -61,11 +61,11 @@
   },
   {
    "doc": "8dd45e48-45d1-4b68-8f67-23064ba5d419",
-   "A": 0.9167,
+   "A": 0.9583,
    "B": 0.9583,
-   "diff": 0.0417,
+   "diff": 0.0,
    "self_jitter": 0.0,
-   "cls": "SYSTEMATIC"
+   "cls": "EQ"
   },
   {
    "doc": "9521b051-f67d-483c-b604-b0a77b1738b0",
@@ -102,8 +102,8 @@
   {
    "doc": "a724cdfb-554d-4489-be96-35bb615e1d1c",
    "A": 0.7786,
-   "B": 0.7786,
-   "diff": 0.0,
+   "B": 0.7714,
+   "diff": -0.0071,
    "self_jitter": 0.0,
    "cls": "EQ"
   },
@@ -133,19 +133,19 @@
   },
   {
    "doc": "bf9eb2d7-de7b-4adb-be2b-db1b0b548b18",
-   "A": 0.675,
-   "B": 0.775,
-   "diff": 0.1,
-   "self_jitter": 0.2,
-   "cls": "JITTER"
+   "A": 0.775,
+   "B": 0.7667,
+   "diff": -0.0083,
+   "self_jitter": 0.0,
+   "cls": "EQ"
   },
   {
    "doc": "c864a8ec-c63a-475d-bccd-4636b121b215",
-   "A": 0.6105,
+   "A": 0.7211,
    "B": 0.7158,
-   "diff": 0.1053,
-   "self_jitter": 0.0,
-   "cls": "SYSTEMATIC"
+   "diff": -0.0053,
+   "self_jitter": 0.0105,
+   "cls": "EQ"
   },
   {
    "doc": "d3de2019-fd2a-4512-8c38-af2d8cf51677",
@@ -173,27 +173,27 @@
   },
   {
    "doc": "e095ecac-7396-45f5-934f-878c8591cc97",
-   "A": 0.6184,
-   "B": 0.7664,
-   "diff": 0.148,
-   "self_jitter": 0.0066,
+   "A": 0.7632,
+   "B": 0.8158,
+   "diff": 0.0526,
+   "self_jitter": 0.0,
    "cls": "SYSTEMATIC"
   },
   {
    "doc": "e2030276-d58c-4d9f-9f11-b154db78383a",
-   "A": 0.663,
-   "B": 0.6558,
-   "diff": -0.0072,
+   "A": 0.6558,
+   "B": 0.7645,
+   "diff": 0.1087,
    "self_jitter": 0.0435,
-   "cls": "EQ"
+   "cls": "SYSTEMATIC"
   },
   {
    "doc": "f54eeba2-bbb3-4e4b-8c97-a4e3b676547c",
-   "A": 0.8843,
+   "A": 0.9954,
    "B": 0.9954,
-   "diff": 0.1111,
+   "diff": 0.0,
    "self_jitter": 0.0,
-   "cls": "SYSTEMATIC"
+   "cls": "EQ"
   }
  ]
 }
