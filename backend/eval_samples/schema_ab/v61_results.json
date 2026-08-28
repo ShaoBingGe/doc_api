@@ -1,0 +1,323 @@
+[
+ {
+  "sample": "S1",
+  "arm": "v6-noschema",
+  "round": 0,
+  "sec": 2.9,
+  "in_tok": 6781,
+  "out_tok": 498,
+  "pass": 7,
+  "total": 7,
+  "fails": []
+ },
+ {
+  "sample": "S1",
+  "arm": "v6-noschema",
+  "round": 1,
+  "sec": 3.1,
+  "in_tok": 6781,
+  "out_tok": 498,
+  "pass": 7,
+  "total": 7,
+  "fails": []
+ },
+ {
+  "sample": "S1",
+  "arm": "v6-noschema",
+  "round": 2,
+  "sec": 2.8,
+  "in_tok": 6781,
+  "out_tok": 498,
+  "pass": 7,
+  "total": 7,
+  "fails": []
+ },
+ {
+  "sample": "S1",
+  "arm": "v6",
+  "round": 0,
+  "sec": 3.2,
+  "in_tok": 6781,
+  "out_tok": 497,
+  "pass": 7,
+  "total": 7,
+  "fails": []
+ },
+ {
+  "sample": "S1",
+  "arm": "v6",
+  "round": 1,
+  "sec": 3.4,
+  "in_tok": 6781,
+  "out_tok": 522,
+  "pass": 7,
+  "total": 7,
+  "fails": []
+ },
+ {
+  "sample": "S1",
+  "arm": "v6",
+  "round": 2,
+  "sec": 2.9,
+  "in_tok": 6781,
+  "out_tok": 497,
+  "pass": 7,
+  "total": 7,
+  "fails": []
+ },
+ {
+  "sample": "S1",
+  "arm": "v6.1",
+  "round": 0,
+  "sec": 6.7,
+  "in_tok": 6159,
+  "out_tok": 497,
+  "pass": 7,
+  "total": 7,
+  "fails": []
+ },
+ {
+  "sample": "S1",
+  "arm": "v6.1",
+  "round": 1,
+  "sec": 5.9,
+  "in_tok": 6159,
+  "out_tok": 497,
+  "pass": 7,
+  "total": 7,
+  "fails": []
+ },
+ {
+  "sample": "S1",
+  "arm": "v6.1",
+  "round": 2,
+  "sec": 4.4,
+  "in_tok": 6159,
+  "out_tok": 498,
+  "pass": 7,
+  "total": 7,
+  "fails": []
+ },
+ {
+  "sample": "S2",
+  "arm": "v6-noschema",
+  "round": 0,
+  "sec": 13.6,
+  "in_tok": 9441,
+  "out_tok": 3463,
+  "pass": 3,
+  "total": 4,
+  "fails": [
+   "invoiceTypes=['Tax Invoice', 'Tax Invoice', 'Tax Invoice', 'Tax Invoice', 'Tax Invoice', 'Tax Invoice']"
+  ]
+ },
+ {
+  "sample": "S2",
+  "arm": "v6-noschema",
+  "round": 1,
+  "sec": 14.5,
+  "in_tok": 9441,
+  "out_tok": 3546,
+  "pass": 3,
+  "total": 4,
+  "fails": [
+   "invoiceTypes=['Tax Invoice', 'Tax Invoice', 'Tax Invoice', 'Tax Invoice', 'Tax Invoice', 'Tax Invoice']"
+  ]
+ },
+ {
+  "sample": "S2",
+  "arm": "v6-noschema",
+  "round": 2,
+  "sec": 13.9,
+  "in_tok": 9441,
+  "out_tok": 3546,
+  "pass": 3,
+  "total": 4,
+  "fails": [
+   "invoiceTypes=['Tax Invoice', 'Tax Invoice', 'Tax Invoice', 'Tax Invoice', 'Tax Invoice', 'Tax Invoice']"
+  ]
+ },
+ {
+  "sample": "S2",
+  "arm": "v6",
+  "round": 0,
+  "sec": 15.2,
+  "in_tok": 9441,
+  "out_tok": 3784,
+  "pass": 4,
+  "total": 4,
+  "fails": []
+ },
+ {
+  "sample": "S2",
+  "arm": "v6",
+  "round": 1,
+  "sec": 15.1,
+  "in_tok": 9441,
+  "out_tok": 3784,
+  "pass": 4,
+  "total": 4,
+  "fails": []
+ },
+ {
+  "sample": "S2",
+  "arm": "v6",
+  "round": 2,
+  "sec": 17.5,
+  "in_tok": 9441,
+  "out_tok": 3784,
+  "pass": 4,
+  "total": 4,
+  "fails": []
+ },
+ {
+  "sample": "S2",
+  "arm": "v6.1",
+  "round": 0,
+  "sec": 13.9,
+  "in_tok": 8819,
+  "out_tok": 3741,
+  "pass": 3,
+  "total": 4,
+  "fails": [
+   "invoiceTypes=['Commercial Invoice', 'Tax Invoice', 'Commercial Invoice', 'Tax Invoice', 'Tax Invoice', 'Commercial Invoice']"
+  ]
+ },
+ {
+  "sample": "S2",
+  "arm": "v6.1",
+  "round": 1,
+  "sec": 14.7,
+  "in_tok": 8819,
+  "out_tok": 3741,
+  "pass": 3,
+  "total": 4,
+  "fails": [
+   "invoiceTypes=['Commercial Invoice', 'Tax Invoice', 'Commercial Invoice', 'Tax Invoice', 'Tax Invoice', 'Commercial Invoice']"
+  ]
+ },
+ {
+  "sample": "S2",
+  "arm": "v6.1",
+  "round": 2,
+  "sec": 14.7,
+  "in_tok": 8819,
+  "out_tok": 3737,
+  "pass": 3,
+  "total": 4,
+  "fails": [
+   "invoiceTypes=['Commercial Invoice', 'Tax Invoice', 'Commercial Invoice', 'Tax Invoice', 'Tax Invoice', 'Commercial Invoice']"
+  ]
+ },
+ {
+  "sample": "S3",
+  "arm": "v6-noschema",
+  "round": 0,
+  "sec": 2.6,
+  "in_tok": 6769,
+  "out_tok": 420,
+  "pass": 7,
+  "total": 7,
+  "fails": []
+ },
+ {
+  "sample": "S3",
+  "arm": "v6-noschema",
+  "round": 1,
+  "sec": 3.1,
+  "in_tok": 6769,
+  "out_tok": 420,
+  "pass": 7,
+  "total": 7,
+  "fails": []
+ },
+ {
+  "sample": "S3",
+  "arm": "v6-noschema",
+  "round": 2,
+  "sec": 2.5,
+  "in_tok": 6769,
+  "out_tok": 420,
+  "pass": 7,
+  "total": 7,
+  "fails": []
+ },
+ {
+  "sample": "S3",
+  "arm": "v6",
+  "round": 0,
+  "sec": 3.0,
+  "in_tok": 6769,
+  "out_tok": 444,
+  "pass": 6,
+  "total": 7,
+  "fails": [
+   "totals=[709.25]"
+  ]
+ },
+ {
+  "sample": "S3",
+  "arm": "v6",
+  "round": 1,
+  "sec": 3.0,
+  "in_tok": 6769,
+  "out_tok": 436,
+  "pass": 6,
+  "total": 7,
+  "fails": [
+   "totals=[709.25]"
+  ]
+ },
+ {
+  "sample": "S3",
+  "arm": "v6",
+  "round": 2,
+  "sec": 3.1,
+  "in_tok": 6769,
+  "out_tok": 436,
+  "pass": 6,
+  "total": 7,
+  "fails": [
+   "totals=[709.25]"
+  ]
+ },
+ {
+  "sample": "S3",
+  "arm": "v6.1",
+  "round": 0,
+  "sec": 3.7,
+  "in_tok": 6147,
+  "out_tok": 427,
+  "pass": 6,
+  "total": 7,
+  "fails": [
+   "totals=[709.25]"
+  ]
+ },
+ {
+  "sample": "S3",
+  "arm": "v6.1",
+  "round": 1,
+  "sec": 3.6,
+  "in_tok": 6147,
+  "out_tok": 427,
+  "pass": 6,
+  "total": 7,
+  "fails": [
+   "totals=[709.25]"
+  ]
+ },
+ {
+  "sample": "S3",
+  "arm": "v6.1",
+  "round": 2,
+  "sec": 3.3,
+  "in_tok": 6147,
+  "out_tok": 427,
+  "pass": 6,
+  "total": 7,
+  "fails": [
+   "totals=[709.25]"
+  ]
+ }
+]

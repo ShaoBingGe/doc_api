@@ -240,7 +240,20 @@ class GeminiProcessor(DocumentProcessor):
                 contents=contents,
                 config=generate_config,
             )
-        logger.info("Gemini response length: %d chars", len(response.text or ""))
+        # 记录本次调用的 token 用量供观测（评测脚本读它做成本对照）。
+        # 纯旁路：只写实例属性，不影响返回值与控制流。
+        um = getattr(response, "usage_metadata", None)
+        self.last_usage = {
+            "prompt_tokens": getattr(um, "prompt_token_count", None),
+            "output_tokens": getattr(um, "candidates_token_count", None),
+            "total_tokens": getattr(um, "total_token_count", None),
+        } if um is not None else None
+        logger.info(
+            "Gemini response length: %d chars (tokens in/out %s/%s)",
+            len(response.text or ""),
+            (self.last_usage or {}).get("prompt_tokens"),
+            (self.last_usage or {}).get("output_tokens"),
+        )
 
         json_string = response.text or ""
 
