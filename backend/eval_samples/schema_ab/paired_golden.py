@@ -50,6 +50,30 @@ from app.ocr_optimizer.service.ocr_runner import run_ocr_on_samples  # noqa: E40
 HERE = pathlib.Path(__file__).parent
 
 
+def load_candidate_yaml(path: str, country: str) -> tuple[str, dict]:
+    """候选 yaml → (组装后 prompt, json_schema)。
+
+    走与生产 seed 完全相同的组装路径（decompose + build_v1_prompt），
+    做法是把候选文件复制进临时目录并临时改写 template_loader 的仓库根——
+    比手工复刻 marker 切分逻辑可靠（那套逻辑有优先级与截断规则）。
+    """
+    import shutil
+    import tempfile
+
+    from app.ocr_optimizer.service import template_loader
+    from app.ocr_optimizer.service.preset_init import build_v1_prompt
+
+    with tempfile.TemporaryDirectory() as td:
+        shutil.copy(path, pathlib.Path(td) / f"{country}_invoice_prompt.yaml")
+        orig = template_loader._REPO_ROOT
+        template_loader._REPO_ROOT = pathlib.Path(td)
+        try:
+            d = template_loader.decompose_country_template(country)
+        finally:
+            template_loader._REPO_ROOT = orig
+    return build_v1_prompt(d), d["json_schema"]
+
+
 def cut_section(body: str, marker: str) -> str:
     """删掉以 marker 开头的小节（到下一个同级 `## ` 标题为止）。"""
     lines = body.splitlines(keepends=True)
@@ -83,6 +107,9 @@ def main() -> None:
     ap.add_argument("--candidate", default="my-invoice-c99a19")
     ap.add_argument("--cut", default=None,
                     help="B 版删除的正文小节标题前缀，如 '## 1.34'")
+    ap.add_argument("--yaml-b", default=None,
+                    help="B 版直接用候选 yaml 文件（prompt 与 schema 都取自它）——"
+                         "供 R3+ 这类「删正文段 + 改 description」的复合变更做配对")
     ap.add_argument("--repeats", type=int, default=2)
     ap.add_argument("--jitter-band", type=float, default=0.02,
                     help="配对差 ≤ 此值视为持平")
@@ -105,20 +132,26 @@ def main() -> None:
     ids = [uuidlib.UUID(d) for d in pool]
 
     prompt_a = v.composed_prompt or ""
-    prompt_b = cut_section(prompt_a, args.cut) if args.cut else prompt_a
-    variants = {"A": prompt_a, "B": prompt_b}
+    schema_a = v.composed_schema
+    if args.yaml_b:
+        prompt_b, schema_b = load_candidate_yaml(args.yaml_b, args.country)
+    else:
+        prompt_b = cut_section(prompt_a, args.cut) if args.cut else prompt_a
+        schema_b = schema_a
+    variants = {"A": (prompt_a, schema_a), "B": (prompt_b, schema_b)}
+    src = (f"（yaml-b: {args.yaml_b}）" if args.yaml_b
+           else (f"（删 {args.cut!r}，−{len(prompt_a)-len(prompt_b)} 字符）" if args.cut
+                 else "（B=A，抖动基线模式）"))
     print(f"全池 {len(pool)} 份 · A={len(prompt_a):,} 字符 · "
-          f"B={len(prompt_b):,} 字符"
-          + (f"（删 {args.cut!r}，−{len(prompt_a)-len(prompt_b)} 字符）" if args.cut else "（B=A，抖动基线模式）")
-          + f" · 每配置重复 {args.repeats} 次\n")
+          f"B={len(prompt_b):,} 字符{src} · 每配置重复 {args.repeats} 次\n")
 
     # {variant: [ {doc: score} per repeat ]}
     runs: dict[str, list[dict[str, float]]] = {k: [] for k in variants}
-    for name, prompt in variants.items():
+    for name, (prompt, schema) in variants.items():
         for r in range(args.repeats):
             outputs = run_ocr_on_samples(
                 db, sample_document_ids=ids, composed_prompt=prompt,
-                composed_schema=v.composed_schema,
+                composed_schema=schema,
                 processor_spec=api.processor_type or "gemini",
                 model_name=api.model_name,
             )
