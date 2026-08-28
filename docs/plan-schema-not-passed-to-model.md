@@ -249,7 +249,35 @@ schema 是否下发由 `PASS_SCHEMA_TO_MODEL` 控制，默认 False 且随时可
    - 抽 10 个真实任务的输出与前一日同类样本对照。
 3. 回退 = `.env` 改一行重启（这正是开关存在的意义）。
 
-### Phase 5 · 收尾 —— ⏸ **阻塞于 Phase 4**（其中不依赖灰度的部分已在 3.6 完成）
+### Phase 3.7 · JP 验证 + 默认值改 True —— ✅ 已完成（2026-08-28）
+
+用户提供 `japan/JP_invoice_receipt.yaml`（id `jp-v8`），补上了此前「JP 无法验证」
+的缺口。JP 与 MY 的设计**相反**：正文仅 1.76k 字符，26 个字段的识别规则几乎全在
+schema description（2.54k 字符）—— 是「schema 不下发＝规则死掉」的最强对照。
+
+结果（复用 `japan/` 现成数据与 `score_jp.py` 打分器）：
+
+| split | 不传 schema | 传 schema | 提升 |
+|---|---|---|---|
+| dev（12 份） | 0.1876 | **0.5385** | **+187%** |
+| test（10 份，held-out） | 0.3972 | **0.7945** | **+100%**，9/9 样本全升 |
+
+三个附带发现：
+1. **输入 token 逐份完全相同** —— `response_schema` 不计入 prompt token，
+   传 schema 在输入侧**零成本**；
+2. 代价在输出侧（token +63~133%）与耗时（+0.5~3.5s），来自「真的多提取了字段」；
+3. 不传 schema 时有 1 份把 `page` 输出成 `int` 而非数组，直接让打分器
+   `TypeError` 崩溃 —— 下游解析器同样会炸，这正是硬约束防的事。
+
+**据此把 `PASS_SCHEMA_TO_MODEL` 默认值 False → True**（开关本身保留作回退）。
+详见 `docs/experiment-jp-schema-ab.md`。
+
+> 连带待办：`JP_invoice_receipt.yaml` 文件名不符加载器约定
+> （`template_loader` 扫仓库根的 `<COUNTRY>_invoice_prompt.yaml`），
+> 且 `prompt_format` 缺 `# Part 1` 标记。当前 JP 模板不会被平台加载，
+> `test_bench_harness.py` 的 2 条红灯也源于此。见 §7 遗留项 3。
+
+### Phase 5 · 收尾 —— ⏸ **阻塞于 Phase 4**（不依赖灰度的部分已在 3.6 / 3.7 完成）
 
 - 稳定后开关默认值改 True，写入部署 runbook；
 - 重新评估 MY §1.34（nameOfInvoice/unitPrice 当年因本缺陷搬进正文的规则）
@@ -291,8 +319,13 @@ schema 是否下发由 `PASS_SCHEMA_TO_MODEL` 控制，默认 False 且随时可
 1. ~~黄金集 line_items 判据恒 0~~ → **已修**（见 §5.5）。
 2. **`api_def.response_schema` 激活时不回写**（§0.5）—— 本次用「同源取 active
    版本」绕开了，但两处 schema 长期不一致本身是隐患，值得在版本激活流程里补回写。
-3. **JP 模板缺失** —— 仓库根没有 `JP_invoice_prompt.yaml`，导致 JP 黄金集与
-   2 条 bench 用例无法运行。
+3. **JP 模板未接入平台** —— 用户已提供 `japan/JP_invoice_receipt.yaml`
+   （Phase 3.7 已用它完成验证），但它**不在仓库根**且**文件名不符约定**
+   （加载器扫 `<COUNTRY>_invoice_prompt.yaml`），另缺 `# Part 1` 标记。
+   要让 JP 进入平台流程（国家模板库 / 黄金集 / bench 用例）需一并处理；
+   `test_bench_harness.py` 的 2 条长期红灯也源于此。
+4. **JP 黄金集不可用** —— `golden_set/JP/` 有 20 份 GT 但 manifest `items` 为空、
+   原件不在仓库；Phase 3.7 改用 `japan/` 的 dev/test/val 三分数据完成验证。
 
 ## 6. 关联
 

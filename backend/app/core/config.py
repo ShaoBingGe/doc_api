@@ -70,13 +70,21 @@ class Settings(BaseSettings):
     # （配额耗尽 / 网络不可达 / 鉴权失败）；文档级错误（400 坏文件）不重试——
     # 换个模型同样会失败，只是把一次失败变成两次、延迟翻倍。
     ENABLE_BACKUP_FAILOVER: bool = True
-    # ── schema 硬约束灰度开关（docs/plan-schema-not-passed-to-model.md）────────
-    # True 时生产提取链路（开放平台 + 工作区）把 active 版本的 composed_schema
-    # 作为 response_schema 随调用传给模型（Gemini 硬约束输出形状；qwen 忽略）。
-    # 历史缺陷：prompt 存在时 schema 从未到达模型，所有国家模板的 schema
-    # description 在生产里是死字，而迭代评测（ocr_runner）一直在传——评测与
-    # 生产不同构。默认 False = 与旧行为逐字节一致；灰度验证通过后再改默认值。
-    PASS_SCHEMA_TO_MODEL: bool = False
+    # ── schema 硬约束开关（docs/plan-schema-not-passed-to-model.md）──────────
+    # True 时提取链路（开放平台 / 工作区 / 迭代评测）把 active 版本的
+    # composed_schema 作为 response_schema 随调用传给模型（Gemini 硬约束输出
+    # 形状；qwen 忽略）。历史缺陷：prompt 存在时 schema 从未到达模型，所有国家
+    # 模板的 schema description 在生产里是死字。
+    #
+    # 2026-08-28 默认值 False → True，依据两份实测报告：
+    #   - docs/experiment-jp-schema-ab.md：JP 模板（规则几乎全在 description）
+    #     字段准确率 dev +187%、held-out test +100%，9/9 样本全升；
+    #     且不传时会吐出违反 schema 的非法类型（page 输出成 int）。
+    #   - MY 模板：Phase 2 三样本 18/18 开=关、Phase 3 黄金集 4 seed 开≥关。
+    # 成本：输入 token **零增加**（response_schema 不计入 prompt token），
+    # 输出 token 与耗时上升，来自「真的多提取了字段」。
+    # 回退：置 False 即逐字节回到旧行为（开关本身保留，见 Phase 4 runbook）。
+    PASS_SCHEMA_TO_MODEL: bool = True
     GEMINI_API_KEY: str = ""
     # 多账号 key 池（分号/逗号分隔）。配了它就覆盖 GEMINI_API_KEY；
     # 调度用最少在途 + 429 熔断（processors/key_pool.py），加账号只改这一行。

@@ -1,0 +1,248 @@
+id: 'jp-v8'
+remark: 精简合并版 — v3 骨架 + v6/v5 已验证修正（但し書き不吞明细表、taxCategory 票面原词、billToName 剥敬称），删除正文与 schema 的重复表述；字段结构与 v3 完全一致
+template_config:
+  fill_empty_items: false
+prompt_template:
+  prompt_format: |-
+    你是日本票据识别专家。提取文档中所有日本发票（請求書）和收据（領収書・レシート），
+    以 JSON 数组输出，每个元素一条票据记录。文档可能是混贴多张小票的扫描件、多页請求書或单张票据；
+    可能倾斜、旋转、感热纸褪色。票面以日语为主。
+
+    【实体切分 —— 最重要，切错整条作废】
+    1. 一条记录 = 一张物理独立的凭证（有自己的发行方、金额、日期）。同一张凭证内部的
+       表头/明细/支付栏/切取线两侧区块合为一条。
+    2. 領収書（領収証）与同票的明細部分（ご利用明細・航空券明細・きっぷの明細等，金额相同）
+       是同一条：标题取領収書，明细行放入该条。
+    3. 請求書 vs 請求明細書看合计：明細書无独立合计、或合计与請求書相同 → 并入請求書
+       （一条，page 列全部页码）；明細書有自己的表头且合计不同（是分项）→ 各自一条。
+    4. 「請求書＋佐证用領収書」装订件：首页是正式請求書（有請求金額、振込先）→ 只输出
+       該請求書一条，其余页 other。首页是内部单据（出張旅費精算書/交通費明細書/経費精算書）
+       → 首页 other，后面每张領収書各一条。
+    5. クレジット/QR/iD 的売上票・支払票・取引伝票（お客様控え）不单独成条，
+       与其上方的領収書合并（商家名取領収書的正式名称）。
+    6. 一律 other（只输出 docType 和 page）：内部报销表单、伝票类及其控联、
+       IC卡利用履歴、保険/リース契約証・お支払明細書、予約一覧表、空白页/分隔页/宣传页。
+    7. 禁止按「金额/商家相同」去重：同页两张 ¥1,400 巴士票是两条。
+    8. 台纸本身也是票时，大张和贴在上面的小张都要输出。
+    9. 竖排、旋转90°、被压边、极小的票（新幹線绿色小票、車券、印紙）必须计入：
+       逐页四方向扫视，不得因方向或尺寸跳过。
+
+    【计数与防幻觉 —— 输出前执行】
+    - 先建票面单元清单（位置、商家、金额、日期、票面唯一号），再逐条转 JSON，
+      记录数必须等于清单数；每条记录必须能指认票面上的一个物理位置。
+    - 票号和日期只能从票面读取：读到 NO.008668 严禁输出 008669…，严禁生成逐日递增/递减的日期序列。
+    - 两条记录（商家、日期、金额）全同时，必须各有不同位置和不同票面唯一号，否则删后一条。
+    - 一张 A4 混贴件的小票通常 ≤12 张，超过就重查（多半是复读）。
+    - 拿不准是否独立票据 → 输出 other，不要猜 invoice/receipt。
+
+    【分类 —— docType 由票面标题决定】
+    - receipt：領収書/領収証/領収/受領書/レシート/ご利用証明書/ご利用証明/利用明細書/
+      ご利用明細書/明細書/RECEIPT/DETAILED STATEMENT；无标题的零售小票也是 receipt。
+    - invoice：請求書/御請求書/ご請求書/請求明細書/見積書/口座振替のお知らせ/INVOICE。
+    - 复合标题看主标题（靠前/更大的词）：「請求書 兼 領収書」→ invoice；「納品書(領収書)」→ receipt。
+
+    【通用规则】
+    - 保持票面原文，不翻译；票面有的尽量抽，没有的不输出、不推断。
+    - 日期输出 YYYY-MM-DD。和暦换算：令和N年=2018+N（令和7年=2025）、平成N年=1988+N，
+      R7.5.1→2025-05-01；两位年份按 20YY；年份必须 ≥2015。
+    - 金额输出纯数字（¥1,234,567→1234567）。「円」是单位字不是数字 0（¥1,300円=1300）；
+      返金/赤伝输出负数。
+    - 消費税 10% 标准、8% 軽減税率（票面「※」「＊」标记）；内税=总额含税，外税=税抜+消費税。
+    - 登録番号 = T+恰好13位数字（连字符去掉后仍13位）。〒开头的是邮编、位数不足13的都不是；
+      提取后数一遍位数。T+13 只能进 billFromTaxIdentificationNumber，严禁进其他编号字段。
+    - 混贴页每张小票的字段只能取自该票自身边界内，严禁借用相邻小票的名称/金额/税号；
+      同页商家不同的两张票登録番号必不相同。
+  json_schema:
+    title: japan_invoice_and_receipts
+    type: ARRAY
+    items:
+      anyOf:
+        - type: OBJECT
+          properties:
+            docType:
+              type: STRING
+              description: 票据类型，按票面标题判定：invoice（請求書类）或 receipt（領収書・レシート类）
+              enum:
+                - invoice
+                - receipt
+            page:
+              type: ARRAY
+              description: 所在页码列表（从1开始），跨页票据列出全部页码，如 [2, 3, 4]。
+              items:
+                type: NUMBER
+            invoiceType:
+              type: STRING
+              description: docType=invoice 填 'Invoice'；docType=receipt 填 'Receipt'；赤伝/返金或合计为负填 'Credit Note'。
+              enum:
+                - Invoice
+                - Receipt
+                - Credit Note
+            nameOfInvoice:
+              type: STRING
+              description: |-
+                票面标题按原样逐字输出：复合标题整体保留（「請求書 兼 領収書」「利用明細書(お客様控え)兼領収書」）；
+                标题内空格保留（「領 収 証」）；日文标题下紧跟英文对译时两者都保留（「領収書 RECEIPT」）；
+                区分「領収書」与「領収証」，不得互换；同票上下两半标题不同时取主标题（更大、在顶部的）。
+            invoiceNumber:
+              type: STRING
+              description: |-
+                票据编号，只输出编号本体：「No.」「精算No.」「発券No.」「レシートNo.」「伝票番号」等标签前缀剥掉
+                （「No.01-000061」→ 01-000061）；编号自带的字母/连字符保留。
+                多个编号时优先级：①标题同行/紧邻方括号内的编号（「《領収書》[No. 16]」→ 16）；
+                ②标注「請求書番号」「精算No.」的编号；③票尾机器流水号最低，前两者存在时不取。
+                登録番号(T+13)、电话、カード番号、承認番号、条码数字都不是编号。
+            invoiceCode:
+              type: STRING
+              description: 与 invoiceNumber 并存的第二编号（票面确有才输出）：停车場領収証与「No.xxx」并排的「券No.」取数字部分；零售小票日期行的收银机号（「レジ 0004」「#000007」）取数字本体。不与 invoiceNumber 重复。
+            invoiceDate:
+              type: STRING
+              description: 开票/交易日期 YYYY-MM-DD。多日期优先级：①発行日/表示日/取引日時/精算時刻/領収日；②購入日/利用日；乗車日/宿泊日/対象月不是此字段。
+            dueDate:
+              type: STRING
+              description: |-
+                付款截止日 YYYY-MM-DD。票面明写「お支払期限」「振込期限」直接取；只写付款条件时结合
+                invoiceDate 换算：「月末締め翌月末払い」→ 开票月次月最后一天（2025-05-31 → 2025-06-30）、
+                「翌月NN日払い」→ 次月NN日、「〜日以内」→ invoiceDate+N天。抬头条件适用于该請求書全部记录。
+            paymentDueInDays:
+              type: NUMBER
+              description: 仅当付款条件以天数表述时输出该天数。
+            totalNetAmount:
+              type: NUMBER
+              description: 全票不含税合计（税抜金額）。票面分多部分时求和。
+            totalAmount:
+              type: NUMBER
+              description: 含税总金额。請求書取「御請求金額」「合計金額」框内最终额，不取行项小计；多层合计取最高层。
+            totalTaxAmount:
+              type: NUMBER
+              description: 消費税合计。8% 与 10% 并存时输出两档之和。取票面明示税额，严禁用总额反推。
+            taxRate:
+              type: STRING
+              description: 整单单一税率时填 `数字%`；多档并存时不填（在 detailOfTaxSummary 分档）。
+            currency:
+              type: STRING
+              description: ISO 4217 代码。日文票据无外币标记时输出 "JPY"。
+            billToName:
+              type: STRING
+              description: |-
+                收票方（宛名）名称。末尾敬语「様」「御中」「殿」「各位」连同其前空白一并剥除
+                （「TVS REGZA株式会社 御中」→ TVS REGZA株式会社；人名中间空格也去掉：「古本 力 様」→ 古本力）；
+                只剥末尾，公司名中间的空格保留。宛名栏空白/只有预印「様」时输出「様」。
+                名称按票面原样，「(株)」不展开。位置：請求書左上角；領収書「宛名」「RECEIVED FROM」之后。
+                右下角带登録番号/振込先的方框是开票方不是收票方。部门/担当随名称输出。
+            billToComposite:
+              type: STRING
+              description: 收票方完整地址（票面有才输出），含〒邮编。
+            billToCountry:
+              type: STRING
+              description: 收票方国家代码，日本输出 "JP"。
+            billToTaxIdentificationNumber:
+              type: STRING
+              description: 收票方的登録番号/法人番号（票面明确标注才输出）。
+            billFromName:
+              type: STRING
+              description: |-
+                开票方名称。①法人名优先：票面同时有店铺/品牌标题与带法人格的公司名
+                （株式会社/(株)/有限会社等）时取后者——法人名常在登録番号同区块、票尾或印章处
+                （顶部「ENEOS」+ 票身「宝扇商事株式会社」→ 取后者）；只有品牌标识时输出品牌原文。
+                ②剥除下位组织：法人/品牌名后的 〜店/〜支店/〜営業所/〜郵便局 剥掉放 billFromComposite
+                （「Seria 和光市駅前店」→ Seria）。③绝不取宛名（御中/様指向的名称）。
+                ④不取家主/管理会社/仲介会社等第三方。⑤混贴页取自该票自身，严禁借用相邻票。
+                ⑥日英并记两者都保留。⑦半角カナ转全角（ﾆﾂﾎﾟﾝﾕｳﾋﾞﾝ → ニッポンユウビン）。
+            billFromComposite:
+              type: STRING
+              description: |-
+                开票方地址。①首选完整住所且必须含「〒」邮编本身（〒2860106 千葉県…→ 含〒整串输出），
+                多行地址全部拼接，末尾部署名保留。②票面无地址时填下位标识（店铺/営業所/发行站名/设施位置），
+                不可留空。③单独的电话/FAX/URL 不得作为此字段（只有 TEL 无地址时填店铺名）。
+            billFromCountry:
+              type: STRING
+              description: 开票方国家代码。日本票据输出 "JP"（不要 "Japan"）。
+            billFromTaxIdentificationNumber:
+              type: STRING
+              description: 開票方登録番号（T+13位，如 T8010001140514，票面带连字符则保留）或13位法人番号。查找「登録番号」「登録No.」标注。位数必须校验；一票多个登録番号时取 billFromName 对应法人的那个。
+            purchaseOrderNumber:
+              type: STRING
+              description: 注文番号/PO番号（票面明确标注才输出）。
+            shipmentNumber:
+              type: STRING
+              description: 出荷番号/送り状番号（票面明确标注才输出）。
+            detailOfGoodsOrServices:
+              type: ARRAY
+              description: |-
+                商品/服务明细，逐行提取。只用子字段 articleName/description/netAmount/grossAmount/taxRate/tax/orderNumber，
+                不输出 quantity/unitPrice/unitOfMeasure，严禁用数量×单价计算金额——金额一律照抄票面。
+                票面有逐行明细表（点单明细/請求明细/費用一覧）时必须逐行全部提取（几十行也要输出），
+                不得只输出一条「〜として」概括行；只有一句用途说明、无任何明细表时才输出一条
+                但し書き行（articleName 取原句、保留「〜として」）。
+                「标签:值」信息行也输出（值为文字→articleName=标签、description=值；值为金额→金额进 net/gross）。
+                金额为 0 或空的行也输出（grossAmount: 0）。
+                小計/合計/お預り/お釣り/お買上点数/クレジット支払 不进明细。
+              items:
+                type: OBJECT
+                properties:
+                  articleName:
+                    type: STRING
+                    description: 品名本体：剥掉行首商品コード＋＊前缀、单价前缀、「但し）」等标签词；多列表格只取品目列；截断的原样照抄不补全；日英并排用空格连接。
+                  description:
+                    type: STRING
+                    description: 品名旁的第二段文字（備考/摘要列、括号补充、料金种别副标签）。开头「※」「＊」删除。
+                  netAmount:
+                    type: NUMBER
+                    description: 该行不含税金额。行只印一个金额时，netAmount 与 grossAmount 同填该值（不换算）；同时印税抜与税込时此处填税抜。禁止由 grossAmount 换算。
+                  grossAmount:
+                    type: NUMBER
+                    description: 该行含税金额。行只印一个金额时与 netAmount 同值；0 金额行也填 0。禁止由 netAmount 换算。
+                  taxRate:
+                    type: STRING
+                    description: 该行税率 `数字%`（「※」「＊」标记通常为 8%）。票面无税率标记时不填，不要编造 "0%"。
+                  tax:
+                    type: NUMBER
+                    description: 该行税额（票面明示才填）。
+                  orderNumber:
+                    type: STRING
+                    description: 该行注文番号（票面有才输出）。
+                required: []
+            detailOfTaxSummary:
+              type: ARRAY
+              description: |-
+                税金汇总：0 条或 1 条，仅票面真的同时印出 8% 与 10% 两栏时才 2 条，
+                不要把「課税計」「非課税計」「内消費税」拆成多条。
+                票面出现税率标注就必须输出一条，哪怕只有税率没有金额（[{"taxRate":"10%"}]）。
+              items:
+                type: OBJECT
+                properties:
+                  taxCategory:
+                    type: STRING
+                    description: |-
+                      票面税种词的裸词，剥掉税率/括号/修饰（「消費税10%対象」→消費税、「課税（10%）」→課税）。
+                      必须用票面实际印的那个词：印「内税」输出 内税、印「税込」输出 税込，
+                      只有票面印着「消費税」才输出 消費税。票面没有税种词时不输出此字段。
+                  taxRate:
+                    type: STRING
+                    description: 税率 `数字%`。非課税/免税输出 "0%"。
+                  netTaxableAmount:
+                    type: NUMBER
+                    description: 与该税率并列的对象金额，原样照抄、绝不换算、不判断税抜/税込（「対象合計 7,600円」→7600）。仅票面完全无对象额时才由税込总额换算，且保留两位小数（1000税込 → 909.09）。
+                  tax:
+                    type: NUMBER
+                    description: 票面明示的税额（「内消費税 690円」→690），不要用对象额×税率反算。换算时保留两位小数（→90.91）。
+                required: []
+          required:
+            - docType
+            - page
+            - currency
+        - type: OBJECT
+          properties:
+            docType:
+              type: STRING
+              description: 非独立票据内容（内部报销单、伝票控、IC卡履歴、契約証、空白/分隔页等）
+              enum:
+                - other
+            page:
+              type: ARRAY
+              description: 所在页码列表（从1开始）。
+              items:
+                type: NUMBER
+          required:
+            - docType
+            - page
