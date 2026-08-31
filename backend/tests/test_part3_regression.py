@@ -33,6 +33,12 @@ def _decompose():
     return decompose_country_template("MY")
 
 
+def _has_any(text: str, *variants: str) -> bool:
+    """语言无关断言：MY 模板 2026-08-31 起为英文版（A/B 实测英文更优后上线），
+    但规则语义不变——中英任一命中即视为规则仍在。"""
+    return any(v in text for v in variants)
+
+
 def test_module_count_unchanged():
     d = _decompose()
     assert len(d["modules"]) == 29, f"expected 29 modules, got {len(d['modules'])}"
@@ -45,7 +51,7 @@ def test_country_global_text_excludes_part3():
     assert "# Part 2" in text
     assert "# Part 3" not in text, "country_global_text must end before # Part 3"
     # Verify Part 1.2 currency input-side rule retained
-    assert "千分位" in text and "MYR" in text
+    assert _has_any(text, "千分位", "thousands separator") and "MYR" in text
 
 
 def test_schema_descriptions_absorbed_2_2_rules():
@@ -57,18 +63,20 @@ def test_schema_descriptions_absorbed_2_2_rules():
     props = invoice_branch["properties"]
 
     total_tax_desc = props["totalTaxAmount"]["description"]
-    assert "语义优先" in total_tax_desc
-    assert "结构识别" in total_tax_desc
-    assert "严禁推算" in total_tax_desc
+    assert _has_any(total_tax_desc, "语义优先", "Semantic priority")
+    assert _has_any(total_tax_desc, "结构识别", "Structural recognition")
+    assert _has_any(total_tax_desc, "严禁推算", "Strictly forbidden estimation",
+                    "Strictly forbid")
 
     tax_summary_items = props["detailOfTaxSummary"]["items"]["properties"]
     tax_desc = tax_summary_items["tax"]["description"]
-    assert "语义优先" in tax_desc
-    assert "严禁推算" in tax_desc
+    assert _has_any(tax_desc, "语义优先", "Semantic priority")
+    assert _has_any(tax_desc, "严禁推算", "Strictly forbidden estimation",
+                    "Strictly forbid")
 
     line_items = props["detailOfGoodsOrServices"]["items"]["properties"]
     qty_desc = line_items["quantity"]["description"]
-    assert "单位列辨识" in qty_desc
+    assert _has_any(qty_desc, "单位列辨识", "Unit column identification")
     assert "PCS" in qty_desc  # the multi-unit hint
 
 

@@ -31,6 +31,40 @@ import sys
 import uuid as uuidlib
 from collections import defaultdict
 
+_KEY_RE = re.compile(r'^(\s*)([A-Za-z_][A-Za-z0-9_]*):(\s+)(.+)$')
+_BLOCK_INDICATORS = {"|", "|-", "|+", ">", ">-", ">+"}
+_ALREADY_SAFE_PREFIXES = ("'", '"', "|", ">", "[", "{", "&", "*")
+
+
+def _fix_unquoted_scalars(text: str) -> str:
+    """手写英文候选 yaml 常见单行纯量内嵌 ASCII `: `（如 "look for: 'X'"），
+    会被 YAML 解析器误判成新 mapping value。按行补引号（json.dumps 转义），
+    不改变解析出的字符串内容；块标量（`|-`/`>-`）体内的续行原样跳过。"""
+    out: list[str] = []
+    block_indent: int | None = None
+    for raw_ln in text.splitlines():
+        if block_indent is not None:
+            indent = len(raw_ln) - len(raw_ln.lstrip(" "))
+            if raw_ln.strip() == "" or indent > block_indent:
+                out.append(raw_ln)
+                continue
+            block_indent = None
+        m = _KEY_RE.match(raw_ln)
+        if not m:
+            out.append(raw_ln)
+            continue
+        indent, key, sep, value = m.groups()
+        value = value.rstrip()
+        if value in _BLOCK_INDICATORS:
+            block_indent = len(indent)
+            out.append(raw_ln)
+            continue
+        if value.startswith(_ALREADY_SAFE_PREFIXES):
+            out.append(raw_ln)
+            continue
+        out.append(f"{indent}{key}:{sep}{json.dumps(value, ensure_ascii=False)}")
+    return "\n".join(out) + "\n"
+
 sys.path.insert(0, ".")
 
 from app.core.database import SessionLocal                     # noqa: E402
@@ -57,14 +91,15 @@ def load_candidate_yaml(path: str, country: str) -> tuple[str, dict]:
     做法是把候选文件复制进临时目录并临时改写 template_loader 的仓库根——
     比手工复刻 marker 切分逻辑可靠（那套逻辑有优先级与截断规则）。
     """
-    import shutil
     import tempfile
 
     from app.ocr_optimizer.service import template_loader
     from app.ocr_optimizer.service.preset_init import build_v1_prompt
 
     with tempfile.TemporaryDirectory() as td:
-        shutil.copy(path, pathlib.Path(td) / f"{country}_invoice_prompt.yaml")
+        fixed = _fix_unquoted_scalars(pathlib.Path(path).read_text(encoding="utf-8"))
+        (pathlib.Path(td) / f"{country}_invoice_prompt.yaml").write_text(
+            fixed, encoding="utf-8")
         orig = template_loader._REPO_ROOT
         template_loader._REPO_ROOT = pathlib.Path(td)
         try:
@@ -113,6 +148,9 @@ def main() -> None:
     ap.add_argument("--repeats", type=int, default=2)
     ap.add_argument("--jitter-band", type=float, default=0.02,
                     help="配对差 ≤ 此值视为持平")
+    ap.add_argument("--exclude-prefix", default=None,
+                    help="逗号分隔的 doc_id 前缀，从全池中剔除（如已被别的脚本"
+                         "单独测过、避免重复消耗）")
     args = ap.parse_args()
 
     db = SessionLocal()
@@ -126,8 +164,12 @@ def main() -> None:
 
     golden = golden_loop.load_golden(args.country)
     core = set(golden_loop.compute_core_fields(args.country))
+    excluded = [p.strip() for p in args.exclude_prefix.split(",")] if args.exclude_prefix else []
     pool = [d for d, e in golden.items()
-            if core <= golden_loop._top_keys(e["gt"])]
+            if core <= golden_loop._top_keys(e["gt"])
+            and not any(d.startswith(p) for p in excluded)]
+    if excluded:
+        print(f"已剔除 {len(excluded)} 份前缀命中的样本: {excluded}")
     gts = {str(uuidlib.UUID(d)): golden[d]["gt"] for d in pool}
     ids = [uuidlib.UUID(d) for d in pool]
 
