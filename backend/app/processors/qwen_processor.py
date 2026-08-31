@@ -65,7 +65,8 @@ _TEXT_LAYER_BLOCK = """
 ━━━━━━ 文本层结束 ━━━━━━
 """
 _RENDER_DPI = 150
-# qwen3-vl-plus 实测 ~34s/页；16 页单次调用可达 ~9 分钟，故超时同步放宽到 10 分钟。
+# qwen3-vl-plus 实测 ~34s/页；16 页单次调用可达 ~9 分钟，默认超时 10 分钟
+# （现由 config.QWEN_HTTP_TIMEOUT_S 统一管理，此常量仅作 settings 不可用时的兜底）。
 # 注意：前端 OCR_TIMEOUT（api-client.ts）若仍为 5 分钟，长文档在 UI 侧会先超时，
 # 但后端会跑完并落库——开放平台走 HTTP 直连，不受前端超时影响。
 _HTTP_TIMEOUT = 600.0
@@ -154,13 +155,21 @@ class QwenProcessor(DocumentProcessor):
         # 单 key 配置下池里只有一个成员，行为与旧实现一致。
         from app.processors.key_pool import get_pool
 
+        # 硬超时统一走 config（QWEN_HTTP_TIMEOUT_S），与 gemini 的
+        # GEMINI_HTTP_TIMEOUT_S 同一套治理；settings 异常时退回模块常量。
+        try:
+            from app.core.config import get_settings as _gs
+            http_timeout = float(_gs().QWEN_HTTP_TIMEOUT_S)
+        except Exception:  # pragma: no cover
+            http_timeout = _HTTP_TIMEOUT
+
         with get_pool("qwen").lease() as lease:
             logger.info("Calling Qwen model: %s (key #…%s)", model, lease.key[-6:])
             resp = httpx.post(
                 f"{self.base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {lease.key}"},
                 json=body,
-                timeout=_HTTP_TIMEOUT,
+                timeout=http_timeout,
             )
             # raise_for_status 必须在 with 内：429 要被池看见才能触发熔断，
             # 放到块外等于把限流信号吞掉，池永远以为这个账号是健康的。

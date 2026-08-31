@@ -272,7 +272,10 @@ def _run_with_failover(
     attempts = chain if failover_on else chain[:1]
     last_exc: BaseException | None = None
 
+    import time as _time
+
     for i, (proc, model) in enumerate(attempts):
+        t0 = _time.time()
         try:
             raw, structured, actual_model, tokens = _run_processor(
                 storage_path=storage_path,
@@ -283,8 +286,8 @@ def _run_with_failover(
             )
             if i > 0:
                 logger.warning(
-                    "主力失败后由备份 %s 完成识别（原因：%s）",
-                    proc, str(last_exc)[:160],
+                    "主力失败后由备份 %s 完成识别（耗时 %.1fs；原因：%s）",
+                    proc, _time.time() - t0, str(last_exc)[:160],
                 )
             return raw, structured, actual_model, tokens, proc
         except Exception as exc:  # noqa: BLE001
@@ -292,9 +295,12 @@ def _run_with_failover(
             is_last = i == len(attempts) - 1
             if is_last or not is_provider_failure(exc):
                 raise
+            # 记录本次尝试耗时：2026-08-31 事故里一段 8 分钟的服务端静默期
+            # 因失败日志不带时长而无法归因——超时类故障必须能从日志读出
+            # 「这次尝试到底占了多久」。
             logger.warning(
-                "%s 调用失败（provider 级），切备份 %s 重试：%s",
-                proc, attempts[i + 1][0], str(exc)[:160],
+                "%s 调用失败（provider 级，本次尝试 %.1fs），切备份 %s 重试：%s",
+                proc, _time.time() - t0, attempts[i + 1][0], str(exc)[:160],
             )
 
     raise last_exc if last_exc else RuntimeError("empty processor chain")

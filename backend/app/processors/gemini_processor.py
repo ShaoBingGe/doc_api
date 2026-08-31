@@ -223,6 +223,16 @@ class GeminiProcessor(DocumentProcessor):
         param_config = GeminiLMModelParams(**merged).model_dump(exclude_none=True)
         param_config["system_instruction"] = [types.Part.from_text(text=instruction)]
 
+        # 单次调用硬超时（config.GEMINI_HTTP_TIMEOUT_S）。genai.Client 默认无
+        # HTTP 超时，上游挂起会把线程无限占死（2026-08-31 实测静默 8 分钟）。
+        # 必须**按请求**传 http_options 而不是构造 client 时传——key_pool 的
+        # client 按 key 缓存复用，构造期参数改不动已缓存的实例。
+        # 超时抛 httpx.ReadTimeout（类名含 Timeout）→ 提取链路的
+        # is_provider_failure 命中 → 立即切 qwen 备份。
+        from app.core.config import get_settings as _gs
+        param_config["http_options"] = types.HttpOptions(
+            timeout=int(_gs().GEMINI_HTTP_TIMEOUT_S * 1000))  # 单位：毫秒
+
         generate_config = types.GenerateContentConfig(**param_config)
 
         # 每次调用向池租一个 key：with 块内失败会按错误类型反馈给池

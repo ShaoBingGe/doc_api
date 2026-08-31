@@ -70,6 +70,16 @@ class Settings(BaseSettings):
     # （配额耗尽 / 网络不可达 / 鉴权失败）；文档级错误（400 坏文件）不重试——
     # 换个模型同样会失败，只是把一次失败变成两次、延迟翻倍。
     ENABLE_BACKUP_FAILOVER: bool = True
+    # ── 单次模型调用硬超时（2026-08-31 事故）────────────────────────────────
+    # genai.Client 默认**无 HTTP 超时**：Gemini 上游 503（Deadline expired）
+    # 期间实测一条同步请求在服务端静默挂起 8+ 分钟、无任何处理器日志，直到
+    # Caddy 600s read_timeout 先行掐断客户端（502）。超时缺失还意味着异步
+    # worker 线程可能被一次调用永久占死。这里给两个 provider 各设硬上限：
+    # 超时抛出的异常含 "timeout" 字样 → is_provider_failure 命中 → 立即切备份。
+    #   gemini：单页实测 5–27s、25 页大文档实测 ~209s → 300s 上限留足余量；
+    #   qwen  ：qwen3-vl-plus 实测 ~34s/页、16 页单次调用可达 ~9 分钟 → 600s。
+    GEMINI_HTTP_TIMEOUT_S: float = 300.0
+    QWEN_HTTP_TIMEOUT_S: float = 600.0
     # ── schema 硬约束开关（docs/plan-schema-not-passed-to-model.md）──────────
     # True 时提取链路（开放平台 / 工作区 / 迭代评测）把 active 版本的
     # composed_schema 作为 response_schema 随调用传给模型（Gemini 硬约束输出
