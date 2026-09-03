@@ -55,7 +55,7 @@ prompt_template:
     Delivery orders, packing lists, statements of account, terms pages, and blank pages attached after an invoice, if **they do not constitute an independent payment voucher**, should be marked as `docType: other` (outputting only docType and page); do not merge them into the invoice, nor omit them from output.
 
     The following contents, even if they contain card-swiping terms, must be classified as `other`, and **must not** be treated as receipts:
-    - **Single transaction records in bank card / e-wallet statements**: Characterized by having only a single line of "Date + Merchant Name + Amount", amounts often carrying a minus sign (such as `-RM 100.00`) or marked with `Transaction Date:`, with **no merchant header section, no line items, no total row, and no document number**. It is a single line of a statement, not a voucher issued by a merchant.
+    - **Single transaction records in bank card / e-wallet statements**: Characterized by having only a single line of "Date + Merchant Name + Amount", amounts often carrying a minus sign (such as `-RM 100.00`) or marked with `Transaction Date:`, with **no merchant header section, no line items, no total row, and no document number**. It is a single line of a statement, not a voucher issued by a merchant. (**Exception**: a phone screenshot of that payment's own **detail screen** is `paymentScreenshot`, see §1.1.2 — a row inside a list is not the same thing as a dedicated detail screen.)
     - **Statements of Account / Transaction History Tables**: Full pages of tabulated multi-row histories; even if each row has an amount, they are not split into multiple vouchers.
 
     ### 1.0.6 Inventory Before Output
@@ -89,7 +89,8 @@ prompt_template:
       - No independent tax breakdown table.
     - **Handwritten / preprinted cash receipt books**: Cash receipts with preprinted tables and manually filled amounts are classified as receipts; **do not classify them as invoices just because they have a serial number**. Identification features: heading `CASH BILL` / `BILL` / `RESIT` / `INVOICE` (preprinted), preprinted serial number in the top right corner (e.g., `No. 10206`); column headers `Butir-Butir / Particulars`, `Kuantiti / Quantity`, `Harga / Unit Price`, `Nilai / Amount`; bottom signature section `Terima Oleh / Received By`, `Disahkan Oleh`; handwritten content, no tax ID, no buyer company info, no tax breakdown.
       - Criterion: A true receipt must possess "**merchant header + at least one consumption line item + a total amount**"; lacking any of these three means it is not a receipt (mostly other, see §1.0.5).
-    - **other**: Contracts, order confirmations, **quotations**, statements of account, billing logs, and other documents that do not belong to invoices/receipts (see §1.0.5, §1.1.1).
+    - **paymentScreenshot**: A phone screenshot of a **single completed payment's detail screen** (toll card / bank card / e-wallet / third-party payment platform). See §1.1.2 — this type has its own reduced field set.
+    - **other**: Contracts, order confirmations, **quotations**, statements of account, billing logs, and other documents that do not belong to invoices/receipts/paymentScreenshots (see §1.0.5, §1.1.1).
 
     ### 1.1.1 Quotations Must Be Classified as Other (Preventing Double Accounting)
     **Documents titled `SEBUTHARGA` / `SEBUT HARGA` / `QUOTATION` / `QUOTE` / `报价单` must be classified as `docType: other`** (outputting only docType and page), even if they possess all invoice elements such as supplier, customer, line items, amounts, and even seals/signatures.
@@ -103,6 +104,24 @@ prompt_template:
     - **Counter-evidence**: If the same page contains another explicit `No. Invois` / `Invoice No.` and the title is `INVOIS` / `INVOICE`, then it is an invoice and this rule does not apply.
 
     **Relationship with multi-page merging**: Quotation pages and invoice pages, **even if content is identical and reference numbers match** (commonly identical `Rujukan Kami`), are **not** a multi-page single document — different titles mean two separate documents, each forming its own record (the quotation record is other). See §1.0.3 and §1.0.7 for details.
+
+    ### 1.1.2 Payment Screenshots (`docType: paymentScreenshot`)
+    A **phone screenshot of one completed payment's own detail screen** is classified as `docType: paymentScreenshot` — a type parallel to invoice / receipt / other. It records the fact "this amount left the account on this date"; it is not a merchant-issued voucher and is not meant to be reconstructed into an invoice.
+
+    **All three conditions must hold at once**; if any one fails, do not use this type:
+    1. **It is a portrait phone screenshot** — screen capture proportions with phone chrome present (status bar with clock / signal / battery, in-app title bar, or bottom navigation), rather than a photograph of a printed slip.
+    2. **It comes from a payment channel** — a toll card (Touch 'n Go, RFID, PayDirect, SmartTAG), or a credit card / debit card / bank app / e-wallet / third-party payment platform (DuitNow, Wise, GX, GrabPay, Boost, ShopeePay, etc.).
+    3. **It shows exactly one payment** — the screen is the detail view of a **single** transaction (one prominent amount plus that transaction's attribute rows). A scrollable list containing several transactions is **not** this type; it stays `other` per §1.0.5.
+
+    Typical layout to recognise: a large amount at the very top (`RM 27.00`, `-RM4.59`, `42.43 MYR`, `RM24.08`), a status word (`Paid` / `Successful` / `Settled` / `is successful`), then labelled attribute rows (`Transaction Type`, `Payment Details`, `Payment Method`, `Date/Time`, `Merchant`, `Transaction No.`, `Ref No.`, `Wallet Ref`, `Card ending in`).
+
+    **Output exactly these fields and nothing else**: `docType`, `page`, `invoiceDate`, `currency`, `totalAmount`.
+    Even when merchant name, card number, reference numbers, exchange rate or toll entry/exit points are plainly visible, **do not output them** — this type deliberately carries only date / currency / amount.
+    - `totalAmount`: the one prominent amount. **Output it as a positive number** — a minus sign in a wallet or card app marks "deducted from balance", which is the normal direction for a payment and is **not** a Credit Note; the §1.1 Credit Note sign rule does not apply here (`-RM4.59` → `4.59`, `-RM816.00` → `816.00`).
+    - `currency`: read from the amount's own prefix/suffix (`RM` / `MYR` → `MYR`). When a foreign currency and a MYR amount both appear (e.g. `USD 5.83` alongside `RM24.08`), take **MYR** and the MYR amount, per §1.2.
+    - `invoiceDate`: the transaction date on screen, output as `YYYY-MM-DD`. When a full timestamp is shown (`15/07/2026 16:43:28`, `6 Jul 2026 - 1:54 PM`), take only the date part. When both a transaction date and a later settlement/completion date appear, take the **transaction** date.
+
+    > The traceable serial number for this type is **not read from the screen** — the platform stamps `sourceFileHash` onto every record server-side. Do not attempt to output an invoice number.
 
     ## 1.2 Content and Format Uniform Requirements
     - **Language**: MY documents are predominantly in English, with some or **entire pages** using Bahasa Malaysia (Malay). **Keep field values in the original document without translation** — Malay content is output as-is (such as product name `NASI LEMAK BUNGKUS`, merchant name `KEDAI RUNCIT MAJU`), while the output JSON **field names** remain English schema fields. For Malay title-to-document type rulings, see §1.36; field-level label mappings are in each field's description.
@@ -141,6 +160,7 @@ prompt_template:
 
     ## 1.4 Required Fields and Missing Handling
     - **invoice / receipt types**: `docType`, `invoiceType`, `page`, and `currency` must be output; if the document lacks currency, infer based on MY context (defaulting to MYR).
+    - **paymentScreenshot type**: `docType`, `page`, `invoiceDate`, `currency`, and `totalAmount` must all be output — if any of the three values cannot be read off the screen, the document does not qualify as a payment screenshot (re-judge it under §1.1 / §1.0.5 instead of guessing a value).
     - **other type**: Only `docType` and `page` must be output.
     - **Missing information**: Fields that cannot be found must be left unoutput; **do not infer, do not fabricate**.
     - **Strictly forbid using 0 to represent "absence"**: When the document **has no tax row**, `totalTaxAmount` and `detailOfTaxSummary` must be **left blank / unoutput**, do not fill in `0` — `0` is an assertion that "tax amount is truly zero", which is completely different from "the document never mentioned tax".
@@ -454,6 +474,49 @@ prompt_template:
             - invoiceType
             - page
             - currency
+        - type: OBJECT
+          properties:
+            docType:
+              type: "STRING"
+              description: |-
+                Payment screenshot: a portrait phone screenshot of ONE completed payment's own
+                detail screen (toll card / bank card / e-wallet / third-party payment platform).
+                All three conditions of Part 1.1.2 must hold; a list of several transactions is
+                not this type (that stays `other`). This branch carries only date / currency /
+                amount — no merchant, card, reference or line-item fields, even if visible.
+              enum:
+                - paymentScreenshot
+            page:
+              type: "ARRAY"
+              description: "List of page numbers in the document (starting from 1)."
+              items:
+                type: "NUMBER"
+            invoiceDate:
+              type: "STRING"
+              description: |-
+                Transaction date shown on the payment screen, output as YYYY-MM-DD.
+                From a full timestamp (`15/07/2026 16:43:28`, `6 Jul 2026 - 1:54 PM`) take only
+                the date part. If both a transaction date and a later settlement/completion date
+                appear, take the transaction date.
+            currency:
+              type: "STRING"
+              description: |-
+                ISO 4217 code read from the amount's own prefix/suffix (`RM` / `MYR` → MYR).
+                When a foreign currency and a MYR amount both appear, take MYR (see Part 1.2).
+            totalAmount:
+              type: "NUMBER"
+              description: |-
+                The single prominent amount on the screen (total actually paid, tax inclusive).
+                **Output as a positive number**: a minus sign in a wallet/card app means
+                "deducted from balance", which is the normal direction of a payment and is NOT a
+                Credit Note — the Credit Note sign rule does not apply to this type
+                (`-RM4.59` → 4.59, `-RM816.00` → 816.00).
+          required:
+            - docType
+            - page
+            - invoiceDate
+            - currency
+            - totalAmount
         - type: OBJECT
           properties:
             docType:

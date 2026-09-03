@@ -197,6 +197,10 @@ def create_task(
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     chash = xcache.content_hash(file_bytes)
+    # 没传 fileHash 时用服务端自算的内容哈希兜底——sourceFileHash 是每条记录的
+    # 可定位标识（paymentScreenshot 直接拿它当流水号），留空会失去唯一键。
+    # 与同步路径同一处理；传了就照回，不覆盖。
+    file_hash = file_hash or chash
 
     # 结果缓存命中：仍然建任务行、仍然发 taskId（对接方的流程不变），
     # 但直接建成 COMPLETED —— 他们第一次轮询就能拿到结果，零模型调用。

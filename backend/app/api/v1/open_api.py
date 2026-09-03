@@ -235,6 +235,10 @@ async def analyze_document(
     # 15 分钟内直接复用上次结果，省掉整次模型调用。命中时 traceId 与
     # sourceFileHash 会被改写成本次请求的值。
     chash = xcache.content_hash(file_bytes)
+    # 对接方没传 fileHash 时用服务端自算的内容哈希兜底：sourceFileHash 是
+    # 每条记录的可定位标识（paymentScreenshot 类型直接拿它当流水号，
+    # 见国家模板 §1.1.2），留空会让这类记录失去唯一键。传了就照回，不覆盖。
+    file_hash = file_hash or chash
     cached = xcache.lookup(
         db, client_id=client.client_id, template_id=template_id, chash=chash,
         trace_id=trace_id, source_file_hash=file_hash,

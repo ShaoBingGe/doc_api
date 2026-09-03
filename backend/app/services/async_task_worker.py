@@ -85,7 +85,7 @@ def _finalize_completed(db, task: AsyncTask, api_def, structured, doc_pages: int
         structured,
         trace_id=task.id[:16].replace("-", ""),
         doc_pages=doc_pages,
-        source_file_hash=task.file_hash,
+        source_file_hash=task.file_hash or task.content_hash or "",
         description=(
             mapper.TRUNCATED_DESC.format(limit=page_limit)
             if page_limit and doc_pages > page_limit

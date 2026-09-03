@@ -222,17 +222,36 @@ def _rows(value: Any, fields: list[str]) -> list[dict[str, str]]:
 #: 这里做确定性兜底，与模型无关，两台服务器结果一致。
 _OTHER_KEPT_FIELDS = frozenset({"docType", "page", "sourceFileHash"})
 
+#: `docType: paymentScreenshot` 允许保留的字段（国家模板 §1.1.2）。
+#: 这类记录只回答「某日从账户扣了多少钱」，刻意**不**承载商户/卡号/参考号——
+#: 屏幕上虽然常有这些信息，但把它们放出去会让下游误当成一张可入账的票据。
+#: 与 other 同理由做确定性兜底：模型不一定守规矩（schema 只是约束，不是保证），
+#: 这里按字段白名单裁剪，两台服务器、两个 provider 结果一致。
+#: 「流水号」用 sourceFileHash（平台按文件注入，模型不产出），不取屏上参考号。
+_PAYMENT_SCREENSHOT_KEPT_FIELDS = frozenset({
+    "docType", "page", "sourceFileHash", "invoiceDate", "currency", "totalAmount",
+})
+
 
 def _strip_non_billing(entity: dict) -> dict:
     """other 记录只保留 docType / page / sourceFileHash，其余一律丢弃。"""
     return {k: v for k, v in entity.items() if k in _OTHER_KEPT_FIELDS}
 
 
+def _strip_payment_screenshot(entity: dict) -> dict:
+    """paymentScreenshot 只保留 日期 / 币种 / 金额 / 流水号（+docType、page）。"""
+    return {k: v for k, v in entity.items()
+            if k in _PAYMENT_SCREENSHOT_KEPT_FIELDS}
+
+
 def map_entity(entity: dict, *, source_file_hash: str = "") -> dict:
     """一条扁平票据 → 一个 {header, detail} 对象。"""
     enriched = apply_aliases(entity)
-    if str(enriched.get("docType") or "").strip().lower() == "other":
+    doc_type = str(enriched.get("docType") or "").strip().lower()
+    if doc_type == "other":
         enriched = _strip_non_billing(enriched)
+    elif doc_type == "paymentscreenshot":
+        enriched = _strip_payment_screenshot(enriched)
     # sourceFileHash 由调用方注入（模型不产出它）；实体自带则以自带为准
     enriched.setdefault("sourceFileHash", source_file_hash)
     if not enriched.get("sourceFileHash"):
@@ -313,6 +332,11 @@ def has_no_billing_entity(payload: dict) -> bool:
     真正的「文档里确实没有票据」（如整份是银行对账单）也会落进来——这是
     刻意的：对调用方而言，「没有票据可取」本就该是一个明确的失败信号，
     而不是一个空壳成功。
+
+    **`paymentScreenshot` 算「取到了」**（判据是 `!= other`，不是白名单）：
+    它带着日期/币种/金额三个真实值，对报销流程是可用结果，不该被判成
+    A0704/4009。整份文档只有支付截图时必须返回成功——这正是引入该类型
+    的目的（国家模板 §1.1.2）。
     """
     entities = payload.get("data") or []
     if not entities:
