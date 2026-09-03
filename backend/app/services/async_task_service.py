@@ -30,7 +30,11 @@ from app.core.config import get_settings
 from app.models.async_task import AsyncTask, TaskStatus
 from app.models.open_api_client import OpenApiClient
 from app.services import extraction_cache as xcache
-from app.services.upload_validation import InvalidUpload, validate_upload
+from app.services.upload_validation import (
+    InvalidUpload,
+    effective_ext,
+    validate_upload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -221,8 +225,10 @@ def create_task(
         logger.info("异步任务 %s 直接命中结果缓存，未调用模型", task_id)
         return task
 
-    # 先落盘再建行：反过来的话，建行成功而落盘失败会留下永远处理不了的任务
-    spool = _spool_dir() / f"{task_id}{Path(filename or '').suffix or '.bin'}"
+    # 先落盘再建行：反过来的话，建行成功而落盘失败会留下永远处理不了的任务。
+    # 后缀取**真实内容**而非上传文件名——处理器按后缀推 MIME，后缀错了
+    # 会让模型收到错误的 Content-Type 并回 400（与同步路径同一处理）。
+    spool = _spool_dir() / f"{task_id}{effective_ext(file_bytes, filename or '') or '.bin'}"
     try:
         spool.write_bytes(file_bytes)
     except OSError as exc:

@@ -217,7 +217,14 @@ def _validate_extension(filename: str) -> None:
 def _save_temp(file_bytes: bytes, filename: str) -> str:
     temp_dir = Path(settings.UPLOAD_DIR) / "tmp"
     temp_dir.mkdir(parents=True, exist_ok=True)
-    safe = f"{uuid.uuid4().hex}_{Path(filename).name}"
+    # 后缀按**真实内容**命名，不照抄上传的文件名：处理器按后缀推 MIME
+    # （gemini mime_map / qwen），后缀错了模型就会收到错误的 Content-Type
+    # 并回 400。改错后缀的手机截图很常见，受理期已放行，这里必须纠正。
+    from app.services.upload_validation import effective_ext
+
+    stem = Path(filename or "upload").stem or "upload"
+    ext = effective_ext(file_bytes, filename) or Path(filename or "").suffix
+    safe = f"{uuid.uuid4().hex}_{stem}{ext}"
     dest = temp_dir / safe
     dest.write_bytes(file_bytes)
     return str(dest)
