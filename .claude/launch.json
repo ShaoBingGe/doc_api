@@ -9,6 +9,7 @@
         "dev"
       ],
       "port": 5173,
+      "autoPort": true,
       "cwd": "/Users/shaobin/Desktop/project/API_anything/frontend"
     },
     {
