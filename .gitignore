@@ -115,3 +115,7 @@ piao_sheng_shi.pem
 sample_chinkin/
 sample_chinkin_results/
 sample_chinkin_results.zip
+
+# 支付截图样本与识别结果（真实卡号后四位、Transaction ID、DuitNow Ref
+# No 等 PII，同策略不入库）
+payment/
