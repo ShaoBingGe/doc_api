@@ -1,12 +1,10 @@
-id: jp-v8
-remark: 精简合并版 — v3 骨架 + v6/v5 已验证修正（但し書き不吞明细表、taxCategory 票面原词、billToName 剥敬称），删除正文与 schema 的重复表述；字段结构与 v3 完全一致；接入平台版（2026-08-28）：改名 JP_invoice_prompt.yaml、补 Part 1/2/3 标记与 locked_fields，正文规则一字未动（+100~187% 的验证结论仍适用，见 docs/experiment-jp-schema-ab.md）
+id: jp-v9
+remark: "输出契约对齐版（2026-09-03，最小改动口径）—— 只动契约层，字段总数与 jp-v8 持平（26），避免注意力摊薄：①invoiceType 改用全平台统一词表（Commercial Invoice/Proforma Invoice/Credit Note/Tax Invoice），不再用 Invoice/Receipt 与 docType 重复表达；見積書与適格請求書一律 Commercial Invoice（业务口径已拍板，不升格 Tax Invoice / 不归 Proforma）。②补 originalInvoiceReferences——全球输出契约 Part 3.6 对 Credit Note 的强制要求，jp-v8 缺失属契约违规。③删除 mapper 不承接、因而被静默丢弃的 paymentDueInDays 与顶层 taxRate；shipmentNumber 同属被丢弃字段，更名 deliveryOrderNumber 后落入 BUSSINESS_FIELDS 才能真正送达对接方。④拆出 billFromBusinessRegistrationNumber（法人番号）与 T+13 登録番号分列，同 MY 的 TIN/SSM 分列。⑤补 billTo/billFromCountryCode 与 salesOrderNumber，顶层字段与 MY 完全对齐（29↔29）。⑥見積書新增独立 docType='quotation'：不判 invoice（避免「見積書＋請求書」同额重复计账），但与 other 不同——字段照常全部提取输出，是否入账交下游按 docType 决定；mapper 无需改动，quotation 走正常映射通道不被裁剪。明细行子字段保持 7 个不变。识别规则（和暦/登録番号/敬称剥离/但し書き/税种原词等）一字未动。基线 jp-v8 见 template_backups/JP_invoice_prompt.jp-v8.20260903.yaml"
 locked_fields:
 - invoiceNumber
 - invoiceDate
 - billFromName
 - billFromTaxIdentificationNumber
-template_config:
-  fill_empty_items: false
 prompt_template:
   prompt_format: |-
     # 任务
@@ -48,8 +46,17 @@ prompt_template:
     【分类 —— docType 由票面标题决定】
     - receipt：領収書/領収証/領収/受領書/レシート/ご利用証明書/ご利用証明/利用明細書/
       ご利用明細書/明細書/RECEIPT/DETAILED STATEMENT；无标题的零售小票也是 receipt。
-    - invoice：請求書/御請求書/ご請求書/請求明細書/見積書/口座振替のお知らせ/INVOICE。
-    - 复合标题看主标题（靠前/更大的词）：「請求書 兼 領収書」→ invoice；「納品書(領収書)」→ receipt。
+    - invoice：請求書/御請求書/ご請求書/請求明細書/口座振替のお知らせ/INVOICE。
+    - quotation：見積書/御見積書/お見積書/見積応諾書/ESTIMATE/QUOTATION —— 成交前的要约，
+      **不是付款凭证，不得判 invoice**（同一 PDF 里「見積書＋請求書」金额常相同，判 invoice
+      会让下游把同一笔钱计两次）。但**字段照常全部提取并输出**（与 other 的区别就在这里），
+      是否入账由下游按 docType 自行决定。
+    - 复合标题看主标题（靠前/更大的词）：「請求書 兼 領収書」→ invoice；「納品書(領収書)」→ receipt；
+      「見積書 兼 請求書」→ 主标题是見積書就判 quotation。
+    - docType 与 invoiceType 是**两件事**：docType 区分「請求書 vs 領収書 vs 非票据」，
+      invoiceType 用**全平台统一词表**（Commercial Invoice / Credit Note / …），
+      两者不重复表达同一个区分——請求書与領収書的 invoiceType **都是** 'Commercial Invoice'，
+      只有赤伝/返金/合计为负才是 'Credit Note'。
 
     【通用规则】
     - 保持票面原文，不翻译；票面有的尽量抽，没有的不输出、不推断。
@@ -95,10 +102,19 @@ prompt_template:
         properties:
           docType:
             type: STRING
-            description: 票据类型，按票面标题判定：invoice（請求書类）或 receipt（領収書・レシート类）
+            description: |-
+              票据类型，按票面标题判定：
+                - invoice：請求書类（請求書/御請求書/ご請求書/請求明細書/口座振替のお知らせ/INVOICE）
+                - receipt：領収書・レシート类
+                - quotation：**見積書类**（見積書/御見積書/お見積書/見積応諾書/ESTIMATE/QUOTATION）。
+                  見積書是成交前的要约、不是付款凭证，**不得判 invoice**——否则同一个 PDF 里
+                  「見積書 + 請求書」金额相同，下游会把同一笔钱计两次。
+                  但它与 other 不同：**字段照常全部提取**（金额/日期/双方/明细行都要输出），
+                  下游按 docType=quotation 自行决定是否入账。
             enum:
             - invoice
             - receipt
+            - quotation
           page:
             type: ARRAY
             description: 所在页码列表（从1开始），跨页票据列出全部页码，如 [2, 3, 4]。
@@ -106,11 +122,20 @@ prompt_template:
               type: NUMBER
           invoiceType:
             type: STRING
-            description: docType=invoice 填 'Invoice'；docType=receipt 填 'Receipt'；赤伝/返金或合计为负填 'Credit Note'。
+            description: |-
+              发票类型（**枚举值全平台统一，与 MY 等其他国家同一套词表**，不因语言改写）：
+                - 'Commercial Invoice'：**JP 的默认且几乎唯一取值**。請求書、領収書/レシート、
+                  見積書（docType=quotation）、適格請求書一律归此类——docType 已经区分了单据大类，
+                  本字段不重复表达那个区分；適格請求書（登録番号 T+13）**不升格**为
+                  'Tax Invoice'，見積書**不归**为 'Proforma Invoice'（业务口径已拍板）。
+                - 'Credit Note'：仅赤伝/返金/取消，或 totalAmount < 0 时取此值。
+                - 'Proforma Invoice' / 'Tax Invoice'：**JP 不使用**这两个值，
+                  它们只为与其他国家共用同一套词表而保留。
             enum:
-            - Invoice
-            - Receipt
+            - Commercial Invoice
+            - Proforma Invoice
             - Credit Note
+            - Tax Invoice
           nameOfInvoice:
             type: STRING
             description: |-
@@ -137,9 +162,6 @@ prompt_template:
               付款截止日 YYYY-MM-DD。票面明写「お支払期限」「振込期限」直接取；只写付款条件时结合
               invoiceDate 换算：「月末締め翌月末払い」→ 开票月次月最后一天（2025-05-31 → 2025-06-30）、
               「翌月NN日払い」→ 次月NN日、「〜日以内」→ invoiceDate+N天。抬头条件适用于该請求書全部记录。
-          paymentDueInDays:
-            type: NUMBER
-            description: 仅当付款条件以天数表述时输出该天数。
           totalNetAmount:
             type: NUMBER
             description: 全票不含税合计（税抜金額）。票面分多部分时求和。
@@ -149,9 +171,6 @@ prompt_template:
           totalTaxAmount:
             type: NUMBER
             description: 消費税合计。8% 与 10% 并存时输出两档之和。取票面明示税额，严禁用总额反推。
-          taxRate:
-            type: STRING
-            description: 整单单一税率时填 `数字%`；多档并存时不填（在 detailOfTaxSummary 分档）。
           currency:
             type: STRING
             description: ISO 4217 代码。日文票据无外币标记时输出 "JPY"。
@@ -168,7 +187,10 @@ prompt_template:
             description: 收票方完整地址（票面有才输出），含〒邮编。
           billToCountry:
             type: STRING
-            description: 收票方国家代码，日本输出 "JP"。
+            description: 收票方所在国家名称。地址在日本国内（含〒邮编、都道府県）时输出 "Japan"；票面明确写明其他国家时按票面输出。
+          billToCountryCode:
+            type: STRING
+            description: 收票方国家的 ISO 3166-1 alpha-2 代码，与 billToCountry 同源：日本 → "JP"。billToCountry 为空时本字段也留空，不要凭「日文票据」默认填 JP（收票方可能是境外公司）。
           billToTaxIdentificationNumber:
             type: STRING
             description: 收票方的登録番号/法人番号（票面明确标注才输出）。
@@ -190,16 +212,25 @@ prompt_template:
               不可留空。③单独的电话/FAX/URL 不得作为此字段（只有 TEL 无地址时填店铺名）。
           billFromCountry:
             type: STRING
-            description: 开票方国家代码。日本票据输出 "JP"（不要 "Japan"）。
+            description: 开票方所在国家名称。日本国内开票方（有〒邮编/都道府県地址，或持 T+13 登録番号）输出 "Japan"。
+          billFromCountryCode:
+            type: STRING
+            description: 开票方国家的 ISO 3166-1 alpha-2 代码，与 billFromCountry 同源：日本 → "JP"。日本票据的开票方绝大多数在日本境内，可据登録番号/邮编判定。
           billFromTaxIdentificationNumber:
             type: STRING
             description: 開票方登録番号（T+13位，如 T8010001140514，票面带连字符则保留）或13位法人番号。查找「登録番号」「登録No.」标注。位数必须校验；一票多个登録番号时取 billFromName 对应法人的那个。
+          billFromBusinessRegistrationNumber:
+            type: STRING
+            description: 开票方的法人番号：**只在票面出现「法人番号」这四个字时**取紧随其后的编号，原样照抄。票面没有「法人番号」字样就留空。
           purchaseOrderNumber:
             type: STRING
-            description: 注文番号/PO番号（票面明确标注才输出）。
-          shipmentNumber:
+            description: 采购订单号：買い手側が発行した注文番号（「注文番号」「発注番号」「PO番号」「御注文№」标注）。票面明确标注才输出。
+          salesOrderNumber:
             type: STRING
-            description: 出荷番号/送り状番号（票面明确标注才输出）。
+            description: 销售订单号：売り手側の受注番号（「受注番号」「販売伝票番号」「オーダーNo.」标注）。票面明确标注才输出。与 purchaseOrderNumber 是买卖两侧的不同编号，按票面标签归位，标签分不清时宁可留空也不要猜填。
+          deliveryOrderNumber:
+            type: STRING
+            description: 出荷番号/送り状番号/納品書番号（票面明确标注才输出）。一票多个时全部列出、以分号 ";" 分隔写入同一字段。
           detailOfGoodsOrServices:
             type: ARRAY
             description: |-
@@ -261,8 +292,29 @@ prompt_template:
                   type: NUMBER
                   description: 票面明示的税额（「内消費税 690円」→690），不要用对象额×税率反算。换算时保留两位小数（→90.91）。
               required: []
+          originalInvoiceReferences:
+            type: ARRAY
+            description: |-
+              原始票据引用列表。**仅当 invoiceType='Credit Note'（赤伝/返金/取消）时提取**，
+              其他类型不输出本字段（不要给空数组）——全球输出契约 Part 3.6 的强制要求。
+              赤伝票面上标注的原請求書/原領収書信息（「元伝票番号」「対象請求書」
+              「〜の返金」等），每组作为一个元素输出。
+            items:
+              type: OBJECT
+              properties:
+                originalInvoiceCode:
+                  type: STRING
+                  description: 原票据代码/序列号，票面无此信息则不输出。
+                originalInvoiceNumber:
+                  type: STRING
+                  description: 原票据编号。
+                originalInvoiceDate:
+                  type: STRING
+                  description: 原票据开票日期，格式 YYYY-MM-DD。
+              required: []
         required:
         - docType
+        - invoiceType
         - page
         - currency
       - type: OBJECT
