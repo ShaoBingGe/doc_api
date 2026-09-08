@@ -1,0 +1,106 @@
+{
+ "A_jp-v8_旧": {
+  "per_field": {
+   "docType": [
+    40,
+    40
+   ],
+   "nameOfInvoice": [
+    26,
+    40
+   ],
+   "invoiceNumber": [
+    30,
+    36
+   ],
+   "invoiceDate": [
+    34,
+    40
+   ],
+   "currency": [
+    38,
+    40
+   ],
+   "totalAmount": [
+    40,
+    40
+   ],
+   "totalTaxAmount": [
+    22,
+    24
+   ],
+   "billFromName": [
+    32,
+    40
+   ],
+   "billFromTaxIdentificationNumber": [
+    40,
+    40
+   ],
+   "billToName": [
+    12,
+    38
+   ],
+   "page": [
+    38,
+    40
+   ]
+  },
+  "overall": 0.8421052631578947,
+  "count_ok": 40,
+  "n": 40,
+  "errors": 0
+ },
+ "B_jp-v9_新": {
+  "per_field": {
+   "docType": [
+    40,
+    40
+   ],
+   "nameOfInvoice": [
+    26,
+    40
+   ],
+   "invoiceNumber": [
+    29,
+    36
+   ],
+   "invoiceDate": [
+    35,
+    40
+   ],
+   "currency": [
+    38,
+    40
+   ],
+   "totalAmount": [
+    40,
+    40
+   ],
+   "totalTaxAmount": [
+    22,
+    24
+   ],
+   "billFromName": [
+    31,
+    40
+   ],
+   "billFromTaxIdentificationNumber": [
+    40,
+    40
+   ],
+   "billToName": [
+    13,
+    38
+   ],
+   "page": [
+    38,
+    40
+   ]
+  },
+  "overall": 0.8421052631578947,
+  "count_ok": 39,
+  "n": 40,
+  "errors": 0
+ }
+}
