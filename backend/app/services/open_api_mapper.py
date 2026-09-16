@@ -26,10 +26,12 @@ from typing import Any
 
 # ── 分组定义（键顺序 = 线上响应字段顺序）─────────────────────────────────────
 
+# remark 是在线上 12 个字段之后**追加**的（目前只有 paymentScreenshot 会填付款说明，
+# 见国家模板 §1.1.2），排在末位，既有字段顺序不变。
 BASIC_FIELDS = [
     "sourceFileHash", "docType", "nameOfInvoice", "invoiceType", "invoiceNumber",
     "invoiceCode", "invoiceDate", "totalNetAmount", "totalAmount", "totalTaxAmount",
-    "currency", "page",
+    "currency", "page", "remark",
 ]
 
 BILL_TO_FIELDS = [
@@ -223,13 +225,16 @@ def _rows(value: Any, fields: list[str]) -> list[dict[str, str]]:
 _OTHER_KEPT_FIELDS = frozenset({"docType", "page", "sourceFileHash"})
 
 #: `docType: paymentScreenshot` 允许保留的字段（国家模板 §1.1.2）。
-#: 这类记录只回答「某日从账户扣了多少钱」，刻意**不**承载商户/卡号/参考号——
+#: 这类记录只回答「某日从账户扣了多少钱、付的是什么」，刻意**不**承载商户/卡号/参考号——
 #: 屏幕上虽然常有这些信息，但把它们放出去会让下游误当成一张可入账的票据。
+#: 「付的是什么」只放屏幕自己给的那句说明（如 `Fare Usage - Parking`），放在
+#: header.basic.remark，不单独放商户名字段。
 #: 与 other 同理由做确定性兜底：模型不一定守规矩（schema 只是约束，不是保证），
 #: 这里按字段白名单裁剪，两台服务器、两个 provider 结果一致。
 #: 「流水号」用 sourceFileHash（平台按文件注入，模型不产出），不取屏上参考号。
 _PAYMENT_SCREENSHOT_KEPT_FIELDS = frozenset({
     "docType", "page", "sourceFileHash", "invoiceDate", "currency", "totalAmount",
+    "remark",
 })
 
 
@@ -239,7 +244,7 @@ def _strip_non_billing(entity: dict) -> dict:
 
 
 def _strip_payment_screenshot(entity: dict) -> dict:
-    """paymentScreenshot 只保留 日期 / 币种 / 金额 / 流水号（+docType、page）。"""
+    """paymentScreenshot 只保留 日期 / 币种 / 金额 / 付款说明（remark）/ 流水号（+docType、page）。"""
     return {k: v for k, v in entity.items()
             if k in _PAYMENT_SCREENSHOT_KEPT_FIELDS}
 

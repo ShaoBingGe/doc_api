@@ -115,11 +115,12 @@ prompt_template:
 
     Typical layout to recognise: a large amount at the very top (`RM 27.00`, `-RM4.59`, `42.43 MYR`, `RM24.08`), a status word (`Paid` / `Successful` / `Settled` / `is successful`), then labelled attribute rows (`Transaction Type`, `Payment Details`, `Payment Method`, `Date/Time`, `Merchant`, `Transaction No.`, `Ref No.`, `Wallet Ref`, `Card ending in`).
 
-    **Output exactly these fields and nothing else**: `docType`, `page`, `invoiceDate`, `currency`, `totalAmount`.
-    Even when merchant name, card number, reference numbers, exchange rate or toll entry/exit points are plainly visible, **do not output them** — this type deliberately carries only date / currency / amount.
+    **Output exactly these fields and nothing else**: `docType`, `page`, `invoiceDate`, `currency`, `totalAmount`, plus `remark` when the screen shows a payment description.
+    Even when merchant name, card number, reference numbers, exchange rate or toll entry/exit points are plainly visible, **do not output them as fields of their own** — this type deliberately carries only date / currency / amount and the payment's own description text.
     - `totalAmount`: the one prominent amount. **Output it as a positive number** — a minus sign in a wallet or card app marks "deducted from balance", which is the normal direction for a payment and is **not** a Credit Note; the §1.1 Credit Note sign rule does not apply here (`-RM4.59` → `4.59`, `-RM816.00` → `816.00`).
     - `currency`: read from the amount's own prefix/suffix (`RM` / `MYR` → `MYR`). When a foreign currency and a MYR amount both appear (e.g. `USD 5.83` alongside `RM24.08`), take **MYR** and the MYR amount, per §1.2.
     - `invoiceDate`: the transaction date on screen, output as `YYYY-MM-DD`. When a full timestamp is shown (`15/07/2026 16:43:28`, `6 Jul 2026 - 1:54 PM`), take only the date part. When both a transaction date and a later settlement/completion date appear, take the **transaction** date.
+    - `remark`: on this type it carries **the payment's description** — the text the screen itself uses to say what this payment was for, copied verbatim: the value of a `Payment Details` row, or else the descriptive caption shown with the amount. Lookup order and exclusions are in the field's schema description. When the screen has no such text, leave it unoutput — its absence never changes the docType decision.
 
     > The traceable serial number for this type is **not read from the screen** — the platform stamps `sourceFileHash` onto every record server-side. Do not attempt to output an invoice number.
 
@@ -160,7 +161,7 @@ prompt_template:
 
     ## 1.4 Required Fields and Missing Handling
     - **invoice / receipt types**: `docType`, `invoiceType`, `page`, and `currency` must be output; if the document lacks currency, infer based on MY context (defaulting to MYR).
-    - **paymentScreenshot type**: `docType`, `page`, `invoiceDate`, `currency`, and `totalAmount` must all be output — if any of the three values cannot be read off the screen, the document does not qualify as a payment screenshot (re-judge it under §1.1 / §1.0.5 instead of guessing a value).
+    - **paymentScreenshot type**: `docType`, `page`, `invoiceDate`, `currency`, and `totalAmount` must all be output — if any of the three values cannot be read off the screen, the document does not qualify as a payment screenshot (re-judge it under §1.1 / §1.0.5 instead of guessing a value). `remark` (the payment description) is optional: output it only when the screen shows one.
     - **other type**: Only `docType` and `page` must be output.
     - **Missing information**: Fields that cannot be found must be left unoutput; **do not infer, do not fabricate**.
     - **Strictly forbid using 0 to represent "absence"**: When the document **has no tax row**, `totalTaxAmount` and `detailOfTaxSummary` must be **left blank / unoutput**, do not fill in `0` — `0` is an assertion that "tax amount is truly zero", which is completely different from "the document never mentioned tax".
@@ -483,7 +484,8 @@ prompt_template:
                 detail screen (toll card / bank card / e-wallet / third-party payment platform).
                 All three conditions of Part 1.1.2 must hold; a list of several transactions is
                 not this type (that stays `other`). This branch carries only date / currency /
-                amount — no merchant, card, reference or line-item fields, even if visible.
+                amount / payment description (in `remark`) — no merchant, card, reference or
+                line-item fields of their own, even if visible.
               enum:
                 - paymentScreenshot
             page:
@@ -511,6 +513,29 @@ prompt_template:
                 "deducted from balance", which is the normal direction of a payment and is NOT a
                 Credit Note — the Credit Note sign rule does not apply to this type
                 (`-RM4.59` → 4.59, `-RM816.00` → 816.00).
+            remark:
+              type: "STRING"
+              description: |-
+                On a payment screenshot this field carries the **payment description** — what this
+                payment was for, in the screen's own words.
+                Copy verbatim (original casing and punctuation; a caption wrapped over two lines is
+                joined with one space).
+                Lookup order — take the first that exists:
+                1. A labelled row `Payment Details` / `Payment Detail` / `Other Payment Details` /
+                   Malay `Butiran Pembayaran` → that row's value (e.g. `Fare Usage - Toll`).
+                2. Otherwise look at the amount block (the prominent amount and the text just above
+                   or below it, before the labelled rows), in this order:
+                   a. a category badge — a short category word in a pill/chip, often with an icon
+                      (`Food & Drinks`, `Transport`); it wins over a payee name printed above it.
+                      Skip generic placeholders (`Other` / `Others` / `Uncategorised`).
+                   b. a purpose word or descriptive sentence (`Petrol`, `Card payment to GRAB*RIDE is
+                      successful` — keep the whole sentence).
+                   c. the payee / merchant name line (`Netflix`, `grab.com`).
+                Never take: the `Transaction Type` value (`DuitNow QR`, `PayDirect Toll`), a bare
+                status word (`Paid` / `Successful` / `Settled`), promo or reward-points banners, the
+                payment method, labelled merchant / location / entry / exit rows, dates, reference or
+                card numbers, exchange rates, or buttons (`Split bill`, `Report an issue`).
+                No such text on screen → leave unoutput; never assemble one from other fields.
           required:
             - docType
             - page

@@ -4,14 +4,16 @@
 单笔付款详情页）。它们不是商户开出的票据，按旧规则整份判 `other` → 触发
 A0704/4009「未识别到有效票据」，对接方拿不到任何可用信息。
 
-这类截图能可靠提供的只有四个值：**日期 / 币种 / 金额 / 流水号**。
+这类截图能可靠提供的只有四个值：**日期 / 币种 / 金额 / 流水号**，外加一句可选的
+**付款说明**（屏上 `Payment Details` 行的值，或金额附近的说明文字）。
 其中流水号不读屏（屏上参考号未必存在、且易误读），用平台按文件注入的
 `sourceFileHash`——确定性、100% 有值、绝不幻觉。
+付款说明放在 `header.basic.remark`（basic 分组末位追加的键，其余字段顺序不变）。
 
 本文件锁三件事：
   1. mapper 把 paymentScreenshot 裁剪到白名单字段（模型多吐的一律丢弃）；
   2. paymentScreenshot **算「取到票据」**，不得被判成 A0704/4009；
-  3. 国家模板的 schema 分支与正文规则齐备（字段集、必填、正数约定）。
+  3. 国家模板的 schema 分支与正文规则齐备（字段集、必填、正数约定、说明取值）。
 """
 
 from __future__ import annotations
@@ -47,6 +49,18 @@ def test_keeps_the_four_values():
     assert basic["page"] == ["1"]
 
 
+def test_keeps_payment_description_in_basic_remark():
+    """付款说明走 header.basic.remark；remark 追加在 basic 末位，不打乱既有字段顺序。"""
+    out = mapper.map_entity(_entity(remark="Fare Usage - Parking"),
+                            source_file_hash="h")
+    assert out["header"]["basic"]["remark"] == "Fare Usage - Parking"
+    assert list(out["header"]["basic"])[-1] == "remark"
+    assert out["header"]["payment"]["paymentTerms"] == "", "不再借用 paymentTerms"
+    # 屏上没有说明时照常补空串（字段全集固定）
+    bare = mapper.map_entity(_entity(), source_file_hash="h")
+    assert bare["header"]["basic"]["remark"] == ""
+
+
 def test_drops_fields_the_model_leaked():
     """屏幕上常有商户名/卡号/参考号，但本类型刻意不承载——模型多吐也要丢掉，
     否则下游会把一张扣费截图当成可入账的票据。"""
@@ -71,10 +85,12 @@ def test_drops_fields_the_model_leaked():
 def test_other_branch_untouched():
     """裁剪逻辑按 docType 分流，不能误伤 other（只留 docType/page/hash）。"""
     out = mapper.map_entity(
-        {"docType": "other", "page": [2], "totalAmount": 800},
+        {"docType": "other", "page": [2], "totalAmount": 800,
+         "remark": "Fare Usage - Toll"},
         source_file_hash="h",
     )
     assert out["header"]["basic"]["totalAmount"] == ""
+    assert out["header"]["basic"]["remark"] == ""
 
 
 def test_invoice_branch_untouched():
@@ -128,16 +144,29 @@ def _branch(raw) -> dict:
     raise AssertionError("模板里找不到 paymentScreenshot 分支")
 
 
-def test_schema_branch_exposes_exactly_the_four(my_template):
-    """schema 分支只声明这四个值 + page，多一个都可能被模型填出来。"""
+def test_schema_branch_exposes_exactly_the_fields(my_template):
+    """schema 分支只声明这三个值 + 付款说明（remark）+ page，多一个都可能被模型填出来。"""
     props = set(_branch(my_template)["properties"])
-    assert props == {"docType", "page", "invoiceDate", "currency", "totalAmount"}
+    assert props == {"docType", "page", "invoiceDate", "currency", "totalAmount",
+                     "remark"}
 
 
 def test_schema_branch_requires_the_values(my_template):
-    """三个值缺一就不该判成支付截图（正文 §1.4 同款要求）。"""
+    """三个值缺一就不该判成支付截图（正文 §1.4 同款要求）。
+    付款说明不必填——不是每张截图都有，设成必填会逼模型编一句出来。"""
     req = set(_branch(my_template)["required"])
     assert req == {"docType", "page", "invoiceDate", "currency", "totalAmount"}
+    assert "remark" not in req
+
+
+def test_remark_carries_the_description(my_template):
+    """remark 在本类型里装的是付款说明——描述必须给出两个取值锚点
+    （Payment Details 行 / 金额附近的说明），并排除 Transaction Type。"""
+    desc = _branch(my_template)["properties"]["remark"]["description"]
+    assert "payment description" in desc.lower()
+    assert "`Payment Details`" in desc, "锚点 1：Payment Details 行"
+    assert "amount block" in desc, "锚点 2：金额附近的说明文字"
+    assert "`Transaction Type`" in desc, "必须排除 Transaction Type 的值"
 
 
 def test_amount_is_positive_not_credit_note(my_template):
