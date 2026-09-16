@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     QWEN_API_KEY: str = ""
     # qwen 多账号 key 池（分号/逗号分隔），与 GEMINI_API_KEYS 同一套调度。
     QWEN_API_KEYS: str = ""
-    QWEN_MODEL: str = "qwen-vl-plus"         # 生产 OCR（视觉）；vl-plus 抽取质量/速度均衡
+    QWEN_MODEL: str = "qwen3.8-max"          # 生产 OCR（视觉）；默认用新一代高能力多模态
     QWEN_TEXT_MODEL: str = "qwen-plus"       # 反思/优化（文本）
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     # Failover chain for reflection / optimizer LLM calls. Semicolon-separated

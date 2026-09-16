@@ -65,6 +65,12 @@ _TEXT_LAYER_BLOCK = """
 ━━━━━━ 文本层结束 ━━━━━━
 """
 _RENDER_DPI = 150
+#: 单页渲染后的像素面积上限。DPI 写死会在**异常大版面**上炸开：实测一份
+#: 1267×2893pt 的长条扫描件（住宿_c5ca8771...）按 150dpi 渲染出 15.5MB PNG，
+#: base64 后请求体约 20MB，DashScope 直接 400；另有 7 份 >10MB 上传极慢。
+#: 按面积（而非长边）设限：普通 A4 150dpi 约 2.2M 像素、不受影响，只有
+#: 病态版面被等比缩小，OCR 可读性仍够。
+_MAX_RENDER_PIXELS = 4_000_000
 # qwen3-vl-plus 实测 ~34s/页；16 页单次调用可达 ~9 分钟，默认超时 10 分钟
 # （现由 config.QWEN_HTTP_TIMEOUT_S 统一管理，此常量仅作 settings 不可用时的兜底）。
 # 注意：前端 OCR_TIMEOUT（api-client.ts）若仍为 5 分钟，长文档在 UI 侧会先超时，
@@ -93,13 +99,18 @@ class QwenProcessor(DocumentProcessor):
 
     @staticmethod
     def _is_vision_name(name: str) -> bool:
-        """qwen 系视觉模型命名：含 "vl"（qwen-vl-plus / qwen3-vl-flash）或
-        含 "ocr"（qwen3.5-ocr / qwen-vl-ocr）。曾用「仅 vl」判定，导致
-        qwen3.5-ocr 被误判为文本模型：评测时显式传入被静默回退到
-        QWEN_MODEL（评测结果被偷换），生产时被误加 response_format 而
-        返回空 content。"""
+        """识别 qwen 视觉模型。
+
+        旧规则只认名字里带 `vl` / `ocr` 的型号（如 `qwen3-vl-flash`、
+        `qwen3.5-ocr`），会把新一代通用多模态型号 `qwen3.8-max`、
+        `qwen3.7-plus` 误判成文本模型。后果有两类：
+        1. 显式传入时被静默回退到环境里的 QWEN_MODEL，评测结果被偷换；
+        2. 视觉调用被误加 response_format，DashScope 可能返回空 content。
+        """
         n = (name or "").lower()
-        return "vl" in n or "ocr" in n
+        if "vl" in n or "ocr" in n:
+            return True
+        return n.startswith(("qwen3.8-", "qwen3.7-", "qwen3.6-", "qwen3.5-"))
 
     def _pick_model(self, *, vision: bool) -> str:
         if self._explicit:
@@ -115,7 +126,15 @@ class QwenProcessor(DocumentProcessor):
             for i, page in enumerate(doc):
                 if i >= _MAX_PAGES:
                     break
-                pix = page.get_pixmap(dpi=_RENDER_DPI)
+                # 面积超限时按比例降采样，普通版面走原 DPI 不变（见 _MAX_RENDER_PIXELS）
+                w_px = page.rect.width * _RENDER_DPI / 72.0
+                h_px = page.rect.height * _RENDER_DPI / 72.0
+                dpi = _RENDER_DPI
+                if w_px * h_px > _MAX_RENDER_PIXELS:
+                    dpi = int(_RENDER_DPI * (_MAX_RENDER_PIXELS / (w_px * h_px)) ** 0.5)
+                    logger.info("页面过大（%.0f×%.0f px @%ddpi），降采样到 %ddpi：%s p%d",
+                                w_px, h_px, _RENDER_DPI, dpi, pathlib.Path(path).name, i + 1)
+                pix = page.get_pixmap(dpi=max(dpi, 36))
                 png = pix.tobytes("png")
                 urls.append("data:image/png;base64," + base64.b64encode(png).decode())
         return urls

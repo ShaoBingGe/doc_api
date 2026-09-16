@@ -141,3 +141,20 @@ def test_gemini_does_not_pay_for_appendix(monkeypatch, tmp_path):
                                        {"response_schema": SCHEMA})
     assert captured["instruction"] == "PROMPT", "Gemini 的 instruction 不得被附录污染"
     key_pool.reset_pools()
+
+
+@pytest.mark.parametrize(
+    ("name", "want"),
+    [
+        ("qwen3-vl-flash", True),
+        ("qwen3.5-ocr", True),
+        ("qwen3.7-plus", True),
+        ("qwen3.8-max", True),
+        ("qwen-plus", False),
+        ("qwen-max", False),
+    ],
+)
+def test_qwen_vision_name_detection_keeps_new_multimodal_models(name, want):
+    from app.processors.qwen_processor import QwenProcessor
+
+    assert QwenProcessor._is_vision_name(name) is want
