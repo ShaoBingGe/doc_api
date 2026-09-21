@@ -119,3 +119,7 @@ sample_chinkin_results.zip
 # 支付截图样本与识别结果（真实卡号后四位、Transaction ID、DuitNow Ref
 # No 等 PII，同策略不入库）
 payment/
+
+# MSD 客户样本与批量识别产物（342MB）——与 testing/ MY-test/ payment/ 同策略：
+# 原始票据与识别结果不入库，只留脚本与结论文档
+msd/

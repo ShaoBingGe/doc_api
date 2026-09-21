@@ -38,6 +38,34 @@ class Settings(BaseSettings):
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 30
 
+    # ── MyInvois（马来西亚税局）查验增强 ─────────────────────────────────
+    # 路径：PDF 二维码 → uuid → 网关 verify（返回税局原始 UBL）→ 与 OCR 消融。
+    # 票面无二维码则直接走纯 OCR。整链 fail-open：查验不通只影响"是否校正"，
+    # 不影响识别本身（§五 降级而非 500）。
+    MYINVOIS_ENABLED: bool = False
+    MYINVOIS_TIMEOUT_S: float = 15.0
+    # 单份文档最多查验几个二维码（多票据 PDF 实测可达 12 张）
+    MYINVOIS_MAX_LOOKUPS: int = 12
+    # 查验总时间预算；超出的二维码标 skipped，不拖垮单次识别延迟
+    MYINVOIS_BUDGET_S: float = 30.0
+    # True = 仅 verifyStatus=VALID 才覆盖 OCR；CANCELLED/INVALID 只上报不覆盖
+    MYINVOIS_REQUIRE_VALID: bool = True
+    # 查验与 OCR 并行后，OCR 先返回时**还愿意为查验多等多久**（宽限期）。
+    # 并行只能把代价压到 max(OCR, 查验)，压不住"查验比 OCR 还慢"的情况：
+    # SIT 实测网关 verify 是同步转调税局，延迟偶发飙到 10s+（正常 0.3–0.9s）。
+    # 超过宽限期就放弃本次增强、直接返回 OCR 结果 —— 增强是尽力而为，
+    # 不该让一次慢查验拖垮接口响应。0 = 不等（OCR 一好就返回）。
+    MYINVOIS_JOIN_GRACE_S: float = 8.0
+    # 二维码扫描段的刹车（与 verify 循环的 MAX_LOOKUPS / BUDGET_S 相互独立）。
+    # 扫描是纯 CPU 的整页渲染，跑在线程池里且无法被 cancel —— 没有上限时
+    # 一份上百页 PDF 会占死线程数十秒，让后续查验全卡在 join 宽限期。
+    MYINVOIS_SCAN_MAX_PAGES: int = 16        # 与 OCR 实际读取页数对齐
+    MYINVOIS_SCAN_BUDGET_S: float = 12.0
+    MYINVOIS_GATEWAY_BASE_URL: str = ""      # 如 http://api-sit.piaozone.com/gjfp
+    MYINVOIS_GATEWAY_CLIENT_ID: str = ""
+    MYINVOIS_GATEWAY_CLIENT_SECRET: str = ""
+    MYINVOIS_GATEWAY_COMPANY_ID: str = ""    # 企业 ouno
+
     # ── File Storage ──────────────────────────────────────────────────────
     STORAGE_BACKEND: str = "local"          # local | s3
     UPLOAD_DIR: str = "./data/uploads"      # LocalStorage 存储目录

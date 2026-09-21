@@ -39,6 +39,12 @@ httpx>=0.27.0
 # Qwen / 阿里云百炼 (qwen-vl-ocr) processor — uses httpx (already above) +
 # PyMuPDF to render PDF pages to images. Enable on 大陆云 instances.
 pymupdf>=1.24.0
+# MyInvois 二维码识别（services/myinvois/qr_extractor.py）。二维码是税局查验的
+# 主入口：实测 chinkin 语料覆盖 74.1%，而链接注记/文字层方法只有 45.4%，且二维码
+# 额外带 share token(longId) —— 网关查验接口的必填入参。
+# 两者都是纯 pip wheel，无系统级 C 依赖（不需要 libzbar / opencv）。
+zxing-cpp>=2.2.0
+pillow>=10.0.0
 
 # Dev / test
 pytest>=8.0.0

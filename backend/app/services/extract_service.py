@@ -17,6 +17,8 @@ import logging
 import time
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -38,6 +40,18 @@ from app.schemas.extract import ExtractMetadata, ExtractResponse
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+# MyInvois 查验用的共享线程池。查验（二维码解码 + 网关 HTTP）不依赖 OCR 输出，
+# 丢进线程与模型调用重叠，省掉串行等待（实测查验段 ~1–3s/份）。
+# 容量按闸门的文档并发（GATE_MAX_DOCS，默认 3）+1 余量 —— 闸内至多这么多份
+# 文档在途，再多线程也没有对应的工作。用共享池而非每次现建，避免线程抖动。
+#
+# 注意：extract_document 本身已经跑在 anyio 工作线程里（红线⑦），这里只是在
+# 其内部再借一条线程做纯 I/O，不触碰事件循环。
+_MYINVOIS_POOL = ThreadPoolExecutor(
+    max_workers=max(2, int(getattr(settings, "GATE_MAX_DOCS", 3)) + 1),
+    thread_name_prefix="myinvois-lookup",
+)
 
 _ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".xlsx"}
 
@@ -93,6 +107,17 @@ def extract_document(
     # ── 3. Save temp file ─────────────────────────────────────────────────
     temp_path = _save_temp(file_bytes, safe_filename)
 
+    # ── 3.5 并行启动 MyInvois 查验 ─────────────────────────────────────────
+    # 查验只吃原始字节（解二维码 → 调网关），与 OCR 无依赖，先丢出去跑，
+    # 等模型返回后再合。启用开关关闭时连线程都不借。
+    myinvois_future = None
+    if bool(getattr(settings, "MYINVOIS_ENABLED", False)):
+        try:
+            from app.services.myinvois import lookup_myinvois
+            myinvois_future = _MYINVOIS_POOL.submit(lookup_myinvois, file_bytes)
+        except Exception as exc:  # noqa: BLE001 — 增强永不阻塞主链路
+            logger.warning("MyInvois 查验未能启动（已忽略）：%s", exc)
+
     # ── 4. Run extraction ─────────────────────────────────────────────────
     start_ms = int(time.time() * 1000)
     try:
@@ -112,6 +137,7 @@ def extract_document(
         chain = ProcessorFactory.resolve_chain(
             api_def.processor_type, api_def.model_name
         )
+
         raw_output, structured_data, model_name, tokens_used, proc_used = _run_with_failover(
             chain=chain,
             storage_path=temp_path,
@@ -119,27 +145,14 @@ def extract_document(
             schema=active_schema,
         )
     except Exception as exc:
+        # OCR 失败就不会再有消融阶段 —— 取消并行查验，别把线程留在池里空转
+        if myinvois_future is not None:
+            myinvois_future.cancel()
         raise ProcessingError(f"Extraction failed: {exc}") from exc
     finally:
         _cleanup_temp(temp_path)
 
     elapsed_ms = int(time.time() * 1000) - start_ms
-
-    # ── 5. Audit trail ────────────────────────────────────────────────────
-    _persist_audit(
-        db,
-        api_def=api_def,
-        api_key=api_key,
-        filename=safe_filename,
-        file_size=len(file_bytes),
-        structured_data=structured_data,
-        raw_output=raw_output,
-        model_name=model_name,
-        tokens_used=tokens_used,
-        processing_time_ms=elapsed_ms,
-        request_ip=request_ip,
-        processor_used=proc_used,
-    )
 
     # structured_data 可能是数组（多票据）或单对象；data 保持「首条 dict」的既有契约，
     # entities 给出全量，供开放平台等需要多票据的调用方使用。
@@ -155,6 +168,50 @@ def extract_document(
     else:
         entities, first = [], {}
 
+    # ── 6. 收并行查验结果 + 消融归一 ───────────────────────────────────────
+    # 税局有的字段覆盖 OCR，税局没有的保留 OCR。**fail-open** —— 任何环节出问题
+    # 都只影响「是否校正」，识别结果照常返回（§五 降级而非 500）。
+    myinvois_meta = None
+    if myinvois_future is not None:
+        try:
+            from app.services.myinvois import fuse_lookup
+
+            # 并行后查验多半已经跑完（实测 join 等待 0.000s）。这里只给一个
+            # **宽限期**：OCR 已经好了，最多再为查验等这么久，超时就放弃增强
+            # 直接返回 OCR —— 增强是尽力而为，不该让一次慢查验拖垮响应。
+            grace = float(getattr(settings, "MYINVOIS_JOIN_GRACE_S", 8.0))
+            lookup = myinvois_future.result(timeout=grace)
+            entities, fusion_report = fuse_lookup(entities, lookup)
+            if fusion_report.enabled:
+                myinvois_meta = fusion_report.as_dict()
+            if entities:
+                first = entities[0]
+        except Exception as exc:  # noqa: BLE001 — 含 TimeoutError
+            myinvois_future.cancel()
+            logger.warning("MyInvois 增强失败（已忽略，返回纯 OCR 结果）：%s", exc,
+                           exc_info=True)
+
+    # ── 7. Audit trail ────────────────────────────────────────────────────
+    # 落在消融**之后**，这样审计里同时有「模型原样输出」和「税局改了什么」。
+    # 注意 structured_data 仍是**纯 OCR**，绝不能换成消融后的值：它要喂给
+    # 优化器的评测 harness，存成校正后的结果会让优化器把税局的纠正当成模型
+    # 自己的功劳，prompt 永远学不到那些字段 —— 污染的是整条自迭代回路。
+    _persist_audit(
+        db,
+        api_def=api_def,
+        api_key=api_key,
+        filename=safe_filename,
+        file_size=len(file_bytes),
+        structured_data=structured_data,
+        raw_output=raw_output,
+        model_name=model_name,
+        tokens_used=tokens_used,
+        processing_time_ms=elapsed_ms,
+        request_ip=request_ip,
+        processor_used=proc_used,
+        myinvois_report=myinvois_meta,
+    )
+
     return ExtractResponse(
         request_id=request_id,
         api_code=api_code,
@@ -166,6 +223,7 @@ def extract_document(
             model=model_name,
             tokens_used=tokens_used or 0,
             processing_time_ms=elapsed_ms,
+            myinvois=myinvois_meta,
         ),
     )
 
@@ -392,6 +450,7 @@ def _persist_audit(
     processing_time_ms: int,
     request_ip: str,
     processor_used: str | None = None,
+    myinvois_report: dict | None = None,
 ) -> None:
     """Persist Document + ProcessingResult for audit trail. Non-fatal on error."""
     try:
@@ -405,12 +464,20 @@ def _persist_audit(
         db.add(doc)
         db.flush()
 
+        # 税局消融报告随审计一并留痕：哪些字段被覆盖、来自哪个 uuid、
+        # 查验状态如何。不落库的话「这次校正」事后完全无法复盘。
+        audit_raw = raw_output
+        if myinvois_report:
+            audit_raw = {**(raw_output if isinstance(raw_output, dict)
+                            else {"_raw": raw_output}),
+                         "_myinvois_fusion": myinvois_report}
+
         result = ProcessingResult(
             document_id=doc.id,
             version=1,
             processor_type=processor_used or api_def.processor_type,
             model_name=model_name,
-            raw_output=raw_output,
+            raw_output=audit_raw,
             structured_data=structured_data,
             tokens_used=tokens_used,
             processing_time_ms=processing_time_ms,
