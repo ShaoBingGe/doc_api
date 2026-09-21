@@ -1,0 +1,16 @@
+[
+  {
+    "docType": "receipt",
+    "nameOfInvoice": "領収証",
+    "invoiceNumber": "010170-001",
+    "invoiceDate": "2025-04-10",
+    "currency": "JPY",
+    "totalAmount": 5610,
+    "totalTaxAmount": 510,
+    "billFromName": "南国酒家",
+    "billFromTaxIdentificationNumber": "T4011001016740",
+    "page": [
+      1
+    ]
+  }
+]

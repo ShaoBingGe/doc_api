@@ -1,0 +1,1180 @@
+{
+ "S2|A_中文现行": {
+  "elapsed_s": 15.430909395217896,
+  "usage": {
+   "prompt_tokens": 10285,
+   "output_tokens": 3695,
+   "total_tokens": 13980
+  },
+  "score": "4/4",
+  "output": [
+   {
+    "docType": "invoice",
+    "page": [
+     1
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "0020723",
+    "invoiceDate": "2025-01-07",
+    "totalNetAmount": 100.0,
+    "totalAmount": 110.0,
+    "totalTaxAmount": 10.0,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO 1, JALAN NAGA EMAS, SRI PETALING, 57000 KL",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billFromName": "GREENSEAL PRODUCTS (M) SDN BHD",
+    "billFromComposite": "NO. 5 & 7 JALAN 35/10A, TAMAN PERINDUSTRIAN IKS, MUKIM BATU 68100 BATU CAVES KUALA LUMPUR",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromBusinessRegistrationNumber": "198601003000",
+    "deliveryOrderNumber": "00019700",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "GS 108 -WHITE 5L(GS1080) (GREENSHIELD 108)",
+      "quantity": 1.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 100.0,
+      "netAmount": 100.0,
+      "tax": 10.0,
+      "grossAmount": 110.0
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "tax": 10.0
+     }
+    ]
+   },
+   {
+    "docType": "invoice",
+    "page": [
+     2
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "0150725",
+    "invoiceDate": "2025-04-07",
+    "totalNetAmount": 6600.0,
+    "totalAmount": 7260.0,
+    "totalTaxAmount": 660.0,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO 1, JALAN NAGA EMAS, SRI PETALING, 57000 KL",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billFromName": "GREENSEAL PRODUCTS (M) SDN BHD",
+    "billFromComposite": "NO. 5 & 7 JALAN 35/10A, TAMAN PERINDUSTRIAN IKS, MUKIM BATU 68100 BATU CAVES KUALA LUMPUR",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromBusinessRegistrationNumber": "198601003000",
+    "deliveryOrderNumber": "00019702",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "GREENSEAL 200",
+      "quantity": 50.0,
+      "unitOfMeasure": "BAG",
+      "unitPrice": 132.0,
+      "netAmount": 6600.0,
+      "taxRate": "10%",
+      "tax": 660.0,
+      "grossAmount": 7260.0
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "taxRate": "10%",
+      "netTaxableAmount": 6600.0,
+      "tax": 660.0
+     }
+    ]
+   },
+   {
+    "docType": "invoice",
+    "page": [
+     3
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "0310725",
+    "invoiceDate": "2025-08-07",
+    "totalNetAmount": 1756.0,
+    "totalAmount": 1931.6,
+    "totalTaxAmount": 175.6,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO 1, JALAN NAGA EMAS, SRI PETALING, 57000 KL",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billFromName": "GREENSEAL PRODUCTS (M) SDN BHD",
+    "billFromComposite": "NO. 5 & 7 JALAN 35/10A, TAMAN PERINDUSTRIAN IKS, MUKIM BATU 68100 BATU CAVES KUALA LUMPUR",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromBusinessRegistrationNumber": "198601003000",
+    "deliveryOrderNumber": "00019728",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "P2002 POLYDEK GREY(SP) P2002(SUPER P)",
+      "quantity": 4.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 260.0,
+      "netAmount": 1040.0,
+      "tax": 104.0,
+      "grossAmount": 1144.0
+     },
+     {
+      "articleName": "GS 108 -MYSTIC GREY(GS1091) (GREENSHIELD 108)",
+      "quantity": 2.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 280.0,
+      "netAmount": 560.0,
+      "tax": 56.0,
+      "grossAmount": 616.0
+     },
+     {
+      "articleName": "GS107P GSH PRIMER(20L) (20L)",
+      "quantity": 1.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 156.0,
+      "netAmount": 156.0,
+      "tax": 15.6,
+      "grossAmount": 171.6
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "tax": 175.6
+     }
+    ]
+   },
+   {
+    "docType": "invoice",
+    "page": [
+     4
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "0490725",
+    "invoiceDate": "2025-11-07",
+    "totalNetAmount": 8050.0,
+    "totalAmount": 8855.0,
+    "totalTaxAmount": 805.0,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO 1, JALAN NAGA EMAS, SRI PETALING, 57000 KL",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billFromName": "GREENSEAL PRODUCTS (M) SDN BHD",
+    "billFromComposite": "NO. 5 & 7 JALAN 35/10A, TAMAN PERINDUSTRIAN IKS, MUKIM BATU 68100 BATU CAVES KUALA LUMPUR",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromBusinessRegistrationNumber": "198601003000",
+    "deliveryOrderNumber": "00019744",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "GS ULTRAMIX",
+      "quantity": 700.0,
+      "unitOfMeasure": "BAG",
+      "unitPrice": 11.5,
+      "netAmount": 8050.0,
+      "taxRate": "10%",
+      "tax": 805.0,
+      "grossAmount": 8855.0
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "taxRate": "10%",
+      "netTaxableAmount": 8050.0,
+      "tax": 805.0
+     }
+    ]
+   },
+   {
+    "docType": "invoice",
+    "page": [
+     5
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "0500725",
+    "invoiceDate": "2025-11-07",
+    "totalNetAmount": 2363.45,
+    "totalAmount": 2599.8,
+    "totalTaxAmount": 236.34,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO 1, JALAN NAGA EMAS, SRI PETALING, 57000 KL",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billFromName": "GREENSEAL PRODUCTS (M) SDN BHD",
+    "billFromComposite": "NO. 5 & 7 JALAN 35/10A, TAMAN PERINDUSTRIAN IKS, MUKIM BATU 68100 BATU CAVES KUALA LUMPUR",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromBusinessRegistrationNumber": "198601003000",
+    "deliveryOrderNumber": "00019738",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "GS107P GSH PRIMER(20L) (20L)",
+      "quantity": 1.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 155.454,
+      "netAmount": 155.45,
+      "taxRate": "10%",
+      "tax": 15.54,
+      "grossAmount": 170.99
+     },
+     {
+      "articleName": "P2002 POLYDEK GREY(SP) P2002(SUPER P)",
+      "quantity": 8.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 276.0,
+      "netAmount": 2208.0,
+      "taxRate": "10%",
+      "tax": 220.8,
+      "grossAmount": 2428.8
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "taxRate": "10%",
+      "netTaxableAmount": 2363.45,
+      "tax": 236.34
+     },
+     {
+      "taxCategory": "ADJUSTMENT",
+      "tax": 0.0
+     }
+    ]
+   },
+   {
+    "docType": "invoice",
+    "page": [
+     6
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "0540725",
+    "invoiceDate": "2025-07-14",
+    "totalNetAmount": 966.0,
+    "totalAmount": 1062.6,
+    "totalTaxAmount": 96.6,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO 1, JALAN NAGA EMAS, SRI PETALING, 57000 KL",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billFromName": "GREENSEAL PRODUCTS (M) SDN BHD",
+    "billFromComposite": "NO. 5 & 7 JALAN 35/10A, TAMAN PERINDUSTRIAN IKS, MUKIM BATU 68100 BATU CAVES KUALA LUMPUR",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromBusinessRegistrationNumber": "198601003000",
+    "deliveryOrderNumber": "00019754",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "P2002 POLYDEK GREY(SP) P2002(SUPER P)",
+      "quantity": 3.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 270.0,
+      "netAmount": 810.0,
+      "tax": 81.0,
+      "grossAmount": 891.0
+     },
+     {
+      "articleName": "GS107P GSH PRIMER(20L) (20L)",
+      "quantity": 1.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 156.0,
+      "netAmount": 156.0,
+      "tax": 15.6,
+      "grossAmount": 171.6
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "tax": 96.6
+     }
+    ]
+   }
+  ]
+ },
+ "S2|B_英文翻译": {
+  "elapsed_s": 15.984364986419678,
+  "usage": {
+   "prompt_tokens": 10063,
+   "output_tokens": 3442,
+   "total_tokens": 13505
+  },
+  "score": "4/4",
+  "output": [
+   {
+    "docType": "invoice",
+    "page": [
+     1
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "0020723",
+    "invoiceDate": "2025-01-07",
+    "totalNetAmount": 100.0,
+    "totalAmount": 110.0,
+    "totalTaxAmount": 10.0,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO 1, JALAN NAGA EMAS, SRI PETALING, 57000 KL",
+    "billFromName": "GREENSEAL PRODUCTS (M) SDN BHD",
+    "billFromComposite": "NO. 5 & 7 JALAN 35/10A, TAMAN PERINDUSTRIAN IKS, MUKIM BATU 68100 BATU CAVES KUALA LUMPUR",
+    "billFromBusinessRegistrationNumber": "198601003000",
+    "deliveryOrderNumber": "00019700",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "GS 108 -WHITE 5L(GS1080)\n(GREENSHIELD 108)",
+      "quantity": 1.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 100.0,
+      "netAmount": 100.0,
+      "tax": 10.0,
+      "grossAmount": 110.0
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "tax": 10.0
+     }
+    ]
+   },
+   {
+    "docType": "invoice",
+    "page": [
+     2
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "0150725",
+    "invoiceDate": "2025-04-07",
+    "totalNetAmount": 6600.0,
+    "totalAmount": 7260.0,
+    "totalTaxAmount": 660.0,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO 1, JALAN NAGA EMAS, SRI PETALING, 57000 KL",
+    "billFromName": "GREENSEAL PRODUCTS (M) SDN BHD",
+    "billFromComposite": "NO. 5 & 7 JALAN 35/10A, TAMAN PERINDUSTRIAN IKS, MUKIM BATU 68100 BATU CAVES KUALA LUMPUR",
+    "billFromBusinessRegistrationNumber": "198601003000",
+    "deliveryOrderNumber": "00019702",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "GREENSEAL 200",
+      "quantity": 50.0,
+      "unitOfMeasure": "BAG",
+      "unitPrice": 132.0,
+      "netAmount": 6600.0,
+      "taxRate": "10%",
+      "tax": 660.0,
+      "grossAmount": 7260.0
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "taxRate": "10%",
+      "netTaxableAmount": 6600.0,
+      "tax": 660.0
+     }
+    ]
+   },
+   {
+    "docType": "invoice",
+    "page": [
+     3
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "0310725",
+    "invoiceDate": "2025-08-07",
+    "totalNetAmount": 1756.0,
+    "totalAmount": 1,
+    "totalTaxAmount": 175.6,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO 1, JALAN NAGA EMAS, SRI PETALING, 57000 KL",
+    "billFromName": "GREENSEAL PRODUCTS (M) SDN BHD",
+    "billFromComposite": "NO. 5 & 7 JALAN 35/10A, TAMAN PERINDUSTRIAN IKS, MUKIM BATU 68100 BATU CAVES KUALA LUMPUR",
+    "billFromBusinessRegistrationNumber": "198601003000",
+    "deliveryOrderNumber": "00019728",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "P2002 POLYDEK GREY(SP)\nP2002(SUPER P)",
+      "quantity": 4.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 260.0,
+      "netAmount": 1040.0,
+      "tax": 104.0,
+      "grossAmount": 1144.0
+     },
+     {
+      "articleName": "GS 108 -MYSTIC GREY(GS1091)\n(GREENSHIELD 108)",
+      "quantity": 2.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 280.0,
+      "netAmount": 560.0,
+      "tax": 56.0,
+      "grossAmount": 616.0
+     },
+     {
+      "articleName": "GS107P GSH PRIMER(20L)\n(20L)",
+      "quantity": 1.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 156.0,
+      "netAmount": 156.0,
+      "tax": 15.6,
+      "grossAmount": 171.6
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "tax": 175.6
+     }
+    ]
+   },
+   {
+    "docType": "invoice",
+    "page": [
+     4
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "0490725",
+    "invoiceDate": "2025-11-07",
+    "totalNetAmount": 8050.0,
+    "totalAmount": 8855.0,
+    "totalTaxAmount": 805.0,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO 1, JALAN NAGA EMAS, SRI PETALING, 57000 KL",
+    "billFromName": "GREENSEAL PRODUCTS (M) SDN BHD",
+    "billFromComposite": "NO. 5 & 7 JALAN 35/10A, TAMAN PERINDUSTRIAN IKS, MUKIM BATU 68100 BATU CAVES KUALA LUMPUR",
+    "billFromBusinessRegistrationNumber": "198601003000",
+    "deliveryOrderNumber": "00019744",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "GS ULTRAMIX",
+      "quantity": 700.0,
+      "unitOfMeasure": "BAG",
+      "unitPrice": 11.5,
+      "netAmount": 8050.0,
+      "taxRate": "10%",
+      "tax": 805.0,
+      "grossAmount": 8855.0
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "taxRate": "10%",
+      "netTaxableAmount": 8050.0,
+      "tax": 805.0
+     }
+    ]
+   },
+   {
+    "docType": "invoice",
+    "page": [
+     5
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "0500725",
+    "invoiceDate": "2025-11-07",
+    "totalNetAmount": 2363.45,
+    "totalAmount": 2599.8,
+    "totalTaxAmount": 236.34,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO 1, JALAN NAGA EMAS, SRI PETALING, 57000 KL",
+    "billFromName": "GREENSEAL PRODUCTS (M) SDN BHD",
+    "billFromComposite": "NO. 5 & 7 JALAN 35/10A, TAMAN PERINDUSTRIAN IKS, MUKIM BATU 68100 BATU CAVES KUALA LUMPUR",
+    "billFromBusinessRegistrationNumber": "198601003000",
+    "deliveryOrderNumber": "00019738",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "GS107P GSH PRIMER(20L)\n(20L)",
+      "quantity": 1.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 155.454,
+      "netAmount": 155.45,
+      "taxRate": "10%",
+      "tax": 15.54,
+      "grossAmount": 170.99
+     },
+     {
+      "articleName": "P2002 POLYDEK GREY(SP)\nP2002(SUPER P)",
+      "quantity": 8.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 276.0,
+      "netAmount": 2208.0,
+      "taxRate": "10%",
+      "tax": 220.8,
+      "grossAmount": 2428.8
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "taxRate": "10%",
+      "netTaxableAmount": 2363.45,
+      "tax": 236.34
+     },
+     {
+      "taxCategory": "ADJUSTMENT",
+      "tax": 0.01
+     }
+    ]
+   },
+   {
+    "docType": "invoice",
+    "page": [
+     6
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "0540725",
+    "invoiceDate": "2025-07-14",
+    "totalNetAmount": 966.0,
+    "totalAmount": 1062.6,
+    "totalTaxAmount": 96.6,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO 1, JALAN NAGA EMAS, SRI PETALING, 57000 KL",
+    "billFromName": "GREENSEAL PRODUCTS (M) SDN BHD",
+    "billFromComposite": "NO. 5 & 7 JALAN 35/10A, TAMAN PERINDUSTRIAN IKS, MUKIM BATU 68100 BATU CAVES KUALA LUMPUR",
+    "billFromBusinessRegistrationNumber": "198601003000",
+    "deliveryOrderNumber": "00019754",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "P2002 POLYDEK GREY(SP)\nP2002(SUPER P)",
+      "quantity": 3.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 270.0,
+      "netAmount": 891.0,
+      "tax": 81.0,
+      "grossAmount": 891.0
+     },
+     {
+      "articleName": "GS107P GSH PRIMER(20L)\n(20L)",
+      "quantity": 1.0,
+      "unitOfMeasure": "PAIL",
+      "unitPrice": 156.0,
+      "netAmount": 156.0,
+      "tax": 15.6,
+      "grossAmount": 171.6
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "tax": 96.6
+     }
+    ]
+   }
+  ]
+ },
+ "afee7ae7|A_中文现行": {
+  "elapsed_s": 5.576560974121094,
+  "usage": {
+   "prompt_tokens": 7625,
+   "output_tokens": 495,
+   "total_tokens": 8120
+  },
+  "score": null,
+  "output": [
+   {
+    "docType": "invoice",
+    "page": [
+     1
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "8100542231",
+    "invoiceDate": "2025-12-23",
+    "totalNetAmount": 7186.8,
+    "totalAmount": 7186.8,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO.1, JALAN NAGA EMAS,SRI PETALING, 57000 KUALA LUMPUR KUALA LUMPUR, MALAYSIA",
+    "billToCountry": "MALAYSIA",
+    "billToCountryCode": "MY",
+    "billFromName": "BMI Roofing Systems Sdn. Bhd.",
+    "billFromComposite": "Suite 11.02, 11th Floor, Menara JKG, No.282 , Jalan Raja Laut,50350 Kuala Lumpur,Malaysia.",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromBusinessRegistrationNumber": "19401002179 (19163-M)",
+    "purchaseOrderNumber": "W1 513275",
+    "salesOrderNumber": "2100253859",
+    "deliveryOrderNumber": "5100611329",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "ETPL TILE ELABANA RED P",
+      "quantity": 3180,
+      "unitOfMeasure": "PC",
+      "unitPrice": 2.26,
+      "netAmount": 7186.8,
+      "deliveryOrderNumber": "5100611329"
+     }
+    ]
+   }
+  ]
+ },
+ "afee7ae7|B_英文翻译": {
+  "elapsed_s": 5.291632890701294,
+  "usage": {
+   "prompt_tokens": 7403,
+   "output_tokens": 500,
+   "total_tokens": 7903
+  },
+  "score": null,
+  "output": [
+   {
+    "docType": "invoice",
+    "page": [
+     1
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "8100542231",
+    "invoiceDate": "2025-12-23",
+    "totalNetAmount": 7186.8,
+    "totalAmount": 7186.8,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN, LEVEL 22-23, 8TH & STELLAR, NO.1, JALAN NAGA EMAS,SRI PETALING, 57000 KUALA LUMPUR, KUALA LUMPUR, MALAYSIA",
+    "billToCountry": "MALAYSIA",
+    "billToCountryCode": "MY",
+    "billFromName": "BMI Roofing Systems Sdn. Bhd.",
+    "billFromComposite": "Suite 11.02, 11th Floor, Menara JKG, No.282 , Jalan Raja Laut,50350 Kuala Lumpur,Malaysia.",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromBusinessRegistrationNumber": "19401002179 (19163-M)",
+    "purchaseOrderNumber": "W1 513275",
+    "salesOrderNumber": "2100253859",
+    "deliveryOrderNumber": "5100611329",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "ETPL TILE ELABANA RED P",
+      "quantity": 3180,
+      "unitOfMeasure": "PC",
+      "unitPrice": 2.26,
+      "netAmount": 7186.8,
+      "deliveryOrderNumber": "5100611329"
+     }
+    ]
+   }
+  ]
+ },
+ "a724cdfb|A_中文现行": {
+  "elapsed_s": 4.864799976348877,
+  "usage": {
+   "prompt_tokens": 8157,
+   "output_tokens": 855,
+   "total_tokens": 9012
+  },
+  "score": null,
+  "output": [
+   {
+    "docType": "invoice",
+    "page": [
+     1,
+     2
+    ],
+    "invoiceType": "Tax Invoice",
+    "nameOfInvoice": "E-INVOICE",
+    "invoiceNumber": "26FC005460",
+    "invoiceDate": "2026-04-06",
+    "totalNetAmount": 6296.71,
+    "totalAmount": 6600.0,
+    "totalTaxAmount": 303.29,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN LEVEL 22-23, 8TH & STELLAR 1, JALAN NAGA EMAS SRI PETALING 57000 Kuala Lumpur Kuala Lumpur MYS, Kuala Lumpur, 57000, 14, MYS",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billToTaxIdentificationNumber": "C5884056070",
+    "billFromName": "Mapei Malaysia SDN BHD",
+    "billFromComposite": "D3A-10, BLOCK D3A, DANA 1 COMMERCIAL CENTRE JALAN PJU 1A/46 47301 SELANGOR DARUL EHSAN Selangor MYS, SELANGOR DARUL EHSAN, 47301, 10",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromTaxIdentificationNumber": "C4908240100",
+    "billFromBusinessRegistrationNumber": "199201000276 (231780-K)",
+    "dueDate": "2026-06-30",
+    "salesOrderNumber": "26SO005136",
+    "deliveryOrderNumber": "26DN005000",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "Mapeset 111 bag 20kg",
+      "description": "0066520",
+      "quantity": 600,
+      "unitOfMeasure": "bag",
+      "unitPrice": 10.10952,
+      "netAmount": 6065.71,
+      "taxRate": "5.00%",
+      "tax": 303.29,
+      "grossAmount": 6369.0
+     },
+     {
+      "articleName": "Transport Charges",
+      "description": "TRASP20",
+      "quantity": 1,
+      "unitOfMeasure": "qt",
+      "unitPrice": 231.0,
+      "netAmount": 231.0,
+      "taxRate": "0%",
+      "tax": 0,
+      "grossAmount": 231.0
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "taxRate": "5.00%",
+      "netTaxableAmount": 6065.71,
+      "tax": 303.29
+     },
+     {
+      "taxCategory": "SST",
+      "taxRate": "0%",
+      "netTaxableAmount": 231.0,
+      "tax": 0
+     }
+    ]
+   }
+  ]
+ },
+ "a724cdfb|B_英文翻译": {
+  "elapsed_s": 4.758316993713379,
+  "usage": {
+   "prompt_tokens": 7935,
+   "output_tokens": 845,
+   "total_tokens": 8780
+  },
+  "score": null,
+  "output": [
+   {
+    "docType": "invoice",
+    "page": [
+     1,
+     2
+    ],
+    "invoiceType": "Tax Invoice",
+    "nameOfInvoice": "E-INVOICE",
+    "invoiceNumber": "26FC005460",
+    "invoiceDate": "2026-04-06",
+    "totalNetAmount": 6296.71,
+    "totalAmount": 6600.0,
+    "totalTaxAmount": 303.29,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "MENARA CHIN HIN LEVEL 22-23, 8TH & STELLAR 1, JALAN NAGA EMAS SRI PETALING 57000 Kuala Lumpur Kuala Lumpur MYS, Kuala Lumpur, 57000, 14, MYS",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billToTaxIdentificationNumber": "C5884056070",
+    "billFromName": "Mapei Malaysia SDN BHD",
+    "billFromComposite": "D3A-10, BLOCK D3A, DANA 1 COMMERCIAL CENTRE JALAN PJU 1A/46 47301 SELANGOR DARUL EHSAN Selangor MYS, SELANGOR DARUL EHSAN, 47301, 10",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromTaxIdentificationNumber": "C4908240100",
+    "billFromBusinessRegistrationNumber": "199201000276 (231780-K)",
+    "purchaseOrderNumber": "W1 545284",
+    "dueDate": "2026-06-30",
+    "salesOrderNumber": "26SO005136",
+    "deliveryOrderNumber": "26DN005000",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "Mapeset 111 bag 20kg",
+      "description": "0066520",
+      "quantity": 600,
+      "unitOfMeasure": "bag",
+      "unitPrice": 10.10952,
+      "netAmount": 6065.71,
+      "taxRate": "5.00%",
+      "tax": 303.29
+     },
+     {
+      "articleName": "Transport Charges",
+      "description": "TRASP20",
+      "quantity": 1,
+      "unitOfMeasure": "qt",
+      "unitPrice": 231.0,
+      "netAmount": 231.0,
+      "taxRate": "0.00%"
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "taxRate": "5.00%",
+      "netTaxableAmount": 6065.71,
+      "tax": 303.29
+     },
+     {
+      "taxCategory": "SST",
+      "taxRate": "0.00%",
+      "netTaxableAmount": 231.0,
+      "tax": 0.0
+     }
+    ]
+   }
+  ]
+ },
+ "b89cfebb|A_中文现行": {
+  "elapsed_s": 5.322653293609619,
+  "usage": {
+   "prompt_tokens": 7625,
+   "output_tokens": 765,
+   "total_tokens": 8390
+  },
+  "score": null,
+  "output": [
+   {
+    "docType": "invoice",
+    "page": [
+     1
+    ],
+    "invoiceType": "Tax Invoice",
+    "nameOfInvoice": "E-INVOICE",
+    "invoiceNumber": "ID25004200",
+    "invoiceDate": "2025-07-25",
+    "totalNetAmount": 47341.5,
+    "totalAmount": 47341.5,
+    "totalTaxAmount": 0,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "NO 400 & 401 JALAN PERUSAHAAN 5, TMN BANDAR BARU MERGONG, LEBUHRAYA SULTANAH BAHIYAH, 05150 ALOR SETAR, KEDAH",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billToTaxIdentificationNumber": "C5884056070",
+    "billFromName": "ANN JOO STEEL BERHAD",
+    "billFromComposite": "Wisma Ann Joo, Lot 19391, Batu 8 1/2, Jalan Klang Lama, 46150 Petaling Jaya, Selangor Darul Ehsan, Malaysia",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromTaxIdentificationNumber": "C855273080",
+    "billFromBusinessRegistrationNumber": "199501005689",
+    "purchaseOrderNumber": "K2 513875",
+    "deliveryOrderNumber": "LTA2507250095",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "HR Ribbed Weldable Reinforcing Steel B500B,10.0mm * 12.000M,138 PCS, FLD",
+      "quantity": 10.22,
+      "unitOfMeasure": "MT",
+      "unitPrice": 2340,
+      "netAmount": 23914.8,
+      "taxRate": "0%",
+      "tax": 0,
+      "grossAmount": 23914.8
+     },
+     {
+      "articleName": "HR Ribbed Weldable Reinforcing Steel B500B,12.0mm * 12.000M,96 PCS, FLD",
+      "quantity": 10.23,
+      "unitOfMeasure": "MT",
+      "unitPrice": 2290,
+      "netAmount": 23426.7,
+      "taxRate": "0%",
+      "tax": 0,
+      "grossAmount": 23426.7
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "taxRate": "0%",
+      "netTaxableAmount": 47341.5,
+      "tax": 0
+     }
+    ]
+   }
+  ]
+ },
+ "b89cfebb|B_英文翻译": {
+  "elapsed_s": 4.721663951873779,
+  "usage": {
+   "prompt_tokens": 7403,
+   "output_tokens": 830,
+   "total_tokens": 8233
+  },
+  "score": null,
+  "output": [
+   {
+    "docType": "invoice",
+    "page": [
+     1
+    ],
+    "invoiceType": "Tax Invoice",
+    "nameOfInvoice": "E-INVOICE",
+    "invoiceNumber": "ID25004200",
+    "invoiceDate": "2025-07-25",
+    "totalNetAmount": 47341.5,
+    "totalAmount": 47341.5,
+    "totalTaxAmount": 0.0,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "NO 400 & 401 JALAN PERUSAHAAN 5, TMN BANDAR BARU MERGONG, LEBUHRAYA SULTANAH BAHIYAH, 05150 ALOR SETAR, KEDAH",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billToTaxIdentificationNumber": "C5884056070",
+    "billFromName": "ANN JOO STEEL BERHAD",
+    "billFromComposite": "Wisma Ann Joo, Lot 19391, Batu 8 1/2, Jalan Klang Lama, 46150 Petaling Jaya, Selangor Darul Ehsan, Malaysia",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromTaxIdentificationNumber": "C855273080",
+    "billFromBusinessRegistrationNumber": "199501005689",
+    "purchaseOrderNumber": "K2 513875",
+    "deliveryOrderNumber": "LTA2507250095",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "HR Ribbed Weldable Reinforcing Steel B500B,10.0mm * 12.000M,138 PCS, FLD",
+      "description": "HRD_B500B_005",
+      "quantity": 10.22,
+      "unitOfMeasure": "MT",
+      "unitPrice": 2340.0,
+      "netAmount": 23914.8,
+      "taxRate": "0%",
+      "tax": 0.0,
+      "grossAmount": 23914.8
+     },
+     {
+      "articleName": "HR Ribbed Weldable Reinforcing Steel B500B,12.0mm * 12.000M,96 PCS, FLD",
+      "description": "HRD_B500B_004",
+      "quantity": 10.23,
+      "unitOfMeasure": "MT",
+      "unitPrice": 2290.0,
+      "netAmount": 23426.7,
+      "taxRate": "0%",
+      "tax": 0.0,
+      "grossAmount": 23426.7
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "taxRate": "0%",
+      "netTaxableAmount": 47341.5,
+      "tax": 0.0
+     }
+    ]
+   }
+  ]
+ },
+ "8dd45e48|A_中文现行": {
+  "elapsed_s": 4.5959391593933105,
+  "usage": {
+   "prompt_tokens": 7613,
+   "output_tokens": 568,
+   "total_tokens": 8181
+  },
+  "score": null,
+  "output": [
+   {
+    "docType": "invoice",
+    "page": [
+     1
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "EM-IV-38360",
+    "invoiceDate": "2025-10-17",
+    "totalNetAmount": 1216,
+    "totalAmount": 1337.6,
+    "totalTaxAmount": 121.6,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "NO. 400 & 401, JALAN PERUSAHAAN 5, TAMAN BANDAR BARU MERGONG LEBUHRAYA SULTANAH BAHIYAN 05150 ALOR SETAR KEDAH",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billFromName": "Ezi MOTARTECH SDN. BHD.",
+    "billFromComposite": "80, Jalan Mesjid Negeri, 11600 Pulau Pinang, Malaysia.",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromBusinessRegistrationNumber": "200901031690 (874800-D)",
+    "purchaseOrderNumber": "W1 527459",
+    "deliveryOrderNumber": "EMDO2510-0405",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "Ezi STAR FIX - 25KG",
+      "description": "EA101-SF25-KL",
+      "quantity": 64,
+      "unitOfMeasure": "BAG",
+      "unitPrice": 19,
+      "netAmount": 1216,
+      "taxRate": "10%",
+      "tax": 121.6,
+      "grossAmount": 1337.6
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "taxRate": "10%",
+      "netTaxableAmount": 1216,
+      "tax": 121.6
+     }
+    ]
+   }
+  ]
+ },
+ "8dd45e48|B_英文翻译": {
+  "elapsed_s": 3.893929958343506,
+  "usage": {
+   "prompt_tokens": 7391,
+   "output_tokens": 592,
+   "total_tokens": 7983
+  },
+  "score": null,
+  "output": [
+   {
+    "docType": "invoice",
+    "page": [
+     1
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "EM-IV-38360",
+    "invoiceDate": "2025-10-17",
+    "totalNetAmount": 1216.0,
+    "totalAmount": 1337.6,
+    "totalTaxAmount": 121.6,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD",
+    "billToComposite": "NO. 400 & 401, JALAN PERUSAHAAN 5, TAMAN BANDAR BARU MERGONG LEBUHRAYA SULTANAH BAHIYAN 05150 ALOR SETAR KEDAH",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billFromName": "Ezi MOTARTECH SDN. BHD.",
+    "billFromComposite": "80, Jalan Mesjid Negeri, 11600 Pulau Pinang, Malaysia.",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromBusinessRegistrationNumber": "200901031690 (874800-D)",
+    "purchaseOrderNumber": "W1 527459",
+    "dueDate": "2025-12-16",
+    "deliveryOrderNumber": "EMDO2510-0405",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "Ezi STAR FIX - 25KG",
+      "quantity": 64,
+      "unitOfMeasure": "BAG",
+      "unitPrice": 19.0,
+      "netAmount": 1216.0,
+      "taxRate": "10%",
+      "deliveryOrderNumber": "EMDO2510-0405",
+      "purchaseOrderNumber": "W1 527459"
+     }
+    ],
+    "detailOfTaxSummary": [
+     {
+      "taxCategory": "SST",
+      "taxRate": "10%",
+      "netTaxableAmount": 1216.0,
+      "tax": 121.6
+     }
+    ]
+   }
+  ]
+ },
+ "e0703933|A_中文现行": {
+  "elapsed_s": 3.865649938583374,
+  "usage": {
+   "prompt_tokens": 7613,
+   "output_tokens": 480,
+   "total_tokens": 8093
+  },
+  "score": null,
+  "output": [
+   {
+    "docType": "invoice",
+    "page": [
+     1
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "DB-4523-2",
+    "invoiceDate": "2025-08-04",
+    "totalNetAmount": 1380.0,
+    "totalAmount": 1380.0,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD.",
+    "billToComposite": "Menara Chin Hin, Level 22-23, 8TH & Stellar, No.1, Jalan Naga Emas, Sri Petaling, 57000 Kuala Lumpur.",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billFromName": "DAY BRIGHT WOOD INDUSTRIES SDN. BHD.",
+    "billFromComposite": "PT 1223 & PT 1224, JLN SG. LALANG, KG. PASIR, 43500 SEMENYIH, SELANGOR DARUL EHSAN.",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromBusinessRegistrationNumber": "1264006-M",
+    "purchaseOrderNumber": "W1 520222",
+    "deliveryOrderNumber": "4523",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "Mixed Hardwood Sawntimber - 1\" X 2\" X 10 ft. UP (A)",
+      "description": "B/NO - SA 218/7 360/10",
+      "quantity": 1.0,
+      "unitOfMeasure": "TON",
+      "unitPrice": 1380.0,
+      "netAmount": 1380.0
+     }
+    ]
+   }
+  ]
+ },
+ "e0703933|B_英文翻译": {
+  "elapsed_s": 2.8255772590637207,
+  "usage": {
+   "prompt_tokens": 7391,
+   "output_tokens": 483,
+   "total_tokens": 7874
+  },
+  "score": null,
+  "output": [
+   {
+    "docType": "invoice",
+    "page": [
+     1
+    ],
+    "invoiceType": "Commercial Invoice",
+    "nameOfInvoice": "INVOICE",
+    "invoiceNumber": "DB-4523-2",
+    "invoiceDate": "2025-08-04",
+    "totalNetAmount": 1380.0,
+    "totalAmount": 1380.0,
+    "currency": "MYR",
+    "billToName": "PP CHIN HIN SDN BHD.",
+    "billToComposite": "Menara Chin Hin\nLevel 22-23, 8TH & Stellar,\nNo.1, Jalan Naga Emas, Sri Petaling,\n57000 Kuala Lumpur.",
+    "billToCountry": "Malaysia",
+    "billToCountryCode": "MY",
+    "billFromName": "DAY BRIGHT WOOD INDUSTRIES SDN. BHD.",
+    "billFromComposite": "PT 1223 & PT 1224, JLN SG. LALANG, KG. PASIR, 43500 SEMENYIH, SELANGOR DARUL EHSAN.",
+    "billFromCountry": "Malaysia",
+    "billFromCountryCode": "MY",
+    "billFromBusinessRegistrationNumber": "1264006-M",
+    "purchaseOrderNumber": "W1 520222",
+    "deliveryOrderNumber": "4523",
+    "detailOfGoodsOrServices": [
+     {
+      "articleName": "Mixed Hardwood Sawntimber - 1\" X 2\" X 10 ft. UP (A)",
+      "description": "B/NO - SA 218/7 360/10",
+      "quantity": 360,
+      "unitOfMeasure": "PC",
+      "unitPrice": 1380.0,
+      "netAmount": 1380.0
+     }
+    ]
+   }
+  ]
+ }
+}

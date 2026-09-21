@@ -15,9 +15,24 @@
 
   1. 扩展名白名单
   2. 非空 / 不超上限
-  3. **魔数与扩展名一致** —— 抓"改了后缀的假 jpg"，这是模型 400 的高发成因
+  3. **魔数可识别** —— 内容必须是某个受支持类型；**不要求与扩展名一致**
   4. **真的能打开** —— 用 PyMuPDF 实际解析，抓结构性损坏
   5. **像素下限** —— 小到不可能是票据的图（1×1 之类）
+
+## 后缀写错不再拒收（2026-09-02）
+
+早先第 3 步要求"魔数与扩展名一致"，把 PNG 存成 `.jpg` 的文件判 `5000` 拒收。
+但手机截图/相册导出改错后缀极常见，内容本身完全能识别——拒收是错杀。
+现在改为**以内容为准**：魔数认出真实类型就放行，并由 `sniff_ext()` 把真实
+类型回传给调用方，让落盘时用**正确的后缀**命名。
+
+这一步是必须的：两个处理器都按文件后缀推 MIME
+（`gemini_processor.mime_map` / `qwen_processor`），若只放宽校验而不纠正后缀，
+PNG 会被当 `image/jpeg` 发给模型，失败只是从受理期挪到了模型 400——更晚更贵。
+
+仍然**保留扩展名白名单**（第 1 步）：`.docx` 与 `.xlsx` 共用 ZIP 魔数
+（`PK\x03\x04`），纯靠内容无法区分，去掉白名单会让 docx 混进来。
+"后缀写错"与"类型不支持"是两回事，前者放行、后者照拒。
 
 ## 不校验什么
 
@@ -69,6 +84,32 @@ class InvalidUpload(Exception):
         self.reason = reason
 
 
+def sniff_ext(file_bytes: bytes) -> str | None:
+    """按魔数认出真实类型 → 规范扩展名（如 `".png"`）；认不出返回 None。
+
+    落盘前用它纠正后缀：处理器按后缀推 MIME，后缀错了模型就会收到错误的
+    Content-Type。`.jpeg` 统一归一到 `.jpg`（同一魔数，取其一即可）。
+    ZIP 系（xlsx/docx…）魔数相同，只能认到 `.xlsx`，故仍需扩展名白名单兜底。
+    """
+    if not file_bytes:
+        return None
+    for ext, magics in _MAGIC.items():
+        if ext == ".jpeg":                     # 与 .jpg 同魔数，只报一个
+            continue
+        if any(file_bytes.startswith(m) for m in magics):
+            return ext
+    return None
+
+
+def effective_ext(file_bytes: bytes, filename: str) -> str:
+    """落盘该用的后缀：优先真实类型，认不出时退回原文件名的后缀。
+
+    调用方（`_save_temp` / 异步 spool）用它命名临时文件，从而让下游按后缀
+    推 MIME 的处理器拿到正确的类型。
+    """
+    return sniff_ext(file_bytes) or Path(filename or "").suffix.lower()
+
+
 def validate_upload(file_bytes: bytes, filename: str, *, max_bytes: int) -> int:
     """校验上传内容，→ 页数（PDF 为实际页数，图片恒 1）。
 
@@ -91,17 +132,23 @@ def validate_upload(file_bytes: bytes, filename: str, *, max_bytes: int) -> int:
             f"{max_bytes / 1024 / 1024:.0f} MB"
         )
 
-    expected = _MAGIC.get(ext, [])
-    if expected and not any(file_bytes.startswith(m) for m in expected):
+    # 以内容为准：认出真实类型就放行，**不要求与扩展名一致**（改错后缀是
+    # 手机截图的常态，内容能识别就不该拒收）。认不出任何受支持类型才拒——
+    # 那种字节流下游模型同样读不了，早拦早省。
+    real = sniff_ext(file_bytes)
+    if real is None:
         raise InvalidUpload(
-            f"文件内容与扩展名 {ext} 不符（文件头是 "
-            f"{file_bytes[:4].hex()}）——请确认没有改错后缀或上传了损坏的文件"
+            f"文件内容无法识别为受支持的类型（文件头是 "
+            f"{file_bytes[:4].hex()}）——请确认文件没有损坏"
         )
+    if real != ext and not (real == ".jpg" and ext == ".jpeg"):
+        # 只记不拒：后续落盘会用真实类型命名，下游 MIME 因此正确。
+        logger.info("上传文件后缀 %s 与实际类型 %s 不符，按实际类型处理", ext, real)
 
-    if ext not in _DECODABLE:
+    if real not in _DECODABLE:
         return 1
 
-    return _probe(file_bytes, ext)
+    return _probe(file_bytes, real)
 
 
 def _probe(file_bytes: bytes, ext: str) -> int:

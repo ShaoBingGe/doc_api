@@ -1,457 +1,474 @@
-id: '7_9'
-remark: gemini json schema, anyof. Design v7 — Part1 (MY country global) + Part2 (defer to schema descriptions) + Part3 (platform output contract reference only; composer injects from assets/global_output_contract.yaml). 7_9 合并 prompts/tpl7 五轮迭代（v5 · 8/8×4 轮）：刷卡/现金小票判 receipt、银行卡交易行判 other、加油票取 Reference No、多币种优先 MYR、nameOfInvoice/unitPrice 补齐。
+id: '7_16'
+remark: "Gemini JSON schema, anyof. (1) Classify card/cash slips as receipts, bank card transaction rows as other, extract Reference No for fuel tickets, prioritize MYR for multi-currency, and complete nameOfInvoice/unitPrice. (2) Bahasa Malaysia document compatibility: Malay title/field label mapping, Malay month/date parsing, and Malay units of measure; keep field names in English and field values in original Malay. (3) Reclassify quotations (SEBUTHARGA/QUOTATION) as other to prevent double accounting; (4) \"Different title = different document\" takes precedence over content-based merging; (5) Strictly forbid using 0 for missing values (no tax line must not have tax=0); clarify ambiguities for Deskripsi/Rujukan Kami/Bil. headers and RA-class business registration numbers. (6) Tighten Tax Invoice criteria: must have **title text** containing TAX INVOICE/INVOIS CUKAI; Sales Tax Reg No or SST columns alone do not constitute evidence. (7) Expand BRN self-inspection to **old numbers in parentheses** (6-7 digits + letter), listing high-frequency confusion pairs like 8↔6, 3↔8, 1↔7 (e.g., stably misread as 1298487-V → 1296487-V after schema hard constraints were enabled); old self-check only covered 12-digit new numbers."
 structure_prompt_version: '6'
-# 国家锁定字段（国家规范·不可修改）：识别规则由 Part 1 严格管控，排除出 Part 2
-# 反思/优化范围，客户在自定义面板中不可增删改/改类型。
+# ⚠️ This template's **field-level rules live in the schema `description`
+# fields as the single source of truth** (layered slimming project, see
+# docs/plan-my-template-slimming.md). The body text only keeps: document
+# splitting, the three-way adjudication layer, global facts (language/
+# currency/date), and output discipline.
+# **Depends on PASS_SCHEMA_TO_MODEL=true**: when the switch is off,
+# descriptions are never sent to the model and every migrated rule silently
+# stops working. Confirm the switch is true before deploying;
+# providers without response_schema support (qwen) get the descriptions
+# rendered as a text appendix by processors/schema_text.py automatically,
+# so no rule is lost.
+# Country-locked fields (country standard · immutable): recognition rules
+# for these are strictly governed by Part 1 and excluded from Part 2
+# reflection/optimization scope; customers cannot add/remove/rename/retype
+# them in the customization panel.
 locked_fields:
-  - invoiceNumber                    # 发票号码
-  - invoiceDate                      # 开票日期
-  - billFromName                     # 开票方名称
-  - billFromTaxIdentificationNumber  # 开票方税号
+  - invoiceNumber                    # invoice number
+  - invoiceDate                      # invoice date
+  - billFromName                     # issuer name
+  - billFromTaxIdentificationNumber  # issuer tax ID
 prompt_template:
   prompt_format: |-
-    # 任务
-    请识别并提取这份马来西亚（MY）票据文档（PDF / 图片），按下方 JSON Schema 输出合法 JSON。
-    **一份文档可能含多张彼此独立的票据**（常见于整月发票扫在一个 PDF 里），也可能是
-    一张票据跨多页；还可能排版混乱、印刷模糊。先按 §1.0 定「有几张」，再逐张提取。
+    # Task
+    Recognize and extract this Malaysian (MY) document (PDF / image), and output a valid JSON according to the JSON Schema below.
+    **A single document may contain multiple independent documents** (commonly seen when full-month invoices are scanned into one PDF), a single document may span multiple pages, or the layout might be messy and printed text blurred. First determine "how many" according to §1.0, and then extract them page by page.
 
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Part 1 · 马来西亚（MY）国家全局说明
+    # Part 1 · Malaysia (MY) National Global Instructions
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    ## 1.0 票据切分 —— 先定「有几张」，再定「每张是什么」
-    切错张数会让整条记录作废，**这一步优先于分类与字段提取**。
+    ## 1.0 Document Splitting — Determine "How Many" First, Then "What Each Is"
+    Splitting the wrong number of documents invalidates the entire record. **This step takes precedence over classification and field extraction.**
 
-    ### 1.0.1 一条记录 = 一张物理独立的凭证
-    有自己的发行方、单号、金额、日期的一张凭证算一条。同一张凭证内部的多个区块
-    （表头 / 明细表 / 付款栏 / 签收栏）**合为一条**，不得拆开。
+    ### 1.0.1 One Record = One Physically Independent Voucher
+    A voucher with its own issuer, document number, amount, and date counts as one. Multiple sections within the same voucher (header / line items / payment section / signature section) **must be merged into one** and cannot be split.
 
-    ### 1.0.2 逐页扫描，每一页都要看
-    多页文档必须**从第 1 页到最后一页逐页检查**，不得只看首页就结束。
-    典型场景：一份 PDF 把整月的多张发票扫在一起，每页一张、各有各的
-    `Invoice No.` 与 `Total` —— 这种情况必须逐张输出，有几张就输出几条。
-    自检：若文档有 N 页且每页都印着不同的 Invoice No./Total，输出记录数应当接近 N，
-    只输出 1 条几乎一定是漏检，必须回头重查。
+    ### 1.0.2 Scan Page by Page, Inspect Every Page
+    Multi-page documents must be **checked page by page from page 1 to the last page**, without stopping at the cover page.
+    Typical scenario: A PDF scans multiple monthly invoices together, with each page having its own `Invoice No.` and `Total` — in this case, every single one must be output; output as many records as there are documents.
+    Self-check: If a document has N pages and each page prints a different Invoice No./Total, the output record count should be close to N. Outputting only 1 record is almost certainly a omission and requires going back to re-check.
 
-    ### 1.0.3 跨页单张 vs 多张独立 —— 按「单号 + 页码标记」判定
-    - **跨页单张**（合并为一条，`page` 列出全部页码）：后续页是前一页的延续，
-      特征为 **`Invoice No.` 与首页相同**，或页面标注 `Page 2 of 5` / `Page: 2/5`，
-      或标题为 `Attachment to Invoice` / `Continuation` / 仅有明细延续而无独立合计。
-    - **多张独立**（各自一条）：每页有**各自不同**的 `Invoice No.`，且各自有独立的
-      `Total` / `Total Payable` / `GROSS` 合计。
-    - 判据优先级：**先比 Invoice No.**（不同即为不同票据），再看页码标记，最后看是否有独立合计。
+    ### 1.0.3 Multi-page Single Document vs. Multiple Independent Documents — Determine by "Document Number + Page Marker"
+    - **Multi-page single document** (merged into one, `page` lists all page numbers): Subsequent pages are continuations of the previous page, characterized by **`Invoice No.` being identical to the first page**, or pages marked with `Page 2 of 5` / `Page: 2/5` / `Muka Surat 2/5`, or titled `Attachment to Invoice` / `Continuation`, or containing only continuous line items without an independent total.
+    - **Multiple independent documents** (each is an individual record): Each page has a **distinct** `Invoice No.` and its own independent `Total` / `Total Payable` / `GROSS` total.
+    - Priority for judgment: **Compare Invoice No. first** (different numbers mean different documents), then check page markers, and finally check whether there is an independent total.
 
-    ### 1.0.4 一页多张
-    同一页上下拼贴多张小票/发票时，每张各输出一条；`page` 均填该页页码。
-    禁止因商家相同、金额相同而合并或去重 —— 同额的两张仍是两条。
+    ### 1.0.4 Multiple Receipts on a Single Page
+    When multiple receipts/invoices are pasted vertically on the same page, output a separate record for each; `page` should be filled with that page number.
+    Do not merge or deduplicate due to identical merchants or identical amounts — two identical amounts are still two separate records.
 
-    ### 1.0.5 附件与非票据页
-    发票后附的送货单（Delivery Order）、装箱单、对账单、条款页、空白页，
-    若**不构成独立的付款凭证**，记为 `docType: other`（仅输出 docType 与 page）；
-    不要把它们并进发票，也不要漏掉不输出。
+    ### 1.0.5 Attachments and Non-document Pages
+    Delivery orders, packing lists, statements of account, terms pages, and blank pages attached after an invoice, if **they do not constitute an independent payment voucher**, should be marked as `docType: other` (outputting only docType and page); do not merge them into the invoice, nor omit them from output.
 
-    下列内容即便含刷卡字样，也一律判 `other`，**不要**当成 receipt：
-    - **银行卡 / 电子钱包账单里的单条交易记录**：特征是只有一行「日期 + 商户名 +
-      金额」，金额常带负号（如 `-RM 100.00`）或标注 `Transaction Date:`，
-      **没有商户抬头版块、没有明细行、没有合计行、没有任何单号**。
-      它是账单的一行，不是商户开出的凭证。
-    - **对账单 / 交易流水表**（Transaction History、Statement、账单汇总表）：
-      整页是表格化的多行流水，即便每行有金额也不拆成多张票据。
+    The following contents, even if they contain card-swiping terms, must be classified as `other`, and **must not** be treated as receipts:
+    - **Single transaction records in bank card / e-wallet statements**: Characterized by having only a single line of "Date + Merchant Name + Amount", amounts often carrying a minus sign (such as `-RM 100.00`) or marked with `Transaction Date:`, with **no merchant header section, no line items, no total row, and no document number**. It is a single line of a statement, not a voucher issued by a merchant. (**Exception**: a phone screenshot of that payment's own **detail screen** is `paymentScreenshot`, see §1.1.2 — a row inside a list is not the same thing as a dedicated detail screen.)
+    - **Statements of Account / Transaction History Tables**: Full pages of tabulated multi-row histories; even if each row has an amount, they are not split into multiple vouchers.
 
-    ### 1.0.6 输出前清点
-    输出 JSON 前，先在心里列出「第几页-单号-合计金额」的清单，再逐条转成记录；
-    **记录数必须等于清单条数**。每条记录都要能指认它在第几页；指不出来的不要输出，
-    也不要编造票面上不存在的单号或金额。
+    ### 1.0.6 Inventory Before Output
+    Before outputting the JSON, mentally list the manifest of "page number - document number - total amount", and then convert them into records one by one; **the record count must equal the manifest item count**. Every record must be traceable to a specific page; if it cannot be traced, do not output it, nor fabricate document numbers or amounts not present on the document.
 
-    ## 1.1 票据种类分类（docType + invoiceType）
-    - **invoice**：正式付款凭证。**只有同时具备「买方抬头 + 供应商税号（TIN/SST）+
-      明确税额行」的正式票据，才判 invoice**；抬头写 `TAX INVOICE` 且有 SST/税额的，判 invoice。
-      下列子类型一律归为 invoice（即使名称含 quotation / credit / proforma 等）：
-      - Commercial Invoice（标准发票，默认子类）
-      - Proforma Invoice（形式发票；票面含 PROFORMA / PRO FORMA 等关键词）
-      - Credit Note（贷项发票；票面含 AVOIR / CREDIT 等关键词，或 totalAmount < 0）
-      - Tax Invoice（税务发票；票面含 "Tax Invoice" / "Faktur Pajak"，MY 多数 SST 发票属此类）
-      - Debit Note（借项发票）
-      - Quotation 报价单：若含供应商/客户/明细/金额等 invoice 核心要素，亦归 invoice
-      - Receipt/Tax Invoice 收据税票：含税务信息（如 SST/TIN）的归 invoice
-    - **receipt**：小额付款凭证，一般无详细税务信息，如各种小票、收据。
-      - **刷卡支付凭条与收银小票**：马来西亚加油站、便利店、餐饮的刷卡凭条 / POS 小票，
-        **即便票面印有 `INVOICE` / `Current Invoice` 字样，也一律判 receipt**。
-        识别特征（命中任意两条即判 receipt）：
-        - 窄条形票面（收银机 / POS 打印），字段竖排、点阵或热敏打印
-        - 含刷卡交易字段：`Card Name` / `Terminal` / `Site Id` / `Auth Code` /
-          `App ID` / `App Crypt` / `Approved` / `Verification` / `Seq. Number`
-        - 含 `Pump` / `FuelSave` / `BUDI95` / `Subsidy` / `Litr` / `ltr` 等加油字样
-        - **没有买方信息**（无 Bill To / Customer / MESSRS 抬头）
-        - 没有独立的税额拆分表
-      - **手写 / 预印现金收据本**：票面预印表格、手工填写金额的现金收据，判 receipt，
-        **不要因为它有编号就判成 invoice**。识别特征：抬头 `CASH BILL` / `BILL` / `RESIT` /
-        `INVOICE`（预印），右上角预印流水号（如 `No. 10206`）；列头为
-        `Butir-Butir / Particulars`、`Kuantiti / Quantity`、`Harga / Unit Price`、
-        `Nilai / Amount`；底部有 `Terima Oleh / Received By`、`Disahkan Oleh` 签收栏；
-        内容手写体、无税号、无买方公司信息、无税额拆分。
-      - 判据：一张真正的 receipt 必然具备「**商户抬头 + 至少一行消费明细 +
-        一个合计金额**」，三者缺一就不是 receipt（多半是 other，见 §1.0.5）。
-    - **other**：合同、订单确认书、对账单、账单流水等不属 invoice/receipt 的文档（见 §1.0.5）。
+    ### 1.0.7 Different Title = Different Document (**Takes Precedence Over** "Merge If Content is Identical")
+    When judging whether two pages are the same document, **the priority of the title is higher than content similarity**:
+    - Different titles across two pages (e.g., page 1 is `SEBUTHARGA`, page 2 is `INVOIS`; or `QUOTATION` vs `INVOICE`; or `DELIVERY ORDER` vs `INVOICE`) → **Must be two independent documents, each forming its own record**, **even if** the line items, unit prices, quantities, and total amounts are **completely identical**, and **even if** `Rujukan Kami` / `Our Ref` / reference numbers are identical on both pages.
+    - Merchants putting "quotation + formal invoice" or "delivery order + invoice" into the same PDF is common practice, and content across two pages naturally matches — **consistent content is entirely normal and does not constitute a reason for merging**.
+    - Only when titles are identical or subsequent pages have no title, and all features of §1.0.3 are met (same `Invoice No.`, `Page 2 of N` marker, continued line items without an independent total), should they be merged into a multi-page single document.
+    - **Exception to this rule — e-Invoice summary page + formal invoice**: The LHDN e-invoice summary page (title `E-INVOICE`, characterized by: `e-Invoice code` / `Unique Identifier No.` / Supplier TIN section) and its subsequent format page with the **same document number** (such as `ORIGINAL` / `TAX INVOICE` headings) are **two representations of the same invoice** — merge them into one, `page` lists both pages, and fields take the union of both pages (TIN/date from the summary page + line items from the format page).
+    - Self-check: If you intend to merge two pages into one, first answer: "Are the title words of these two pages literally identical?" — If not, **they cannot be merged**.
 
-    ## 1.2 内容与格式统一要求
-    - **语言**：MY 票据以英文为主，部分中/马来文。**保持原文，不翻译**。
-    - **货币**：默认 MYR / RM。
-      - 千分位 `,` + 小数点 `.`（同 USD/CNY/GBP）：`6,000.00` → 实际值 `6000.00`；`1,234,567.89` → `1234567.89`。
-      - 注意区分越南 VND / 部分欧洲格式（`.` 千分位、`,` 小数点）—— 若票面出现 VND 等标识或数字规律明显相反，按相反规则解析。
-      - **输出统一为纯数字字符串/数值，严禁保留千分位符号或货币符号。**
-      - **多币种票面优先取 MYR**：票面同时列出外币与马币两种金额时（典型：境外平台开给
-        马来西亚客户的收据，如 `GRAND TOTAL USD 54.98` 与 `Total Charge MYR 224.97 (USD 54.98)`）：
-        `currency` 取 **MYR**，`totalAmount` 取**马币那一行的数值**（上例为 `224.97`，
-        不是 `54.98`）。判据：马币金额通常出现在 `Total Charge` / `Amount Charged` 一行，
-        是**实际扣款金额**；外币行只是计价币种。
-        票面只有单一外币、完全没有马币行时，照原币种输出，不做换算。
-    - **税率**：以百分比字符串输出，如 `"6%"`、`"10%"`。
-    - **日期处理（绝对规则，必须严格遵守）**：
-      1. **核心原则：年份必须 ≥ 2015**。任何解析出 < 2015（如 2014/2012/2006）的结果一律抛弃。
-      2. **歧义消除**：MY 主流为 `DD-MM-YYYY`；遇到 `07-09-24` 这种二位年时按上述年份原则筛选；剩余多个合理解析中取最合理者。
-      3. **输出格式**：最终所有日期字段 **统一 YYYY-MM-DD**。
+    ## 1.1 Document Type Classification (docType + invoiceType)
+    - **invoice**: Formal payment voucher. **Only formal vouchers possessing simultaneously "Buyer's header + Supplier tax ID (TIN/SST) + explicit tax amount row" are classified as invoice**; headings written as `TAX INVOICE` with SST/tax amounts are classified as invoice.
+      The following subtypes are all classified as invoice (even if their names contain quotation, credit, proforma, etc.):
+      - Commercial Invoice (standard invoice, default subtype)
+      - Proforma Invoice (document contains keywords like PROFORMA / PRO FORMA)
+      - Credit Note (document contains keywords like AVOIR / CREDIT, or totalAmount < 0)
+      - Tax Invoice: **The criterion is that the document title text** contains `TAX INVOICE` / `INVOIS CUKAI` / `Faktur Pajak`. **Sales Tax Registration Numbers alone do not constitute evidence** — `Sales Tax Reg No` / `No. Cukai Jualan` / `SST ID` are the seller's tax registration information, and many ordinary invoices titled simply `INVOICE` also print them; if the title is `INVOICE`, classify it as Commercial Invoice; do not upgrade it to Tax Invoice just because a tax number, SST, or TAX column appears on the document.
+      - Debit Note
+      - Receipt/Tax Invoice: Receipts containing tax information (such as SST/TIN) are classified as invoice.
+      - **Exception: Quotations do not belong to invoices**, see §1.1.1 below.
+    - **receipt**: Small-amount payment vouchers, generally without detailed tax information, such as various slips and receipts.
+      - **Card payment slips and cash register receipts**: Card payment slips / POS receipts from Malaysian gas stations, convenience stores, and restaurants, **even if printed with `INVOICE` / `Current Invoice`**, are strictly classified as receipt.
+      Identification features (meeting any two qualifies it as a receipt):
+      - Narrow strip format (cash register / POS printed), vertical fields, dot-matrix or thermal printing.
+      - Contains card payment fields: `Card Name` / `Terminal` / `Site Id` / `Auth Code` / `App ID` / `App Crypt` / `Approved` / `Verification` / `Seq. Number`.
+      - Contains fueling terms such as `Pump` / `FuelSave` / `BUDI95` / `Subsidy` / `Litr` / `ltr`.
+      - **No buyer information** (no Bill To / Customer / MESSRS header).
+      - No independent tax breakdown table.
+    - **Handwritten / preprinted cash receipt books**: Cash receipts with preprinted tables and manually filled amounts are classified as receipts; **do not classify them as invoices just because they have a serial number**. Identification features: heading `CASH BILL` / `BILL` / `RESIT` / `INVOICE` (preprinted), preprinted serial number in the top right corner (e.g., `No. 10206`); column headers `Butir-Butir / Particulars`, `Kuantiti / Quantity`, `Harga / Unit Price`, `Nilai / Amount`; bottom signature section `Terima Oleh / Received By`, `Disahkan Oleh`; handwritten content, no tax ID, no buyer company info, no tax breakdown.
+      - Criterion: A true receipt must possess "**merchant header + at least one consumption line item + a total amount**"; lacking any of these three means it is not a receipt (mostly other, see §1.0.5).
+    - **paymentScreenshot**: A phone screenshot of a **single completed payment's detail screen** (toll card / bank card / e-wallet / third-party payment platform). See §1.1.2 — this type has its own reduced field set.
+    - **other**: Contracts, order confirmations, **quotations**, statements of account, billing logs, and other documents that do not belong to invoices/receipts/paymentScreenshots (see §1.0.5, §1.1.1).
 
-    ## 1.3 MY 税号/税编强制规定
-    - **TIN（Tax Identification Number）**：所有 MY 实体的纳税识别号。
-      - 格式：`C` + 10 位数字（如 `C5884056070`、`C4908240100`）。
-      - 一张票面上若同时出现卖方 TIN 与买方 TIN：
-        - 卖方 TIN → `billFromTaxIdentificationNumber`
-        - 买方 TIN → `billToTaxIdentificationNumber`
-      - 关键词：`TIN`、`TIN No.`、`Supplier TIN`、`Buyer TIN`、`Customer Tin No.`
-    - **SSM / Company Reg. No.（业务登记号）**：MY 公司注册号，**仅供应商提取，不取买方**。
-      - 格式：12 位纯数字（新号，如 `199201000276`），或旧号带连字符（如 `518287-T`、`424868-V`），或并列（如 `199701009372 (424868-V)`）—— 完整保留原文。
-      - 关键词：`Company Reg.No`、`Registration No`、`SSM`，或公司名称右侧括号内的 12 位数字。
-      - 字段：`billFromBusinessRegistrationNumber`。
-      - **逐位核读（本字段最易错）**：新式号常紧挨公司名排在同一行、字号偏小，扫描件里
-        易与公司名笔画重叠粘连，**末位尤其容易读错**（如 `…018633` 误读成 `…018630`）。
-        提取后做三项自检：① 去掉括号旧号后应恰为 **12 位纯数字**；
-        ② 前 4 位是注册年份，须在 1950–本年之间；
-        ③ 若该号在票面出现多处（抬头 / 页脚 / 印章 / 条款区），**相互比对取一致值**。
-    - **SST Number（销售与服务税号）**：与 TIN / SSM 完全不同，**不要混用**。MY 票面常单独标注 `Sales Tax No.` / `SST ID`。
-      - **严禁将 SST 号当作 invoice number / TIN / SSM**。
-    - **发票号 invoiceNumber**：
-      - 关键词：`Invoice No`、`INVOICE NO:`、`E INV NO`、`No.`
-      - 典型格式：`PT-148862`、`S-25/10-0059`、`INV13398`、`IN2601/1024`、`25FC011847`
-      - **严禁将 Sales Tax No 或 SST ID 误取为 invoice number。**
-      - **加油 / 刷卡凭条的单号**：先找票面明确的单号标注——`Invoice No` / `Bill No` /
-        `Receipt No` / `Resit No` / `R.No` / `Master Bill` / `Booking No`，**有就优先取它**；
-        上述标注**全部缺失**时才按顺序取：① `Reference No` / `Ref No` / `Ref. No`
-        ② `Approval Code` / `Auth Code`（仅当连 Reference No 也没有）。
-      - **无论何种票据都绝对不要取**下列字段作为 invoiceNumber：
-        `Terminal`（终端号，常见 8 位纯数字）、`Site Id`、`Site Tran No`、`Batch No`、
-        `Card No`、`Seq. Number`、`App ID`、`App Crypt`、`CDB Ref No`。
-      - 自检：同一份文档里若两张**不同**的票出现**相同**的 invoiceNumber，
-        说明取错了字段（多半取成了 Terminal 或 Site Id）——回到票面重新按上表取值。
+    ### 1.1.1 Quotations Must Be Classified as Other (Preventing Double Accounting)
+    **Documents titled `SEBUTHARGA` / `SEBUT HARGA` / `QUOTATION` / `QUOTE` / `报价单` must be classified as `docType: other`** (outputting only docType and page), even if they possess all invoice elements such as supplier, customer, line items, amounts, and even seals/signatures.
 
-    ## 1.35 明细行的字段归属（易错，务必按此填）
-    明细数组 `detailOfGoodsOrServices` 每行的字段归属**由语义决定，不看票面列头的英文用词**：
-    - **`articleName` = 这一行卖的是什么（品名/服务名）**。MY 发票的品名列表头五花八门：
-      `Description`、`Item`、`Item Description`、`Particulars`、`Product`、`Descriptions of Goods`
-      —— **无论表头叫哪个，品名一律填 `articleName`**。
-      只要该行有商品/服务，`articleName` **就不得为空**。
-      例：表头是 `Description`、该行内容是 `LONGKANG TANAH 6" (WL)`
-      → `articleName` = `LONGKANG TANAH 6" (WL)`。
-    - **`description` = 品名之外的补充说明**（规格、批号、备注列 Remark/Notes、型号、`c/o 某某` 等）。
-      **它不是票面 `Description` 列的对应字段。**
-      若该行只有一段文字（就是品名），`description` **留空**，不要把品名复制一份到这里。
-    - 自检：输出前检查每一行——**出现 `articleName` 为空但 `description` 有品名，即为填反了，必须对调**。
+    Reason: A quotation is an **offer before transaction completion**, not a payment voucher. In practice, merchants often put "quotation + formal invoice" in the same PDF (with identical amounts on both pages); if both are classified as invoice, downstream reconciliation will **count the exact same money twice**.
 
-    ## 1.4 必填字段与缺失处理
-    - **invoice / receipt 类型**：`docType`、`invoiceType`、`page`、`currency` 必须输出；若票面无 currency，按 MY 上下文推断（默认 MYR）。
-    - **other 类型**：仅 `docType`、`page` 必须输出。
-    - **缺失信息**：无法找到的字段一律不输出，**不要推断、不要捏造**。
+    Identification anchors (hitting any means a quotation):
+    - Title box reads `SEBUTHARGA` / `SEBUT HARGA` / `QUOTATION`;
+    - Main text contains offer wording like `mengemukakan sebut harga` (submitting quotation), `harga yang ditawarkan` (offered price), `Sekiranya terdapat sebarang perubahan ... harga ... akan turut berubah` (prices are subject to change);
+    - Document number has a prefix like `QUO` / `QT` / `SH` (such as `QUO-(07/26)(2)`) and the full text lacks any `No. Invois` / `Invoice No`.
+    - **Counter-evidence**: If the same page contains another explicit `No. Invois` / `Invoice No.` and the title is `INVOIS` / `INVOICE`, then it is an invoice and this rule does not apply.
+
+    **Relationship with multi-page merging**: Quotation pages and invoice pages, **even if content is identical and reference numbers match** (commonly identical `Rujukan Kami`), are **not** a multi-page single document — different titles mean two separate documents, each forming its own record (the quotation record is other). See §1.0.3 and §1.0.7 for details.
+
+    ### 1.1.2 Payment Screenshots (`docType: paymentScreenshot`)
+    A **phone screenshot of one completed payment's own detail screen** is classified as `docType: paymentScreenshot` — a type parallel to invoice / receipt / other. It records the fact "this amount left the account on this date"; it is not a merchant-issued voucher and is not meant to be reconstructed into an invoice.
+
+    **All three conditions must hold at once**; if any one fails, do not use this type:
+    1. **It is a portrait phone screenshot** — screen capture proportions with phone chrome present (status bar with clock / signal / battery, in-app title bar, or bottom navigation), rather than a photograph of a printed slip.
+    2. **It comes from a payment channel** — a toll card (Touch 'n Go, RFID, PayDirect, SmartTAG), or a credit card / debit card / bank app / e-wallet / third-party payment platform (DuitNow, Wise, GX, GrabPay, Boost, ShopeePay, etc.).
+    3. **It shows exactly one payment** — the screen is the detail view of a **single** transaction (one prominent amount plus that transaction's attribute rows). A scrollable list containing several transactions is **not** this type; it stays `other` per §1.0.5.
+
+    Typical layout to recognise: a large amount at the very top (`RM 27.00`, `-RM4.59`, `42.43 MYR`, `RM24.08`), a status word (`Paid` / `Successful` / `Settled` / `is successful`), then labelled attribute rows (`Transaction Type`, `Payment Details`, `Payment Method`, `Date/Time`, `Merchant`, `Transaction No.`, `Ref No.`, `Wallet Ref`, `Card ending in`).
+
+    **Output exactly these fields and nothing else**: `docType`, `page`, `invoiceDate`, `currency`, `totalAmount`, plus `remark` when the screen shows a payment description.
+    Even when merchant name, card number, reference numbers, exchange rate or toll entry/exit points are plainly visible, **do not output them as fields of their own** — this type deliberately carries only date / currency / amount and the payment's own description text.
+    - `totalAmount`: the one prominent amount. **Output it as a positive number** — a minus sign in a wallet or card app marks "deducted from balance", which is the normal direction for a payment and is **not** a Credit Note; the §1.1 Credit Note sign rule does not apply here (`-RM4.59` → `4.59`, `-RM816.00` → `816.00`).
+    - `currency`: read from the amount's own prefix/suffix (`RM` / `MYR` → `MYR`). When a foreign currency and a MYR amount both appear (e.g. `USD 5.83` alongside `RM24.08`), take **MYR** and the MYR amount, per §1.2.
+    - `invoiceDate`: the transaction date on screen, output as `YYYY-MM-DD`. When a full timestamp is shown (`15/07/2026 16:43:28`, `6 Jul 2026 - 1:54 PM`), take only the date part. When both a transaction date and a later settlement/completion date appear, take the **transaction** date.
+    - `remark`: on this type it carries **the payment's description** — the text the screen itself uses to say what this payment was for, copied verbatim: the value of a `Payment Details` row, or else the descriptive caption shown with the amount. Lookup order and exclusions are in the field's schema description. When the screen has no such text, leave it unoutput — its absence never changes the docType decision.
+
+    > The traceable serial number for this type is **not read from the screen** — the platform stamps `sourceFileHash` onto every record server-side. Do not attempt to output an invoice number.
+
+    ## 1.2 Content and Format Uniform Requirements
+    - **Language**: MY documents are predominantly in English, with some or **entire pages** using Bahasa Malaysia (Malay). **Keep field values in the original document without translation** — Malay content is output as-is (such as product name `NASI LEMAK BUNGKUS`, merchant name `KEDAI RUNCIT MAJU`), while the output JSON **field names** remain English schema fields. For Malay title-to-document type rulings, see §1.36; field-level label mappings are in each field's description.
+    - **Currency**: Default is MYR / RM.
+      - Thousands separator `,` + decimal point `.` (same as USD/CNY/GBP): `6,000.00` → actual value `6000.00`; `1,234,567.89` → `1234567.89`.
+      - Pay attention to distinguishing Vietnamese VND / certain European formats (`.` as thousands separator, `,` as decimal point) — if VND or similar indicators appear or numerical patterns are clearly opposite, parse according to opposite rules.
+      - **Output uniformly as pure numeric strings/values, strictly forbidding thousands separators or currency symbols.**
+      - **Multi-currency documents prioritize MYR**: When both foreign currency and Malaysian Ringgit amounts are listed on the document (typical example: overseas platforms issuing receipts to Malaysian customers, such as `GRAND TOTAL USD 54.98` and `Total Charge MYR 224.97 (USD 54.98)`): `currency` takes **MYR**, and `totalAmount` takes **the value of the Malaysian Ringgit row** (in the above example, `224.97`, not `54.98`). Criterion: MYR amounts usually appear on the `Total Charge` / `Amount Charged` line, which is the **actual deducted amount**; the foreign currency line is merely a pricing currency.
+        When the document has only a single foreign currency and completely lacks a MYR line, output in the original currency without conversion.
+    - **Tax Rate**: Output as a percentage string, such as `"6%"`, `"10%"`.
+    - **Date Processing (Absolute rule, must be strictly followed)**:
+      1. **Core principle: Year must be ≥ 2025**. Any result parsed as < 2025 (such as 2024/2012/2006) must be corrected, and years/dates cannot be later than the current date.
+      2. **Ambiguity resolution**: MY predominantly uses `DD-MM-YYYY`; encounter two-digit years like `07-09-24` and filter according to the above year principles; in the rare event of easily confused formats like "YY-MM-DD" / "MM-DD-YY", back-calculate using the current year-month and related page context, choosing the reasonable date closest to the current date.
+      3. **Output format**: All date fields **uniformly use YYYY-MM-DD**.
+
+    ## 1.3 Three Types of MY Numbers — Strict Prohibition of Misuse (Adjudication Layer)
+    MY documents often display three types of numbers simultaneously, with completely different field ownership; mixing them up is an error:
+    - **TIN** (`C` + 10 digits, e.g., `C5884056070`) → Only goes to billFrom / billTo TaxIdentificationNumber (supplier goes to From, buyer goes to To);
+    - **SSM Registration Number** → Only goes to billFromBusinessRegistrationNumber (**supplier only**). Forms: New 12-digit pure numeric (`199201000276`), old (`518287-T`), enterprise-style (`RA0085780-K`); **when old and new are listed side-by-side, retain the full original text** (`199701009372 (424868-V)` output as a whole string, do not take only one half);
+    - **SST Number** (`Sales Tax No.` / `SST ID` marker) → **No corresponding output field exists**, absolutely do not fill into invoice number, TIN, or registration number.
+    Keywords, format validation, digit-by-digit verification, and forbidden lists for each number are subject to the description of the corresponding field in the schema (invoiceNumber / bill*TaxIdentificationNumber / billFromBusinessRegistrationNumber).
+
+    ## 1.36 Bahasa Malaysia Document Compatibility
+    Documents may entirely or partially use Bahasa Malaysia. **JSON field names remain unchanged (still English schema fields), and field values copy the original Malay text from the document without translating to English**.
+    Field-level Malay label comparisons (document number/date/amount/tax/item column headers/parties/document chains) are provided in each field's description; extract according to field instructions.
+
+    ### 1.36.1 Titles and Document Types (docType / invoiceType / nameOfInvoice)
+    - `INVOIS` = Invoice; `INVOIS CUKAI` = Tax Invoice — the threshold for classifying as invoice is identical to the English version §1.1 (buyer header + supplier tax ID + explicit tax amount row), and is neither relaxed nor tightened because of language.
+    - `RESIT` / `RESIT RASMI` (official receipt) / `BIL` / `BIL TUNAI` (cash bill) → receipt cues; the criterion remains the three elements of §1.1 ("merchant header + line items + total").
+    - `NOTA KREDIT` → invoiceType = Credit Note; `NOTA DEBIT` → Debit Note (classified under invoice).
+    - `INVOIS PROFORMA` → Proforma Invoice; `SEBUT HARGA` (quotation) → treated according to English Quotation rules (only classified as invoice if core elements are present).
+    - `PENYATA` / `PENYATA AKAUN` (statement of account) → **other** (corresponding to Statement in §1.0.5).
+    - **`nameOfInvoice` copies the original Malay text** (such as `RESIT RASMI`, `INVOIS CUKAI`) without translation; **`invoiceType` enum values still output in English** (Tax Invoice / Credit Note...) — classification conclusions use English enumerations, while original document titles go into nameOfInvoice, each serving its purpose.
+
+    - Dual identity of `Bil.`: When appearing in the **title position**, it represents document type (cash bill, see above); when appearing in the **item table column header**, it represents row sequence number (abbreviation of Bilangan) — interpret meaning based on its location.
+
+    ## 1.4 Required Fields and Missing Handling
+    - **invoice / receipt types**: `docType`, `invoiceType`, `page`, and `currency` must be output; if the document lacks currency, infer based on MY context (defaulting to MYR).
+    - **paymentScreenshot type**: `docType`, `page`, `invoiceDate`, `currency`, and `totalAmount` must all be output — if any of the three values cannot be read off the screen, the document does not qualify as a payment screenshot (re-judge it under §1.1 / §1.0.5 instead of guessing a value). `remark` (the payment description) is optional: output it only when the screen shows one.
+    - **other type**: Only `docType` and `page` must be output.
+    - **Missing information**: Fields that cannot be found must be left unoutput; **do not infer, do not fabricate**.
+    - **Strictly forbid using 0 to represent "absence"**: When the document **has no tax row**, `totalTaxAmount` and `detailOfTaxSummary` must be **left blank / unoutput**, do not fill in `0` — `0` is an assertion that "tax amount is truly zero", which is completely different from "the document never mentioned tax".
+      Similarly applicable to `totalNetAmount`, `quantity`, `unitPrice`, and all other numeric fields: **if it cannot be found, do not output it, and never use 0 as a placeholder**.
 
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Part 2 · 字段识别规则
+    # Part 2 · Field Recognition Rules
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    下方 JSON Schema 中每个字段的 `description` 已经包含了：
-    - 该字段的业务含义
-    - MY 票面常见关键词与典型格式
-    - 取值位置锚点
-    - 易混淆字段的辨别要点
-    - 数值类字段的取值方法（如税额优先语义匹配 / 严禁推算）
+    Each field's `description` in the JSON Schema below already contains:
+    - Business meaning of the field
+    - Common keywords and typical formats on MY documents
+    - Extraction location anchors
+    - Identification points for easily confused fields
+    - Extraction methods for numeric fields (such as tax amount priority semantic matching / strict prohibition of estimation)
 
-    **请严格按 schema 中每字段的 description 提取。**
+    **Strictly extract according to each field's description in the schema.**
 
-    > 说明：字段识别规则（"在哪里找、找什么"）由本 Part 2 + schema description 承担；
-    > 输出装配规则（"找到后怎么组装成 JSON"）已统一抽到 Part 3 平台契约。
+    > Note: Field recognition rules ("where to look, what to look for") are handled by this Part 2 + schema description; output assembly rules ("how to assemble into JSON once found") are unified under Part 3 Platform Contract.
 
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Part 3 · 输出契约与装配规则
+    # Part 3 · Output Contract and Assembly Rules
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    > 本部分由平台统一管理，运行时由 composer 从
-    > `backend/app/ocr_optimizer/assets/global_output_contract.yaml`
-    > 强制注入。本 yaml 中**不复制具体规则**，避免双向维护漂移。
+    > This part is uniformly managed by the platform and forcibly injected at runtime by the composer from `backend/app/ocr_optimizer/assets/global_output_contract.yaml`. No specific rules are duplicated in this yaml to prevent bidirectional maintenance drift.
     >
-    > 涵盖：
-    >   3.1 顶层 ARRAY 结构
-    >   3.2 数值字段统一规范（去千分位、去货币符号、保留精度）
-    >   3.3 税额装配（detailOfTaxSummary 数组 + 总税额一致性 + ADJUSTMENT 平账）
-    >   3.4 行项目装配（一行一项 + qty×price 校验 < 1% + PO/SO/DO 头/行二选一）
-    >   3.5 跨页装配（合并为单元素 + page 数组）
-    >   3.6 Credit Note 装配（originalInvoiceReferences 必填）
-    >   3.7 缺失字段处理（找不到不输出，严禁推断捏造）
-    >   3.8 字段输出顺序（预留）
+    > Covers:
+    >   3.1 Top-level ARRAY structure
+    >   3.2 Unified numeric field standards (remove thousands separators, remove currency symbols, preserve precision)
+    >   3.3 Tax amount assembly (detailOfTaxSummary array + total tax consistency + ADJUSTMENT balancing)
+    >   3.4 Line item assembly (one row per item + qty×price check < 1% + PO/SO/DO header/line mutually exclusive)
+    >   3.5 Cross-page assembly (merge into single element + page array)
+    >   3.6 Credit Note assembly (originalInvoiceReferences mandatory)
+    >   3.7 Missing field handling (not found means not output, strict prohibition of inference/fabrication)
+    >   3.8 Field output order (reserved)
     >
-    > 国家级特例（如 MY 货币千分位约定）写在 Part 1.2 作为"输入侧事实"，
-    > 为 Part 3 平台规则提供解析依据。
-    > 本国家无 Part 3 特例 override。
+    > National-level special cases (such as MY currency thousands separator convention) are written in Part 1.2 as "input-side facts" to provide parsing basis for Part 3 platform rules.
+    > This country has no Part 3 special case overrides.
 
   json_schema:
-    title: invoice_and_receipts
-    type: ARRAY
+    title: "invoice_and_receipts"
+    type: "ARRAY"
     items: 
       anyOf:
         - type: OBJECT
           properties:
             docType:
-              type: STRING
-              description: 票据类型：invoice 或 receipt 
+              type: "STRING"
+              description: |-
+                Document type: invoice or receipt.
+                **Quotations (SEBUTHARGA / SEBUT HARGA / QUOTATION) are excluded and classified as other**
+                (Rule reference Part 1.1.1: Quotations are pre-transaction offers, not payment vouchers,
+                and matching formal invoice amounts in the same PDF would cause double accounting).
               enum:
                 - invoice
                 - receipt
             page:
-              type: ARRAY
-              description: "所在文档中的页码列表（从1开始编号）。注意：一张票据可能跨越多个页面，应将这些连续页码作为一个数组整体输出。例如：票据出现在第2至第4页时，输出为 [2, 3, 4]。"
+              type: "ARRAY"
+              description: "List of page numbers in the document (starting from 1). Note: A single voucher may span multiple pages, and these consecutive page numbers should be output together as an array. Example: When a voucher appears from page 2 to page 4, output [2, 3, 4]."
               items:
-                type: NUMBER
+                type: "NUMBER"
             invoiceType:
-              type: STRING
+              type: "STRING"
               description: |-
-                发票类型，分为：
-                  - 'Commercial Invoice' (正式发票)：默认类型，若非 'Proforma Invoice' 或 'Credit Note'，则归为此类。
-                  - 'Proforma Invoice' (形式发票)：如果票面包含 "PROFORMA", "PRO FORMA", "Záloha", "Facture d'Avance", "Prepayment", "Vorkassenrechnung" 等关键词。
-                  - 'Credit Note' (贷项发票)：如果票面包含 "AVOIR", "CREDIT" 等关键词，或 totalAmount < 0。
-                  - 'Tax Invoice' (税务发票)：如果票面包含 "'Tax Invoice", "Faktur Pajak" 等关键词。
+                Invoice type, categorized into:
+                  - 'Commercial Invoice': Default type, unless classified as 'Proforma Invoice' or 'Credit Note'.
+                  - 'Proforma Invoice': If the document contains keywords like "PROFORMA", "PRO FORMA", "Záloha", "Facture d'Avance", "Prepayment", "Vorkassenrechnung".
+                  - 'Credit Note': If the document contains keywords like "AVOIR", "CREDIT", or totalAmount < 0.
+                  - 'Tax Invoice': **Only when document title text** is "TAX INVOICE" / "INVOIS CUKAI" / "Faktur Pajak".
+                    **Sales Tax Registration Numbers alone do not constitute evidence**: `Sales Tax Reg No` / `No. Cukai Jualan` / `SST ID` are seller tax registration info, and ordinary invoices titled simply `INVOICE` also print them; do not upgrade based on TAX or SST columns in line items either — those are tax columns, not titles.
+                    Titles written only as `INVOICE` → classify as 'Commercial Invoice'.
               enum:
                 - Commercial Invoice
                 - Proforma Invoice
                 - Credit Note
                 - Tax Invoice
             nameOfInvoice:
-              type: STRING
+              type: "STRING"
               description: |-
-                票面标题：票面上**原样印着的标题文字**，保持原大小写与原文，不翻译。
-                常见取值：INVOICE、TAX INVOICE、Receipt、CASH BILL、Current Invoice、RESIT、Bill。
-                标题可能在票面顶部居中，也可能在商户名之下、明细表之上。
-                票面确实没有任何标题文字时才留空；**不要用 invoiceType 的值去凑**。
+                Document Title: **The title text originally printed** on the document, preserving original casing and text without translation.
+                Common values: INVOICE, TAX INVOICE, Receipt, CASH BILL, Current Invoice, RESIT, Bill;
+                Malay titles copy original text: INVOIS, INVOIS CUKAI, RESIT RASMI, BIL TUNAI, NOTA KREDIT.
+                Titles may be centered at the top of the document, below the merchant name, or above the line items.
+                Leave blank only when the document genuinely has no title text; **do not use invoiceType values to fill in**.
             invoiceNumber:
-              type: STRING
+              type: "STRING"
               description: |-
-                发票号码或收据编号。
-                通用规则：如果找不到，则查找票面的 'Invoice No'、'請求書番号'、'ご請求番号'、'ﾚシートNo'、'発券No'、'伝票番号'、'No.'、'No'。
-                马来西亚发票补充规则：可查找 "Invoice No"、"No."、"INVOICE NO:"、"E INV NO"；典型格式如 PT-148862、S-25/10-0059、INV13398、IN2601/1024、25FC011847；严禁将 Sales Tax No 或 SST ID 提取为发票号。
-                加油/刷卡凭条的取值优先级（票面无明确单号时取 Reference No）与禁取字段（Terminal / Site Id / Card No 等）见 Part 1.3。
+                Invoice number or receipt number.
+                General rule: If not found, look for 'Invoice No', 'No.', 'No' on the document.
+                Malaysian invoice supplementary rules: Look for "Invoice No", "No.", "INVOICE NO:", "E INV NO", and Malay labels "No. Invois", "Nombor Invois", "No. Resit", "No. Bil"; typical formats like PT-148862, S-25/10-0059, INV13398, IN2601/1024, 25FC011847; strictly forbid extracting Sales Tax No / SST ID / No. Cukai Jualan as invoice numbers.
+                Extraction priority for fuel/card slips: Look first for explicitly marked document numbers — "Invoice No" / "Bill No" / "Receipt No" / "Resit No" / "R.No" / "Master Bill" / "Booking No", **prioritize taking it if present**; only when all aforementioned labels are **completely absent** should you sequentially take ① "Reference No" / "Ref No" / "Ref. No" (Malay "No. Rujukan" / "Rujukan Kami" are synonymous) ② "Approval Code" / "Auth Code" (only when even Reference No is missing).
+                **Regardless of voucher type, absolutely never take** the following values as invoice numbers: Terminal (terminal number, typically 8 pure digits), Site Id, Site Tran No, Batch No, Card No, Seq. Number, App ID, App Crypt, CDB Ref No.
+                Self-check: If two **different** vouchers in the same document appear with the **same** invoice number, it indicates the field was taken incorrectly (mostly misread as Terminal or Site Id) — return to the document to re-extract.
             invoiceCode:
-              type: STRING
-              description: 发票类型代码，如果没有发票类型代码信息, 则查找发票序列号、'Serial'、'Ký hiệu'、'Ký hiệu(Serial)'。'Mã CQT(Code)'不是发票类型代码。
+              type: "STRING"
+              description: "Invoice type code; if absent, look for invoice serial number, 'Serial', 'Ký hiệu', 'Ký hiệu(Serial)'. 'Mã CQT(Code)' is not an invoice type code."
             invoiceDate:
-              type: STRING
-              description: 发票发行日期。
+              type: "STRING"
+              description: |-
+                Invoice issuing date. Malay labels "Tarikh" / "Tarikh Invois" are synonymous with Date / Invoice Date.
+                Malay month names (including abbreviations) → month numbers: Januari/Jan=01, Februari/Feb=02, **Mac=03**, April/Apr=04, Mei=05, Jun=06, Julai/Jul=07, **Ogos/Ogo=08**, September/Sep=09, Oktober/Okt=10, November/Nov=11, **Disember/Dis=12**.
+                `hb` is the suffix for days (haribulan): `31hb Mac 2025` → `2025-03-31`; `5 Ogos 2025` → `2025-08-05`.
+                Common error reminder: Mac is March, Mei is May, Jun is June. Output uniformly as YYYY-MM-DD.
             totalNetAmount:
-              type: NUMBER
+              type: "NUMBER"
               description: |-
-                全票不含税总净额。
-                注意：必须是所有商品/服务项的净额加总。如果票面有多个部分（如本金和佣金），请务必求和后再输出，不要只提取其中一部分的金额作为总净额。
+                Total net amount excluding tax for the entire document.
+                Note: Must be the sum of net amounts for all goods/services items. If the document has multiple parts (such as principal and commission), be sure to sum them up before outputting, and do not extract only a portion as the total net amount.
+                **When the document has absolutely no tax row** (no SST / no tax breakdown, only a single total),
+                the net amount equals that total — fill with the same value as totalAmount, with **the sign matching totalAmount** (negative for Credit Note), **do not leave blank**.
             totalAmount:
-              type: NUMBER
+              type: "NUMBER"
               description: |-
-                含税总金额，常见为 Total、Grand Total、Total Due、Amount Payable 等。
-                票面同时列出外币与马币两种金额时，取**马币（MYR）那一行**的数值
-                （实际扣款金额，常标注 Total Charge / Amount Charged），规则见 Part 1.2。
+                Total amount including tax, commonly Total, Grand Total, Total Due, Amount Payable, etc.;
+                Malay labels Jumlah / Jumlah Besar / Jumlah Keseluruhan / Jumlah Perlu Dibayar are synonymous (Jumlah Kecil is Subtotal, do not take).
+                Tunai (cash) / Baki (change) / Bayaran (payment) lines on receipts are not total amounts — total amounts take the Jumlah / JUMLAH total line.
+                **Credit Note sign rule**: When invoiceType=Credit Note, output this field as a **negative value** — even if printed as positive on the document (credit amount convention), take it as negative (document 709.25 → -709.25); totalNetAmount / totalTaxAmount signs must match this field.
+                When both foreign currency and Malaysian Ringgit amounts are listed, take **the value of the Malaysian Ringgit (MYR) line** (actual deduction amount, often marked Total Charge / Amount Charged), rules per Part 1.2.
             totalTaxAmount:
-              type: NUMBER
+              type: "NUMBER"
               description: |-
-                总税额。提取逻辑如下：
-                1. **语义优先**：优先提取明确标识为 'Tax', 'VAT', 'GST', 'IVA', 'Tax Amount' 等字段的数值总和。
-                2. **结构识别**：在存在多行税率汇总表（Tax Summary）的情况下，应提取表中各税种金额的加总，而不是提取表中的 'Total' 或 'Subtotal' 字段。
-                3. **严禁推算**：严禁仅通过 (TotalAmount - 某个收支项) 简单推算税额，必须在票面找到对应的税金标识。
+                Total tax amount. Malay labels: Cukai=Tax, Cukai Jualan=Sales Tax, Cukai Perkhidmatan=Service Tax (combined as SST), CBP (Cukai Barang & Perkhidmatan)=GST.
+                **Leave blank/unoutput when the document has no tax rows, strictly forbidden to fill 0**
+                (0 means "tax amount is truly zero", which differs from "tax not mentioned on document", see Part 1.4).
+                Extraction logic as follows:
+                1. **Semantic priority**: Prioritize extracting the sum of values explicitly identified as 'Tax', 'VAT', 'GST', 'IVA', 'Tax Amount', etc.
+                2. **Structural recognition**: When a multi-row tax summary table (Tax Summary) exists, extract the sum of amounts for each tax type in the table, rather than taking the 'Total' or 'Subtotal' fields within the table.
+                3. **Strictly forbidden estimation**: Strictly forbid estimating tax merely via (TotalAmount - some item), tax item identification must be found on the document.
             currency:
-              type: STRING
+              type: "STRING"
               description: |-
-                币种，以 ISO 4217 货币代码形式输出，如 MYR、USD、SGD、CNY、GBP 等。
-                票面同时出现外币与马币时取 **MYR**（与 totalAmount 同一币种体系，见 Part 1.2）；
-                票面无标注时按 MY 上下文推断，默认 MYR。
+                Currency, output in ISO 4217 currency code form, such as MYR, USD, SGD, CNY, GBP, etc.
+                When foreign currency and MYR appear simultaneously, take **MYR** (same currency system as totalAmount, see Part 1.2);
+                when unmarked, infer based on MY context, defaulting to MYR.
             billToName:
-              type: STRING
-              description: 收票方的名称。如果没有'Bill To'，则找'MESSRS'、'Purchaser'、'Customer'、'Buyer'、'Attention to'或其他和'购买方'同义的词语。
+              type: "STRING"
+              description: "Name of the billing recipient. If 'Bill To' is absent, look for 'MESSRS', 'Purchaser', 'Customer', 'Buyer', 'Attention to', Malay 'Kepada' (to), 'Pelanggan' (customer), 'Pembeli' (buyer), or other synonymous terms for purchasing party."
             billToComposite:
-              type: STRING
-              description: 收票方的完整地址信息。
+              type: "STRING"
+              description: "Complete address information of the billing recipient."
             billToCountry:
-              type: STRING
-              description: 收票方所在国家，根据收票方的完整地址提取。
+              type: "STRING"
+              description: "Country of the billing recipient, extracted based on the recipient's complete address."
             billToCountryCode:
-              type: STRING
-              description: 收票方所在国家的ISO 3166-1 alpha-2国家代码，如：CN, US, MY, SG, JP, GB, DE等。
+              type: "STRING"
+              description: "ISO 3166-1 alpha-2 country code of the billing recipient's country, such as CN, US, MY, SG, JP, GB, DE, etc."
             billToTaxIdentificationNumber:
-              type: STRING
+              type: "STRING"
               description: |-
-                收票方（买方）的税务注册码。
-                马来西亚发票补充规则：查找 "TIN"、"TIN No."、"TIN Number"、"Supplier TIN"、"Buyer TIN"、"Customer Tin No."；格式必须为 "C" 开头 + 10 位数字（例如 C5884056070、C4908240100），不符合此格式的不要写入该字段；当票面同时存在供应商 TIN 与买方 TIN 时，只取买方 TIN。
+                Tax registration number of the billing recipient (buyer).
+                Malaysian invoice supplementary rules: Look for "TIN", "TIN No.", "TIN Number", "Supplier TIN", "Buyer TIN", "Customer Tin No."; format must start with "C" + 10 digits (e.g., C5884056070, C4908240100), do not write non-compliant formats into this field; when supplier TIN and buyer TIN appear simultaneously, take only the buyer TIN.
             billFromName:
-              type: STRING
-              description: 开票方的名称。如果没有'From'信息, 或者'From'信息不像一个公司名称，则找：'Account Name'、'Beneficiary Name'、'Seller'、'Remit to'、底部签名处或者标题、收据或小票的商家名称。
+              type: "STRING"
+              description: "Name of the bill issuer. If 'From' information is absent or does not look like a company name, look for: 'Account Name', 'Beneficiary Name', 'Seller', 'Remit to', Malay 'Pembekal' (supplier), 'Penjual' (seller), merchant name at the bottom signature area, title, receipt, or slip."
             billFromComposite:
-              type: STRING
-              description: 开票方的完整地址信息。
+              type: "STRING"
+              description: "Complete address information of the bill issuer."
             billFromCountry:
-              type: STRING
-              description: 开票方所在国家，根据开票方的地址信息提取。
+              type: "STRING"
+              description: "Country of the bill issuer, extracted based on the issuer's address information."
             billFromCountryCode:
-              type: STRING
-              description: 开票方所在国家的ISO 3166-1 alpha-2国家代码，如：CN, US, MY, SG, JP, GB, DE等。
+              type: "STRING"
+              description: "ISO 3166-1 alpha-2 country code of the bill issuer's country, such as CN, US, MY, SG, JP, GB, DE, etc."
             billFromTaxIdentificationNumber:
-              type: STRING
+              type: "STRING"
               description: |-
-                开票方（卖方）的税务注册码。
-                通用规则：如果找不到，则查找税务注册码、'VAT Registration'、'TAX#'。
-                马来西亚发票补充规则：查找 "TIN"、"TIN No."、"TIN Number"、"Supplier TIN"、"Vendor TIN"、"Seller TIN"、"Income Tax No."；格式必须为 "C" 开头 + 10 位数字（例如 C5884056070、C4908240100），不符合此格式的不要写入该字段；当票面同时存在供应商 TIN 与买方 TIN 时，只取供应商 TIN。**严禁将 SST 号 / Sales Tax No. / SSM 注册号当作 TIN 写入本字段**（SST/SSM 各有专门字段）。
+                Tax registration number of the bill issuer (supplier).
+                General rule: If not found, look for tax registration number, 'VAT Registration', 'TAX#'.
+                Malaysian invoice supplementary rules: Look for "TIN", "TIN No.", "TIN Number", "Supplier TIN", "Vendor TIN", "Seller TIN", "Income Tax No."; format must start with "C" + 10 digits (e.g., C5884056070, C4908240100), do not write non-compliant formats into this field; when supplier TIN and buyer TIN appear simultaneously, take only the supplier TIN. **Strictly forbid writing SST No. / Sales Tax No. / SSM registration numbers as TIN into this field** (SST/SSM have dedicated fields).
             billFromBusinessRegistrationNumber:
-              type: STRING
+              type: "STRING"
               description: |-
-                开票方（供应商）的商业登记号 / 注册号 / SSM 号码。
-                通用规则：提取 Company No. / Co. Reg. No. / Registration No. / Company Reg No. / BRN 后面的编号，注意可能包含新旧号、括号、连字符，例如 200201024195 或 199501005689 (New)。
-                马来西亚发票补充规则：查找 "Company Reg.No"、"Registration No"、"SSM"，或公司名称旁括号内的 12 位数字；典型格式如 199201000276、199501005689、518287-T、199701009372 (424868-V)；严禁提取买方的注册号；票面同时出现新旧号时按原文完整保留。
-                **逐位核读（本字段最易错）**：新式注册号是 **12 位纯数字**，且常紧挨公司名
-                排在同一行、字号偏小，扫描件里易与公司名笔画重叠粘连，末位尤其容易读错
-                （如 `...633` 误读成 `...630`）。提取后请做三项自检：
-                ① 数一遍位数——新式号去掉括号旧号后应恰为 12 位；
-                ② 前 4 位是注册年份，应在 1950–本年之间（如 `2007…`）；
-                ③ 若该号在票面出现多处（抬头、页脚、印章、条款区），**相互比对取一致值**。
+                Commercial registration number / registration number / SSM number of the bill issuer (supplier).
+                General rule: Extract numbers following Company No. / Co. Reg. No. / Registration No. / Company Reg No. / BRN, noting they may contain old/new numbers, parentheses, hyphens, e.g., 200201024195 or 199501005689 (New).
+                Malaysian invoice supplementary rules: Look for "Company Reg.No", "Registration No", "SSM", or 12-digit numbers in parentheses next to company names; typical formats like 199201000276, 199501005689, 518287-T, 199701009372 (424868-V); strictly forbid extracting buyer registration numbers; retain full original text when old and new numbers appear simultaneously.
+                Malay label "No. Pendaftaran" / "No. Pendaftaran Syarikat" = Company Registration No., handled similarly.
+                Sole proprietorships / partnerships (Enterprise / Perniagaan) have another set of registration numbers: two letters + numbers + hyphen + letter (such as RA0085780-K, PG0123456-A), often **printed directly in parentheses following the company name** (e.g., G CONCEPT EMPIRE (RA0085780-K)) — fill into this field as well, and **must be extracted out from the company name**, leaving billFromName with just the company name itself.
+                **Strictly forbid writing Sales Tax No. / SST ID as registration numbers into this field** (SST is sales and service tax number, completely different from SSM registration number).
+                **Digit-by-digit verification (most error-prone field)**: Registration numbers often closely follow company names on the same line in smaller font, prone to overlapping/merging with company name strokes in scans. Perform four self-checks after extraction:
+                ① Count digits — new numbers minus parentheses/old numbers should equal **12 pure digits**;
+                ② First 4 digits are registration year, should be between 1950–current year (e.g., `2007...`);
+                ③ **Old numbers inside parentheses must also be verified digit-by-digit** — format is "6-7 digits + hyphen + single letter" (such as `1298487-V`, `518287-T`). Having a smaller font, they are frequently misread; **`8`↔`6`, `3`↔`8`, `1`↔`7`, `0`↔`O` are the highest-frequency confusion pairs**; when in doubt, zoom in on strokes to check closed loops (`8` has two closed loops, `6` has only one lower loop);
+                ④ If the number appears in multiple places on the document (header, footer, seal, terms area), **cross-compare to ensure consistency**.
             purchaseOrderNumber:
-              type: STRING
+              type: "STRING"
               description: |-
-                采购订单号。
-                通用规则：查找 PO number / P/O No / Cust PO / CUSTOMER P/O NO 等标注。仅当该单号适用于整张发票时提取；如果单号只对应某一明细行，则不填此字段，填入对应明细行的 purchaseOrderNumber 中。
-                马来西亚发票补充规则：查找 "P/O No."、"Your PO No."、"PO No"、"Order No"、"Buyer's Order No"、"P.O.NO."（表头）；典型格式如 W1 537443、K2 513875、W1 525065、N1 547225、90001110；通常由字母前缀（W1/K2/N1 等）+ 数字组成，可能含空格分隔（如 W1 516992），提取时保留原始空格格式；当票面以 "P.O.NO. D.O.NO. SALES REP." 横向表头形式呈现时，PO 值通常位于表头下方第二行。
+                Purchase order number.
+                General rule: Look for PO number / P/O No / Cust PO / CUSTOMER P/O NO, etc. Extract only if applicable to the entire invoice; if applicable to a specific line item only, leave this field blank and fill into the corresponding line item's purchaseOrderNumber.
+                Malaysian invoice supplementary rules: Look for "P/O No.", "Your PO No.", "PO No", "Order No", "Buyer's Order No", "P.O.NO." (header); typical formats like W1 537443, K2 513875, W1 525065, N1 547225, 90001110; usually consists of letter prefix (W1/K2/N1, etc.) + digits, potentially with space separators (e.g., W1 516992), preserve original space formatting upon extraction; when presented in horizontal headers like "P.O.NO. D.O.NO. SALES REP.", PO values typically reside on the second line below headers. Malay label "No. Pesanan" / "Pesanan Belian" = PO No., handled similarly.
             dueDate:
-              type: STRING
-              description: 付款截止日期。
-            salesOrderNumber:
-              type: STRING
-              description: 销售订单号，如 SO No / S/O No / Sales order / SO#。仅当该单号适用于整张发票时提取；如果单号只对应某一明细行，则不填此字段，填入对应明细行的 salesOrderNumber 中。
-            deliveryOrderNumber:
-              type: STRING
+              type: "STRING"
               description: |-
-                发货单号 / 交货单号。
-                通用规则：查找 Packing slip / D.O.NO. / D/O NO / DO 等标注，常见格式如 DO-153555、DO251728。仅当该单号适用于整张发票时提取；如果单号只对应某一明细行，则不填此字段，填入对应明细行的 deliveryOrderNumber 中。
-                马来西亚发票补充规则：查找 "D/O No."、"Our D/O No"、"DO NO"、"D.O. No."、"REFER D/O"、"D.O.NO."（表头）；典型格式如 E-DO00863、DO2601/0543、SH34756、LTA2507250095、T 056331、90001110；一张发票可能含多个 DO 号，必须全部列出并以分号";"分隔写入同一字段；当票面以 "P.O.NO. D.O.NO. SALES REP." 横向表头形式呈现时，DO 值通常位于表头下方第一行（多为纯数字）。
+                Payment deadline date. Malay labels "Tarikh Matang" / "Tarikh Akhir Bayaran" are synonymous with Due Date;
+                Month spelling (including Malay month names and hb suffix) is identical to invoiceDate description. Output uniformly as YYYY-MM-DD.
+            salesOrderNumber:
+              type: "STRING"
+              description: "Sales order number, such as SO No / S/O No / Sales order / SO#. Extract only if applicable to the entire invoice; if applicable to a specific line item only, leave blank and fill into the corresponding line item's salesOrderNumber."
+            deliveryOrderNumber:
+              type: "STRING"
+              description: |-
+                Delivery order number / dispatch note number.
+                General rule: Look for Packing slip / D.O.NO. / D/O NO / DO, typical formats like DO-153555, DO251728. Extract only if applicable to the entire invoice; if applicable to a specific line item only, leave blank and fill into the corresponding line item's deliveryOrderNumber.
+                Malaysian invoice supplementary rules: Look for "D/O No.", "Our D/O No", "DO NO", "D.O. No.", "REFER D/O", "D.O.NO." (header); typical formats like E-DO00863, DO2601/0543, SH34756, LTA2507250095, T 056331, 90001110; an invoice may contain multiple DO numbers, all must be listed and separated by semicolons ";" into the same field; when presented in horizontal headers like "P.O.NO. D.O.NO. SALES REP.", DO values typically reside on the first line below headers (mostly pure digits). Malay label "Nota Serahan" / "Nota Hantaran" = Delivery Order, handled similarly.
             detailOfGoodsOrServices:
-              type: ARRAY
-              description: 商品或服务明细列表，包括每项商品或服务的名称、备注、数量、单位、单价、不含税金额、税率、税额、含税金额、订单号、销售订单号和发货单号
+              type: "ARRAY"
+              description: "List of goods or services line items, including name, remarks, quantity, unit of measure, unit price, net amount, tax rate, tax, gross amount, order number, sales order number, and delivery order number for each item."
               items:
-                type: OBJECT
+                type: "OBJECT"
                 properties:
                   articleName:
-                    type: STRING
+                    type: "STRING"
                     description: |-
-                      商品或服务名称（提取完整信息）。
-                      **无论票面那一列的表头叫什么，商品/服务名都填这里**：MY 发票的品名列
-                      常见表头有 `Description`、`Item`、`Item Description`、`Particulars`、
-                      `Product`、`Descriptions of Goods` 等——表头用词不影响归属，
-                      只要是"这一行卖的是什么"，一律进 articleName。
-                      **该明细行只要有商品/服务，本字段就不得为空。**
-                      例：表头为 `Description`、内容为 `LONGKANG TANAH 6" (WL)`
-                      → articleName = `LONGKANG TANAH 6" (WL)`（**不是**填进 description）。
+                      Name of goods or service (extract complete information).
+                      **Regardless of what the column header is named, goods/service names go here**: MY invoice item columns commonly have headers like `Description`, `Item`, `Item Description`, `Particulars`, `Product`, `Descriptions of Goods`, and Malay `Butir-Butir` / `Butiran` / `Perihal` / `Keterangan` / `Deskripsi`, etc. — header wording does not affect ownership; as long as it answers "what is being sold in this row", it goes into articleName.
+                      **This field must not be blank as long as the line item contains goods/services.**
+                      Example: Header is `Description`, content is `LONGKANG TANAH 6" (WL)`
+                      → articleName = `LONGKANG TANAH 6" (WL)` (**not** description).
                   description:
-                    type: STRING
+                    type: "STRING"
                     description: |-
-                      本行的**补充说明/备注**，用于品名之外的附加信息，如规格、批号、
-                      备注列（Remark / Notes）内容、型号说明、"c/o 某某"等。
-                      **注意：本字段不是票面 `Description` 列的对应字段**——票面 Description
-                      列装的是品名，应填 articleName。
-                      若该行只有一段文字（就是品名），本字段**留空**，不要把品名复制到这里。
+                      **Supplementary description / remarks** for this line, used for additional info beyond product names, such as specifications, lot numbers, content in Remark / Notes columns, model descriptions, "c/o so-and-so", etc.
+                      **Note: This field does not correspond to the document's `Description` column** — the document's Description column holds product names and belongs in articleName.
+                      If the row contains only a single piece of text (which is the product name), leave this field **blank**, do not copy product names here.
                   quantity:
-                    type: NUMBER
+                    type: "NUMBER"
                     description: |-
-                      商品或服务的数量。
-                      单位列辨识：若该行的"数量/单价"分多列子标题（如 PCS / BDL / MT / CTN / SET），
-                      优先取**计费单位**对应的列（与 unitPrice 同列）。
-                      参考校验：quantity × unitPrice 应约等于 netAmount（具体一致性阈值见 Part 3.4）。
+                      Quantity of goods or services. Malay column header `Kuantiti` / `Kti` = Quantity.
+                      Unit column identification: If the row's "quantity/unit price" is split into multiple sub-headers (such as PCS / BDL / MT / CTN / SET), prioritize taking the column corresponding to the **billing unit** (matching unitPrice).
+                      Reference check: quantity × unitPrice should approximately equal netAmount (specific consistency thresholds per Part 3.4).
                   unitOfMeasure:
-                    type: STRING
-                    description: 计量单位，如 pcs、kg、m、hour 等
-                  unitPrice:
-                    type: NUMBER
+                    type: "STRING"
                     description: |-
-                      商品或服务的单价。票面**印有单价列**时必须填：常见形态有
-                      `Price` / `Unit Price` / `Harga` 列、`@` 后的数字、
-                      或 `RM3.370/ltr`、`@RM1.380/ltr` 这类每单位价格（填 3.370 / 1.380）。
-                      数量为 1 且票面只印一个金额时，unitPrice 等于该金额。
-                      票面确实没有单价、也无法直接读出时留空——
-                      **不要用 netAmount ÷ quantity 反推**（除不尽会引入假精度）。
+                      Unit of measure, such as pcs, kg, m, hour, etc. Malay units copy original text without translation: biji (pieces/grains), keping (sheets/pieces), kotak (boxes), bungkus (packs), botol (bottles), pasang (pairs), helai (sheets/pieces), tin (cans), paket (small packs) — treated equivalently to English pcs/kg.
+                  unitPrice:
+                    type: "NUMBER"
+                    description: |-
+                      Unit price of goods or services. Must be filled when the document **prints a unit price column**: common forms include `Price` / `Unit Price` / `Harga` / `Harga Seunit` columns, numbers following `@`, or per-unit prices like `RM3.370/ltr`, `@RM1.380/ltr` (fill 3.370 / 1.380).
+                      When quantity is 1 and the document prints only a single amount, unitPrice equals that amount.
+                      Leave blank if the document truly has no unit price and cannot be directly read — **do not reverse-calculate via netAmount ÷ quantity** (indivisible divisions introduce false precision).
                   netAmount:
-                    type: NUMBER
-                    description: 不含税金额
+                    type: "NUMBER"
+                    description: |-
+                      Net amount excluding tax. The rightmost column `Jumlah` (or `Amaun` / `Nilai`) in Malay item tables is the amount for **that specific row**, fill into this field; the single `JUMLAH` row at the table bottom is the **grand total for the entire document**, belonging to totalAmount, not any line item.
                   taxRate:
-                    type: STRING
-                    description: 税率
+                    type: "STRING"
+                    description: "Tax rate"
                   tax:
-                    type: NUMBER
-                    description: 税额
+                    type: "NUMBER"
+                    description: "Tax amount"
                   grossAmount:
-                    type: NUMBER
-                    description: 含税金额
+                    type: "NUMBER"
+                    description: "Gross amount including tax"
                   orderNumber:
-                    type: STRING
-                    description: 订单号（注文番号）
+                    type: "STRING"
+                    description: "Order number"
                   salesOrderNumber:
-                    type: STRING
-                    description: 本明细行对应的销售订单号，如 SO No / S/O No / Sales order / SO#。仅当该单号只对应本明细行时填入；如果单号适用于整张发票所有明细，则不填此字段，填入发票头部的 salesOrderNumber 中。
+                    type: "STRING"
+                    description: "Sales order number corresponding to this line item, such as SO No / S/O No / Sales order / SO#. Fill in only if the order number corresponds exclusively to this line item; if applicable to all line items on the invoice, leave blank and fill into the invoice header's salesOrderNumber."
                   deliveryOrderNumber:
-                    type: STRING
-                    description: 本明细行对应的发货单号，如 Packing slip / D.O.NO. / D/O NO / DO，常见格式如 DO-153555、DO251728。仅当该单号只对应本明细行时填入；如果单号适用于整张发票所有明细，则不填此字段，填入发票头部的 deliveryOrderNumber 中。
+                    type: "STRING"
+                    description: "Delivery order number corresponding to this line item, such as Packing slip / D.O.NO. / D/O NO / DO, typical formats like DO-153555, DO251728. Fill in only if it corresponds exclusively to this line item; if applicable to all line items, leave blank and fill into invoice header's deliveryOrderNumber."
                   purchaseOrderNumber:
-                    type: STRING
-                    description: 本明细行对应的采购订单号，如 P/O No / Cust PO / CUSTOMER P/O NO。仅当该单号只对应本明细行时填入；如果单号适用于整张发票所有明细，则不填此字段，填入发票头部的 purchaseOrderNumber 中。
+                    type: "STRING"
+                    description: "Purchase order number corresponding to this line item, such as P/O No / Cust PO / CUSTOMER P/O NO. Fill in only if it corresponds exclusively to this line item; if applicable to all line items, leave blank and fill into invoice header's purchaseOrderNumber."
                 required: []
             detailOfTaxSummary:
-              type: ARRAY
+              type: "ARRAY"
               description: |-
-                税金汇总列表，包括税种、税率、税基、税额。
-                同一票据可能同时存在加项税（VAT / SST / GST）与减项税（WHT / 预扣税），都要逐一提取。
-                同一税种但不同税率的情况需要分别提取为多行。
-                装配规则与一致性校验见 Part 3.3（含 ADJUSTMENT 平账机制）。
+                Tax summary list, including tax category, tax rate, taxable basis, and tax amount.
+                A single voucher may simultaneously contain additive taxes (VAT / SST / GST) and subtractive taxes (WHT / Withholding Tax), all must be extracted one by one.
+                Cases with the same tax category but different tax rates need to be extracted separately into multiple rows.
+                Assembly rules and consistency checks see Part 3.3 (including ADJUSTMENT balancing mechanism).
               items:
-                type: OBJECT
+                type: "OBJECT"
                 properties:
                   taxCategory:
-                    type: STRING
-                    description: "税种简称。优先使用平台标准简称（VAT/SST/GST/WHT/CIT/CT/IVA/ADJUSTMENT），不在表中用票面原名。"
+                    type: "STRING"
+                    description: "Tax category abbreviation. Prioritize using platform standard abbreviations (VAT/SST/GST/WHT/CIT/CT/IVA/ADJUSTMENT), use original document names if not in the table."
                   taxRate:
-                    type: STRING
-                    description: 税率
+                    type: "STRING"
+                    description: "Tax rate"
                   netTaxableAmount:
-                    type: NUMBER
-                    description: 税基（需计税的金额/不含税金额）
+                    type: "NUMBER"
+                    description: "Taxable basis (amount subject to tax / net amount excluding tax)"
                   tax:
-                    type: NUMBER
+                    type: "NUMBER"
                     description: |-
-                      税额。识别原则：
-                      1. **语义优先**：优先提取明确标识为 Tax / SST / VAT / GST / Tax Amount 的数值。
-                      2. **结构识别**：在多行税率汇总表（Tax Summary）中提取每个税种的金额合计，
-                         不是简单取表底的 Total / Subtotal。
-                      3. **严禁推算**：不要用 totalAmount − 某项反推税额，必须在票面找到对应的税金标识。
+                      Tax amount. Extraction principles:
+                      1. **Semantic priority**: Prioritize extracting values explicitly identified as Tax / SST / VAT / GST / Tax Amount.
+                      2. **Structural recognition**: Extract sum of amounts for each tax category from multi-row tax rate summary tables (Tax Summary), rather than simply taking table-bottom Total / Subtotal.
+                      3. **Strictly forbidden estimation**: Do not reverse-calculate tax using totalAmount − item, corresponding tax item identifications must be found on the document.
                 required: []
             originalInvoiceReferences:
-              type: ARRAY
-              description: 原始发票引用列表。仅当 invoiceType 为 'Credit Note' 时提取；其他发票类型保留该字段但内容为空。票面上可能存在多组原始发票信息，每组作为一个元素输出。
+              type: "ARRAY"
+              description: "Original invoice reference list. Extract only when invoiceType is 'Credit Note'; other invoice types keep this field but leave content empty. Multiple original invoice info groups may exist on the document, output each group as an element."
               items:
-                type: OBJECT
+                type: "OBJECT"
                 properties:
                   originalInvoiceCode:
-                    type: STRING
-                    description: 原发票代码（序列号），如票面无此信息则不输出。
+                    type: "STRING"
+                    description: "Original invoice code (serial number), do not output if absent on document."
                   originalInvoiceNumber:
-                    type: STRING
-                    description: 原发票号码。
+                    type: "STRING"
+                    description: "Original invoice number."
                   originalInvoiceDate:
-                    type: STRING
-                    description: 原发票开票日期，格式 YYYY-MM-DD。
+                    type: "STRING"
+                    description: "Original invoice issuing date, format YYYY-MM-DD."
                 required: []
           required:
             - docType
@@ -461,15 +478,82 @@ prompt_template:
         - type: OBJECT
           properties:
             docType:
-              type: STRING
-              description: 其他类型文档
+              type: "STRING"
+              description: |-
+                Payment screenshot: a portrait phone screenshot of ONE completed payment's own
+                detail screen (toll card / bank card / e-wallet / third-party payment platform).
+                All three conditions of Part 1.1.2 must hold; a list of several transactions is
+                not this type (that stays `other`). This branch carries only date / currency /
+                amount / payment description (in `remark`) — no merchant, card, reference or
+                line-item fields of their own, even if visible.
+              enum:
+                - paymentScreenshot
+            page:
+              type: "ARRAY"
+              description: "List of page numbers in the document (starting from 1)."
+              items:
+                type: "NUMBER"
+            invoiceDate:
+              type: "STRING"
+              description: |-
+                Transaction date shown on the payment screen, output as YYYY-MM-DD.
+                From a full timestamp (`15/07/2026 16:43:28`, `6 Jul 2026 - 1:54 PM`) take only
+                the date part. If both a transaction date and a later settlement/completion date
+                appear, take the transaction date.
+            currency:
+              type: "STRING"
+              description: |-
+                ISO 4217 code read from the amount's own prefix/suffix (`RM` / `MYR` → MYR).
+                When a foreign currency and a MYR amount both appear, take MYR (see Part 1.2).
+            totalAmount:
+              type: "NUMBER"
+              description: |-
+                The single prominent amount on the screen (total actually paid, tax inclusive).
+                **Output as a positive number**: a minus sign in a wallet/card app means
+                "deducted from balance", which is the normal direction of a payment and is NOT a
+                Credit Note — the Credit Note sign rule does not apply to this type
+                (`-RM4.59` → 4.59, `-RM816.00` → 816.00).
+            remark:
+              type: "STRING"
+              description: |-
+                On a payment screenshot this field carries the **payment description** — what this
+                payment was for, in the screen's own words.
+                Copy verbatim (original casing and punctuation; a caption wrapped over two lines is
+                joined with one space).
+                Lookup order — take the first that exists:
+                1. A labelled row `Payment Details` / `Payment Detail` / `Other Payment Details` /
+                   Malay `Butiran Pembayaran` → that row's value (e.g. `Fare Usage - Toll`).
+                2. Otherwise look at the amount block (the prominent amount and the text just above
+                   or below it, before the labelled rows), in this order:
+                   a. a category badge — a short category word in a pill/chip, often with an icon
+                      (`Food & Drinks`, `Transport`); it wins over a payee name printed above it.
+                      Skip generic placeholders (`Other` / `Others` / `Uncategorised`).
+                   b. a purpose word or descriptive sentence (`Petrol`, `Card payment to GRAB*RIDE is
+                      successful` — keep the whole sentence).
+                   c. the payee / merchant name line (`Netflix`, `grab.com`).
+                Never take: the `Transaction Type` value (`DuitNow QR`, `PayDirect Toll`), a bare
+                status word (`Paid` / `Successful` / `Settled`), promo or reward-points banners, the
+                payment method, labelled merchant / location / entry / exit rows, dates, reference or
+                card numbers, exchange rates, or buttons (`Split bill`, `Report an issue`).
+                No such text on screen → leave unoutput; never assemble one from other fields.
+          required:
+            - docType
+            - page
+            - invoiceDate
+            - currency
+            - totalAmount
+        - type: OBJECT
+          properties:
+            docType:
+              type: "STRING"
+              description: "Other document types"
               enum:
                 - other
             page:
-              type: ARRAY
-              description: 所在文档中的页码列表（从1开始编号）。
+              type: "ARRAY"
+              description: "List of page numbers in the document (starting from 1)."
               items:
-                type: NUMBER
+                type: "NUMBER"
           required:
             - docType
             - page

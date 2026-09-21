@@ -4,49 +4,75 @@
     {
       "name": "apianything-frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 5173,
+      "autoPort": true,
       "cwd": "/Users/shaobin/Desktop/project/API_anything/frontend"
     },
     {
       "name": "apianything-backend",
-      "runtimeExecutable": "/Users/shaobin/Desktop/project/API_anything/backend/.venv/bin/uvicorn",
-      "runtimeArgs": ["app.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"],
+      "runtimeExecutable": "/Users/shaobin/Desktop/project/API_anything/backend/.venv/bin/python",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
       "port": 8000,
       "cwd": "/Users/shaobin/Desktop/project/API_anything/backend"
     },
     {
       "name": "label-studio-backend",
       "runtimeExecutable": "make",
-      "runtimeArgs": ["run-dev"],
+      "runtimeArgs": [
+        "run-dev"
+      ],
       "port": 8080,
       "cwd": "label-studio"
     },
     {
       "name": "label-studio-frontend",
       "runtimeExecutable": "yarn",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 8010,
       "cwd": "label-studio/web"
     },
     {
       "name": "ml-backend-invoice",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["invoice_extractor/start_with_custom_endpoints.py", "--port", "9090", "--debug"],
+      "runtimeArgs": [
+        "invoice_extractor/start_with_custom_endpoints.py",
+        "--port",
+        "9090",
+        "--debug"
+      ],
       "port": 9090,
       "cwd": "label-studio-ml-backend"
     },
     {
       "name": "label-studio-foreman",
       "runtimeExecutable": "yarn",
-      "runtimeArgs": ["lsf:serve"],
+      "runtimeArgs": [
+        "lsf:serve"
+      ],
       "port": 3000,
       "cwd": "label-studio/web"
     },
     {
       "name": "storybook-ui",
       "runtimeExecutable": "yarn",
-      "runtimeArgs": ["storybook:serve"],
+      "runtimeArgs": [
+        "storybook:serve"
+      ],
       "port": 6006,
       "cwd": "label-studio/web"
     }

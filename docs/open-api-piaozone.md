@@ -82,9 +82,10 @@ Content-Type: multipart/form-data
 
 每个元素代表文档中的一张票据（混贴/多页文档会返回多个元素）：
 
-- `header.basic` — 12 字段：`sourceFileHash` `docType` `nameOfInvoice` `invoiceType`
+- `header.basic` — 13 字段：`sourceFileHash` `docType` `nameOfInvoice` `invoiceType`
   `invoiceNumber` `invoiceCode` `invoiceDate` `totalNetAmount` `totalAmount`
-  `totalTaxAmount` `currency` `page`
+  `totalTaxAmount` `currency` `page` `remark`
+  （`remark` 为后加字段：`docType=paymentScreenshot` 时填付款说明，如 `Fare Usage - Parking`；其余类型为空串）
 - `header.billTo` — 14 字段（收票方）
 - `header.billFrom` — 14 字段（开票方，含 `billFromBusinessRegistrationNumber`）
 - `header.bussiness` — 6 字段（**线上原样拼写，非笔误**）

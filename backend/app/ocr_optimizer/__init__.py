@@ -41,6 +41,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "start_optimization": ".service.run_orchestrator",
     "init_version": ".service.module_initializer",
     "get_active_composed_prompt": ".service.persistence",
+    "get_active_prompt_and_schema": ".service.persistence",
 }
 
 
@@ -73,4 +74,5 @@ __all__ = [
     "manual_patch",
     "init_version",
     "get_active_composed_prompt",
+    "get_active_prompt_and_schema",
 ]

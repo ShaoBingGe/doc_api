@@ -1,0 +1,17 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "請求書",
+    "invoiceNumber": "null",
+    "invoiceDate": "2025-05-10",
+    "currency": "JPY",
+    "totalAmount": 737000,
+    "totalTaxAmount": 67000,
+    "billFromName": "有限会社 中川不動産",
+    "billFromTaxIdentificationNumber": "T6020002055316",
+    "billToName": "ハイセンスジャパン(株)",
+    "page": [
+      1
+    ]
+  }
+]

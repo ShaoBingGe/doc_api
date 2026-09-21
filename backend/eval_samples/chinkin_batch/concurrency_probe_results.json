@@ -1,0 +1,49 @@
+{
+ "serial": {
+  "times": [
+   18.1,
+   35.1,
+   7.2,
+   9.9
+  ],
+  "median": 14.0
+ },
+ "concurrency_2": {
+  "latencies": [
+   9.7,
+   14.7
+  ],
+  "median": 12.2,
+  "wall_s": 14.7,
+  "throughput_per_min": 8.2,
+  "errors": []
+ },
+ "concurrency_4": {
+  "latencies": [
+   7.6,
+   10.4,
+   6.5,
+   7.5
+  ],
+  "median": 7.5,
+  "wall_s": 10.4,
+  "throughput_per_min": 23.0,
+  "errors": []
+ },
+ "concurrency_8": {
+  "latencies": [
+   17.6,
+   26.9,
+   26.7,
+   17.6,
+   19.2,
+   15.8,
+   26.9,
+   26.8
+  ],
+  "median": 23.0,
+  "wall_s": 26.9,
+  "throughput_per_min": 17.9,
+  "errors": []
+ }
+}

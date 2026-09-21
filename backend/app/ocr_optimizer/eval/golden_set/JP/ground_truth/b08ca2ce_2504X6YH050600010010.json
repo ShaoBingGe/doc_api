@@ -1,0 +1,16 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "請求書",
+    "invoiceNumber": "2504X6YH0506000010010",
+    "invoiceDate": "2025-04-30",
+    "currency": "JPY",
+    "totalAmount": 1342924,
+    "billFromName": "日本通運株式会社",
+    "billFromTaxIdentificationNumber": "T4010401022860",
+    "billToName": "ハイセンスジャパン株式会社関西サービスセンター",
+    "page": [
+      1
+    ]
+  }
+]

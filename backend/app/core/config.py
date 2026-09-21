@@ -38,6 +38,34 @@ class Settings(BaseSettings):
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 30
 
+    # ── MyInvois（马来西亚税局）查验增强 ─────────────────────────────────
+    # 路径：PDF 二维码 → uuid → 网关 verify（返回税局原始 UBL）→ 与 OCR 消融。
+    # 票面无二维码则直接走纯 OCR。整链 fail-open：查验不通只影响"是否校正"，
+    # 不影响识别本身（§五 降级而非 500）。
+    MYINVOIS_ENABLED: bool = False
+    MYINVOIS_TIMEOUT_S: float = 15.0
+    # 单份文档最多查验几个二维码（多票据 PDF 实测可达 12 张）
+    MYINVOIS_MAX_LOOKUPS: int = 12
+    # 查验总时间预算；超出的二维码标 skipped，不拖垮单次识别延迟
+    MYINVOIS_BUDGET_S: float = 30.0
+    # True = 仅 verifyStatus=VALID 才覆盖 OCR；CANCELLED/INVALID 只上报不覆盖
+    MYINVOIS_REQUIRE_VALID: bool = True
+    # 查验与 OCR 并行后，OCR 先返回时**还愿意为查验多等多久**（宽限期）。
+    # 并行只能把代价压到 max(OCR, 查验)，压不住"查验比 OCR 还慢"的情况：
+    # SIT 实测网关 verify 是同步转调税局，延迟偶发飙到 10s+（正常 0.3–0.9s）。
+    # 超过宽限期就放弃本次增强、直接返回 OCR 结果 —— 增强是尽力而为，
+    # 不该让一次慢查验拖垮接口响应。0 = 不等（OCR 一好就返回）。
+    MYINVOIS_JOIN_GRACE_S: float = 8.0
+    # 二维码扫描段的刹车（与 verify 循环的 MAX_LOOKUPS / BUDGET_S 相互独立）。
+    # 扫描是纯 CPU 的整页渲染，跑在线程池里且无法被 cancel —— 没有上限时
+    # 一份上百页 PDF 会占死线程数十秒，让后续查验全卡在 join 宽限期。
+    MYINVOIS_SCAN_MAX_PAGES: int = 16        # 与 OCR 实际读取页数对齐
+    MYINVOIS_SCAN_BUDGET_S: float = 12.0
+    MYINVOIS_GATEWAY_BASE_URL: str = ""      # 如 http://api-sit.piaozone.com/gjfp
+    MYINVOIS_GATEWAY_CLIENT_ID: str = ""
+    MYINVOIS_GATEWAY_CLIENT_SECRET: str = ""
+    MYINVOIS_GATEWAY_COMPANY_ID: str = ""    # 企业 ouno
+
     # ── File Storage ──────────────────────────────────────────────────────
     STORAGE_BACKEND: str = "local"          # local | s3
     UPLOAD_DIR: str = "./data/uploads"      # LocalStorage 存储目录
@@ -55,7 +83,50 @@ class Settings(BaseSettings):
 
     # ── AI Processors ─────────────────────────────────────────────────────
     DEFAULT_PROCESSOR: str = "mock"         # mock | gemini | openai
+    # ── 主力 / 备份模型（两台服务器配置一致，见 factory.resolve_chain）────────
+    # 主力优先；主力**不可用**（没配 key / 全部账号熔断）或**严重满负荷**时
+    # 走备份。两边同一份配置：新加坡机器有 gemini key → 走 gemini；
+    # 大陆机器没有（Gemini 网络不可达）→ 主力天然不可用，直接走 qwen，
+    # 不产生任何一次注定超时的 gemini 尝试。
+    PRIMARY_PROCESSOR: str = "gemini"
+    BACKUP_PROCESSOR: str = "qwen"
+    # 「严重满负荷」阈值：主力池里**每个**健康账号的在途都 ≥ 该值时切备份。
+    # 用 min 而非总量——只要还有账号相对空闲就该继续用主力。
+    # 0 = 关闭饱和切换（只在主力全部熔断时才切）。
+    PRIMARY_SATURATION_PER_KEY: int = 4
+    # 主力调用失败后是否用备份重试同一份文档。只对 **provider 级** 故障生效
+    # （配额耗尽 / 网络不可达 / 鉴权失败）；文档级错误（400 坏文件）不重试——
+    # 换个模型同样会失败，只是把一次失败变成两次、延迟翻倍。
+    ENABLE_BACKUP_FAILOVER: bool = True
+    # ── 单次模型调用硬超时（2026-08-31 事故）────────────────────────────────
+    # genai.Client 默认**无 HTTP 超时**：Gemini 上游 503（Deadline expired）
+    # 期间实测一条同步请求在服务端静默挂起 8+ 分钟、无任何处理器日志，直到
+    # Caddy 600s read_timeout 先行掐断客户端（502）。超时缺失还意味着异步
+    # worker 线程可能被一次调用永久占死。这里给两个 provider 各设硬上限：
+    # 超时抛出的异常含 "timeout" 字样 → is_provider_failure 命中 → 立即切备份。
+    #   gemini：单页实测 5–27s、25 页大文档实测 ~209s → 300s 上限留足余量；
+    #   qwen  ：qwen3-vl-plus 实测 ~34s/页、16 页单次调用可达 ~9 分钟 → 600s。
+    GEMINI_HTTP_TIMEOUT_S: float = 300.0
+    QWEN_HTTP_TIMEOUT_S: float = 600.0
+    # ── schema 硬约束开关（docs/plan-schema-not-passed-to-model.md）──────────
+    # True 时提取链路（开放平台 / 工作区 / 迭代评测）把 active 版本的
+    # composed_schema 作为 response_schema 随调用传给模型（Gemini 硬约束输出
+    # 形状；qwen 忽略）。历史缺陷：prompt 存在时 schema 从未到达模型，所有国家
+    # 模板的 schema description 在生产里是死字。
+    #
+    # 2026-08-28 默认值 False → True，依据两份实测报告：
+    #   - docs/experiment-jp-schema-ab.md：JP 模板（规则几乎全在 description）
+    #     字段准确率 dev +187%、held-out test +100%，9/9 样本全升；
+    #     且不传时会吐出违反 schema 的非法类型（page 输出成 int）。
+    #   - MY 模板：Phase 2 三样本 18/18 开=关、Phase 3 黄金集 4 seed 开≥关。
+    # 成本：输入 token **零增加**（response_schema 不计入 prompt token），
+    # 输出 token 与耗时上升，来自「真的多提取了字段」。
+    # 回退：置 False 即逐字节回到旧行为（开关本身保留，见 Phase 4 runbook）。
+    PASS_SCHEMA_TO_MODEL: bool = True
     GEMINI_API_KEY: str = ""
+    # 多账号 key 池（分号/逗号分隔）。配了它就覆盖 GEMINI_API_KEY；
+    # 调度用最少在途 + 429 熔断（processors/key_pool.py），加账号只改这一行。
+    GEMINI_API_KEYS: str = ""
     # Default Gemini model used when an ApiDefinition's model_name is null
     # (production OCR) and as the first chain step's model when
     # LLM_FALLBACK_CHAIN isn't configured. Sensible Q2-2026 default.
@@ -67,7 +138,9 @@ class Settings(BaseSettings):
     # 阿里云百炼 / DashScope（qwen-vl-ocr 视觉 OCR + qwen-plus 文本），OpenAI 兼容端点。
     # 大陆云实例用它替代不可达的 Gemini。
     QWEN_API_KEY: str = ""
-    QWEN_MODEL: str = "qwen-vl-plus"         # 生产 OCR（视觉）；vl-plus 抽取质量/速度均衡
+    # qwen 多账号 key 池（分号/逗号分隔），与 GEMINI_API_KEYS 同一套调度。
+    QWEN_API_KEYS: str = ""
+    QWEN_MODEL: str = "qwen3.8-max"          # 生产 OCR（视觉）；默认用新一代高能力多模态
     QWEN_TEXT_MODEL: str = "qwen-plus"       # 反思/优化（文本）
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     # Failover chain for reflection / optimizer LLM calls. Semicolon-separated
@@ -145,6 +218,11 @@ class Settings(BaseSettings):
     ASYNC_POLL_INTERVAL_SEC: float = 2.0
     # 单个任务的处理重试次数（异步接口文档第 9 条：默认最多 3 次）。
     ASYNC_MAX_RETRIES: int = 3
+    # 整份文档一张票据都没识别出来（全是 docType=other）时判为失败，而不是
+    # 返回一份「errcode=0000 但 data 全是空壳」的成功。实测 2026-08-26 下午
+    # 203 个任务里有 39 个是这种形态，对接方看到的就是「整个文件不能识别」。
+    # 置 False 可退回旧行为（当成成功返回空壳）。
+    FAIL_WHEN_NO_INVOICE_FOUND: bool = True
     # 队列深度上限（PENDING+RUNNING）：全局 + 单 client。没有上限时，一个
     # 循环提交的 client 能把磁盘写满（spool 文件 10 天才过期）进而拖死 SQLite
     # 写入。检查在写盘**之前**——超限的提交不在磁盘上留任何字节。
@@ -201,6 +279,23 @@ class Settings(BaseSettings):
     @property
     def max_upload_bytes(self) -> int:
         return self.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
+    @staticmethod
+    def _split_keys(plural: str, singular: str) -> list[str]:
+        """`<X>_API_KEYS`（分号/逗号分隔，去重保序）优先；未配则回退
+        单个 `<X>_API_KEY`。空列表 = 该 provider 未配置 = 不可用。"""
+        keys = [k.strip() for k in plural.replace(",", ";").split(";") if k.strip()]
+        if not keys and singular.strip():
+            keys = [singular.strip()]
+        return list(dict.fromkeys(keys))
+
+    @property
+    def gemini_api_keys(self) -> list[str]:
+        return self._split_keys(self.GEMINI_API_KEYS, self.GEMINI_API_KEY)
+
+    @property
+    def qwen_api_keys(self) -> list[str]:
+        return self._split_keys(self.QWEN_API_KEYS, self.QWEN_API_KEY)
 
 
 @lru_cache

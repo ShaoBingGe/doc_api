@@ -102,8 +102,16 @@ def _run_single(
 ) -> Any:
     processor = ProcessorFactory.create(processor_spec, model_name=model_name)
 
+    # schema 是否随调用下发，跟随 PASS_SCHEMA_TO_MODEL —— 与生产提取链路
+    # （extract_service._run_processor）同一个开关。历史行为是**恒传**，
+    # 而生产从来没传过：迭代回路在「有 schema 硬约束」的世界里选版本、
+    # 生产在「无约束」的世界里运行，评测认为的好不等于生产的好
+    # （docs/plan-schema-not-passed-to-model.md §0.4）。现在两边同构：
+    # 开关怎么拨，评测和生产就同时在哪个世界里。
+    from app.core.config import get_settings
+
     runtime: dict = {}
-    if composed_schema:
+    if composed_schema and get_settings().PASS_SCHEMA_TO_MODEL:
         runtime["response_schema"] = composed_schema
 
     start = time.time()

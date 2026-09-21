@@ -514,6 +514,10 @@ def _fork_api_definition(
     # an active ApiDef to draft just because we created a new prompt
     # version on it).
     new_api.prompt_version_id = new_version.id
+    # 行级 response_schema 跟着新版本走：定制会 rename/新增字段，
+    # 不同步就让 module_initializer / 后续 fork 读到建 API 时的旧字段集。
+    if new_version.composed_schema:
+        new_api.response_schema = new_version.composed_schema
     db.commit()
 
     # NOTE (design v3): inherited sample annotations are NOT auto-GT'd.

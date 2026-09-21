@@ -1,0 +1,249 @@
+"""P2 · 全池逐份配对评测 —— 把「模型抖动」与「模板导致的系统性差异」分开。
+
+R2 的教训：`sample_batch` 每批硬上限 5 份，一份文档翻转即 ±0.20；且本会话
+实测 temp=0/seed=42 仍有**跨时间窗漂移**（同配置 seed=7 两次测得 0.4667 /
+0.5074）。批次均值在这种噪声下没有判别力。
+
+本工具的口径：
+  1. **全池**：黄金池覆盖核心字段集的全部文档（MY=24 份），不抽样——
+     消灭「这批抽到谁」的方差；
+  2. **配对**：同一份文档在 A/B 两版模板下比，看的是差值不是均值；
+  3. **重复**：每个 (文档, 版本) 跑 N 次（默认 2），先量出**该文档自身的
+     抖动幅度**，再判 A/B 差异是否超出抖动——
+       STABLE  : 各重复完全一致
+       JITTER  : 同版本两次重复结果就不同 → 该文档的差异不可归因于模板
+       SYSTEMATIC: 版本内稳定、版本间稳定不同 → 才是模板的真实影响。
+
+用法（对比 7_13 与「删 §1.34」变体）：
+  cd backend && .venv/bin/python eval_samples/schema_ab/paired_golden.py \
+      --cut '## 1.34' --repeats 2
+`--cut` 给一个正文小节标题前缀，B 版 = A 版删掉该小节（到下一个同级标题）。
+不传 --cut 时 B=A，可用来单纯测量全池抖动基线。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import pathlib
+import re
+import sys
+import uuid as uuidlib
+from collections import defaultdict
+
+_KEY_RE = re.compile(r'^(\s*)([A-Za-z_][A-Za-z0-9_]*):(\s+)(.+)$')
+_BLOCK_INDICATORS = {"|", "|-", "|+", ">", ">-", ">+"}
+_ALREADY_SAFE_PREFIXES = ("'", '"', "|", ">", "[", "{", "&", "*")
+
+
+def _fix_unquoted_scalars(text: str) -> str:
+    """手写英文候选 yaml 常见单行纯量内嵌 ASCII `: `（如 "look for: 'X'"），
+    会被 YAML 解析器误判成新 mapping value。按行补引号（json.dumps 转义），
+    不改变解析出的字符串内容；块标量（`|-`/`>-`）体内的续行原样跳过。"""
+    out: list[str] = []
+    block_indent: int | None = None
+    for raw_ln in text.splitlines():
+        if block_indent is not None:
+            indent = len(raw_ln) - len(raw_ln.lstrip(" "))
+            if raw_ln.strip() == "" or indent > block_indent:
+                out.append(raw_ln)
+                continue
+            block_indent = None
+        m = _KEY_RE.match(raw_ln)
+        if not m:
+            out.append(raw_ln)
+            continue
+        indent, key, sep, value = m.groups()
+        value = value.rstrip()
+        if value in _BLOCK_INDICATORS:
+            block_indent = len(indent)
+            out.append(raw_ln)
+            continue
+        if value.startswith(_ALREADY_SAFE_PREFIXES):
+            out.append(raw_ln)
+            continue
+        out.append(f"{indent}{key}:{sep}{json.dumps(value, ensure_ascii=False)}")
+    return "\n".join(out) + "\n"
+
+sys.path.insert(0, ".")
+
+from app.core.database import SessionLocal                     # noqa: E402
+from app.models.api_definition import ApiDefinition            # noqa: E402
+from app.ocr_optimizer.eval import golden_loop                 # noqa: E402
+from app.ocr_optimizer.eval.harness import (                   # noqa: E402
+    module_specs_from_orm,
+    score_outputs,
+)
+from app.ocr_optimizer.models import (                         # noqa: E402
+    OcrModule,
+    OcrPromptVersion,
+    PromptVersionStatus,
+)
+from app.ocr_optimizer.service.ocr_runner import run_ocr_on_samples  # noqa: E402
+
+HERE = pathlib.Path(__file__).parent
+
+
+def load_candidate_yaml(path: str, country: str) -> tuple[str, dict]:
+    """候选 yaml → (组装后 prompt, json_schema)。
+
+    走与生产 seed 完全相同的组装路径（decompose + build_v1_prompt），
+    做法是把候选文件复制进临时目录并临时改写 template_loader 的仓库根——
+    比手工复刻 marker 切分逻辑可靠（那套逻辑有优先级与截断规则）。
+    """
+    import tempfile
+
+    from app.ocr_optimizer.service import template_loader
+    from app.ocr_optimizer.service.preset_init import build_v1_prompt
+
+    with tempfile.TemporaryDirectory() as td:
+        fixed = _fix_unquoted_scalars(pathlib.Path(path).read_text(encoding="utf-8"))
+        (pathlib.Path(td) / f"{country}_invoice_prompt.yaml").write_text(
+            fixed, encoding="utf-8")
+        orig = template_loader._REPO_ROOT
+        template_loader._REPO_ROOT = pathlib.Path(td)
+        try:
+            d = template_loader.decompose_country_template(country)
+        finally:
+            template_loader._REPO_ROOT = orig
+    return build_v1_prompt(d), d["json_schema"]
+
+
+def cut_section(body: str, marker: str) -> str:
+    """删掉以 marker 开头的小节（到下一个同级 `## ` 标题为止）。"""
+    lines = body.splitlines(keepends=True)
+    starts = [i for i, ln in enumerate(lines) if ln.lstrip().startswith(marker)]
+    if not starts:
+        raise SystemExit(f"正文中找不到小节 {marker!r}")
+    i = starts[0]
+    level = len(lines[i].lstrip()) - len(lines[i].lstrip().lstrip("#"))
+    j = i + 1
+    while j < len(lines):
+        st = lines[j].lstrip()
+        if st.startswith("#") and (len(st) - len(st.lstrip("#"))) <= (
+                len(lines[i].lstrip()) - len(lines[i].lstrip().lstrip("#"))):
+            break
+        j += 1
+    return "".join(lines[:i] + lines[j:])
+
+
+def per_doc_scores(report) -> dict[str, float]:
+    """EvalReport → {doc_id: 该文档所有被测模块的平均准确率}。"""
+    acc: dict[str, list[float]] = defaultdict(list)
+    for m in report.module_scores:
+        for s in m.per_sample:
+            acc[s["doc_id"]].append(s["accuracy"])
+    return {d: sum(v) / len(v) for d, v in acc.items() if v}
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--country", default="MY")
+    ap.add_argument("--candidate", default="my-invoice-c99a19")
+    ap.add_argument("--cut", default=None,
+                    help="B 版删除的正文小节标题前缀，如 '## 1.34'")
+    ap.add_argument("--yaml-b", default=None,
+                    help="B 版直接用候选 yaml 文件（prompt 与 schema 都取自它）——"
+                         "供 R3+ 这类「删正文段 + 改 description」的复合变更做配对")
+    ap.add_argument("--repeats", type=int, default=2)
+    ap.add_argument("--jitter-band", type=float, default=0.02,
+                    help="配对差 ≤ 此值视为持平")
+    ap.add_argument("--exclude-prefix", default=None,
+                    help="逗号分隔的 doc_id 前缀，从全池中剔除（如已被别的脚本"
+                         "单独测过、避免重复消耗）")
+    args = ap.parse_args()
+
+    db = SessionLocal()
+    api = db.query(ApiDefinition).filter_by(api_code=args.candidate).first()
+    v = (db.query(OcrPromptVersion)
+         .filter_by(api_definition_id=api.id,
+                    status=PromptVersionStatus.active.value).first())
+    mods = (db.query(OcrModule).filter_by(prompt_version_id=v.id)
+            .order_by(OcrModule.order_index).all())
+    specs = module_specs_from_orm(mods)
+
+    golden = golden_loop.load_golden(args.country)
+    core = set(golden_loop.compute_core_fields(args.country))
+    excluded = [p.strip() for p in args.exclude_prefix.split(",")] if args.exclude_prefix else []
+    pool = [d for d, e in golden.items()
+            if core <= golden_loop._top_keys(e["gt"])
+            and not any(d.startswith(p) for p in excluded)]
+    if excluded:
+        print(f"已剔除 {len(excluded)} 份前缀命中的样本: {excluded}")
+    gts = {str(uuidlib.UUID(d)): golden[d]["gt"] for d in pool}
+    ids = [uuidlib.UUID(d) for d in pool]
+
+    prompt_a = v.composed_prompt or ""
+    schema_a = v.composed_schema
+    if args.yaml_b:
+        prompt_b, schema_b = load_candidate_yaml(args.yaml_b, args.country)
+    else:
+        prompt_b = cut_section(prompt_a, args.cut) if args.cut else prompt_a
+        schema_b = schema_a
+    variants = {"A": (prompt_a, schema_a), "B": (prompt_b, schema_b)}
+    src = (f"（yaml-b: {args.yaml_b}）" if args.yaml_b
+           else (f"（删 {args.cut!r}，−{len(prompt_a)-len(prompt_b)} 字符）" if args.cut
+                 else "（B=A，抖动基线模式）"))
+    print(f"全池 {len(pool)} 份 · A={len(prompt_a):,} 字符 · "
+          f"B={len(prompt_b):,} 字符{src} · 每配置重复 {args.repeats} 次\n")
+
+    # {variant: [ {doc: score} per repeat ]}
+    runs: dict[str, list[dict[str, float]]] = {k: [] for k in variants}
+    for name, (prompt, schema) in variants.items():
+        for r in range(args.repeats):
+            outputs = run_ocr_on_samples(
+                db, sample_document_ids=ids, composed_prompt=prompt,
+                composed_schema=schema,
+                processor_spec=api.processor_type or "gemini",
+                model_name=api.model_name,
+            )
+            report = score_outputs(specs, outputs, gts, strict=True)
+            scores = per_doc_scores(report)
+            runs[name].append(scores)
+            mean = sum(scores.values()) / len(scores) if scores else 0.0
+            errs = len(report.ocr_error_doc_ids)
+            print(f"  {name} r{r}: 全池均值 {mean:.4f}"
+                  f"（{len(scores)} 份有效" + (f"，{errs} 份传输失败" if errs else "") + "）")
+
+    # ── 逐份配对分析 ──
+    print(f"\n═══ 逐份配对（A vs B，配对差 > {args.jitter_band} 才计入）═══")
+    def spread(vals):  # 同配置重复间的最大差 = 该文档抖动幅度
+        return max(vals) - min(vals) if vals else 0.0
+
+    n_sys = n_jit = n_eq = 0
+    rows = []
+    for d in sorted(gts.keys()):
+        a_vals = [r.get(d) for r in runs["A"] if r.get(d) is not None]
+        b_vals = [r.get(d) for r in runs["B"] if r.get(d) is not None]
+        if not a_vals or not b_vals:
+            continue
+        a_m, b_m = sum(a_vals)/len(a_vals), sum(b_vals)/len(b_vals)
+        jit = max(spread(a_vals), spread(b_vals))
+        diff = b_m - a_m
+        if abs(diff) <= args.jitter_band:
+            cls = "EQ"; n_eq += 1
+        elif jit >= abs(diff):
+            cls = "JITTER"; n_jit += 1     # 自身抖动就 ≥ 版本差 → 不可归因
+        else:
+            cls = "SYSTEMATIC"; n_sys += 1
+        rows.append({"doc": d, "A": round(a_m,4), "B": round(b_m,4),
+                     "diff": round(diff,4), "self_jitter": round(jit,4), "cls": cls})
+        if cls != "EQ":
+            print(f"  {cls:10} {d[:8]}  A={a_m:.3f} B={b_m:.3f} "
+                  f"diff={diff:+.3f}  自抖动={jit:.3f}")
+
+    a_all = [s for r in runs["A"] for s in r.values()]
+    b_all = [s for r in runs["B"] for s in r.values()]
+    print(f"\n═══ 汇总 ═══")
+    print(f"  A 全池均值 {sum(a_all)/len(a_all):.4f} · B 全池均值 {sum(b_all)/len(b_all):.4f}")
+    print(f"  持平 {n_eq} · 抖动（不可归因）{n_jit} · 系统性差异 {n_sys}")
+    if n_sys:
+        sys_diffs = [r["diff"] for r in rows if r["cls"] == "SYSTEMATIC"]
+        print(f"  系统性差异净效应: {sum(sys_diffs):+.4f}（正=B 好）")
+    (HERE / "paired_golden_results.json").write_text(
+        json.dumps({"pool": len(pool), "cut": args.cut,
+                    "repeats": args.repeats, "rows": rows}, ensure_ascii=False, indent=1))
+
+
+if __name__ == "__main__":
+    main()

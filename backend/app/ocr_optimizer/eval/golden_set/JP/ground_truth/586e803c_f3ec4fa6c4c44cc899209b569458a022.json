@@ -1,0 +1,17 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "御請求書",
+    "invoiceNumber": "null",
+    "invoiceDate": "2025-04-30",
+    "currency": "JPY",
+    "totalAmount": 4983731,
+    "totalTaxAmount": 453076,
+    "billFromName": "株式会社 エルテック",
+    "billFromTaxIdentificationNumber": "T5180001051945",
+    "billToName": "ハイセンスジャパン株式会社",
+    "page": [
+      1
+    ]
+  }
+]

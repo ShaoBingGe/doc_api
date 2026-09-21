@@ -108,6 +108,71 @@ def _is_empty_slice(v: Any) -> bool:
     return False
 
 
+# ── strict 模式的行表（明细数组）专用判据 ────────────────────────────────────
+# 历史问题：line_items / tax_summary 在 strict 模式下与标量字段同用
+# `ocr_sliced == gt_sliced` 整体全等——每行每字段任一处差异（浮点位数、
+# 描述文字、单位写法）即判 0。实测 8 次黄金批全部 0/5，判别力为零，
+# 「line_items 不得下降」的门在它身上是空条件。
+# 改为：**行数一致（gate）+ 逐行关键字段匹配率（分值）**。
+# 关键字段限定为语义硬字段；description / unitOfMeasure 这类 GT 本身与
+# 模板规则冲突的模糊字段不参与（GT 把品名复制进了 description，而模板
+# §1.35 要求那种情况 description 留空——比它等于惩罚正确行为）。
+
+_ROW_KEY_FIELDS = (
+    "articleName", "quantity", "unitPrice", "netAmount",       # 商品行
+    "taxCategory", "taxRate", "tax", "netTaxableAmount",       # 税表行
+)
+
+
+def _flatten_rows(x: Any) -> Any:
+    """[[row,...], ...]（每张票一个子列表）→ [row,...]；已扁平则原样返回。"""
+    if isinstance(x, list) and x and all(isinstance(e, list) for e in x):
+        return [r for sub in x for r in sub]
+    return x
+
+
+def _is_row_table(x: Any) -> bool:
+    x = _flatten_rows(x)
+    return isinstance(x, list) and bool(x) and all(isinstance(r, dict) for r in x)
+
+
+def _row_field_eq(a: Any, b: Any) -> bool:
+    if a is None and b is None:
+        return True
+    if isinstance(a, (int, float)) and not isinstance(a, bool) or \
+       isinstance(b, (int, float)) and not isinstance(b, bool):
+        try:
+            return abs(float(a) - float(b)) < 1e-6
+        except (TypeError, ValueError):
+            return False
+    return str(a or "").strip() == str(b or "").strip()
+
+
+def _score_row_table_strict(got: Any, expected: Any) -> tuple[float, bool, str]:
+    """→ (accuracy, matched, diff)。行数不等直接 0（gate）；行数相等时
+    按位置逐行比关键字段，accuracy = 各行匹配率均值。"""
+    exp = _flatten_rows(expected)
+    g = _flatten_rows(got)
+    if not isinstance(g, list) or not all(isinstance(r, dict) for r in g):
+        return 0.0, False, "row-table-shape-mismatch"
+    if len(g) != len(exp):
+        return 0.0, False, f"row-count-mismatch got={len(g)} expected={len(exp)}"
+    if not exp:
+        return 1.0, True, ""
+    per_row: list[float] = []
+    for er, gr in zip(exp, g):
+        keys = [k for k in _ROW_KEY_FIELDS if er.get(k) not in ("", None)]
+        if not keys:   # GT 行没有任何关键字段 → 退回比 GT 行的全部非空字段
+            keys = [k for k, v in er.items() if v not in ("", None)]
+        if not keys:
+            per_row.append(1.0)
+            continue
+        per_row.append(sum(_row_field_eq(gr.get(k), er[k]) for k in keys) / len(keys))
+    acc = sum(per_row) / len(per_row)
+    matched = acc > 0.999
+    return acc, matched, ("" if matched else f"row-fields-partial {acc:.2f}")
+
+
 def score_outputs(
     modules: list[ModuleSpec],
     ocr_outputs: dict[str, Any],
@@ -172,6 +237,15 @@ def score_outputs(
             ocr_sliced = slicer.extract(ocr_full, spec.json_path)
 
             if strict:
+                if _is_row_table(gt_sliced):
+                    # 行表（明细/税表数组）：行数 gate + 逐行关键字段匹配率。
+                    # 整体全等对它是空判据（见 _score_row_table_strict 注释）。
+                    acc, passed, diff = _score_row_table_strict(ocr_sliced, gt_sliced)
+                    per_sample.append({
+                        "doc_id": d, "accuracy": acc, "matched": passed,
+                        "diff": diff, "expected": gt_sliced, "got": ocr_sliced,
+                    })
+                    continue
                 # Exact equality — any field/char/format deviation fails (req 2).
                 passed = ocr_sliced == gt_sliced
                 per_sample.append({

@@ -24,6 +24,15 @@ class ExtractMetadata(BaseModel):
     tokens_used: int
     processing_time_ms: int
     confidence: float | None = None
+    myinvois: dict | None = Field(
+        default=None,
+        description=(
+            "MyInvois（马来西亚税局）查验与消融报告：命中的验证链接、取数结果、"
+            "逐字段来源（哪些被税局数据覆盖、哪些保留 OCR）。"
+            "未启用或票面无验证链接时为 null。"
+            "放在 metadata 而非票据字段内，以免污染输出字段契约。"
+        ),
+    )
 
 
 class ExtractResponse(BaseModel):

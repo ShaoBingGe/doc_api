@@ -1,0 +1,11 @@
+{
+ "version": "7_13",
+ "body_chars": 13998,
+ "composed_prompt_chars": 18923,
+ "golden": {
+  "seed7": 0.5074,
+  "seed13": 0.6844
+ },
+ "three_samples": "18/18 (Phase 2, 3 rounds)",
+ "note": "R0-b 基线；黄金分数跨运行有抖动，比较只在同一轮对照内有效"
+}

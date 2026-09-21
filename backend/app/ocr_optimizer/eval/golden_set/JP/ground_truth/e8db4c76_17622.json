@@ -1,0 +1,17 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "請求書",
+    "invoiceDate": "2025-05-31",
+    "currency": "JPY",
+    "totalAmount": 5291027,
+    "totalTaxAmount": 481002,
+    "billFromName": "ダットジャパン株式会社",
+    "billFromTaxIdentificationNumber": "T3430001010217",
+    "billToName": "TVS REGZA株式会社",
+    "page": [
+      1,
+      2
+    ]
+  }
+]

@@ -36,7 +36,20 @@ def main(argv: list[str] | None = None) -> int:
                     help="OCR backend; omit to follow DEFAULT_PROCESSOR "
                          "(大陆部署=qwen / 海外=gemini)")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--schema", choices=("auto", "on", "off"), default="auto",
+                    help="response_schema 是否随调用下发。auto（默认）= 跟随 "
+                         "PASS_SCHEMA_TO_MODEL 配置 —— 评测与生产同一个世界；"
+                         "on / off = 本次强制，供「传/不传」A/B 对照用"
+                         "（docs/plan-schema-not-passed-to-model.md Phase 3）。"
+                         "开关的实际生效点在 ocr_runner._run_single。")
     args = ap.parse_args(argv)
+
+    # --schema on/off 通过进程内改写开关生效（ocr_runner 读同一处配置）；
+    # auto 不动配置 = 评测行为与本机生产配置一致。
+    from app.core.config import get_settings as _gs
+    if args.schema != "auto":
+        _gs().PASS_SCHEMA_TO_MODEL = args.schema == "on"
+    schema_passed = _gs().PASS_SCHEMA_TO_MODEL
 
     # Don't hard-pin gemini — the production processor is deployment-specific
     # (CLAUDE.md §四⑥). Default to the configured DEFAULT_PROCESSOR so the
@@ -82,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     eval_valid = n_errors < batch["batch_size"]
     payload = {
         "country": args.country, "candidate": args.candidate,
+        "schema_passed": schema_passed,
         "batch_size": batch["batch_size"], "pool_size": batch["pool_size"],
         "core_fields": batch["core_fields"],
         "strict_overall_accuracy": round(report.overall_accuracy, 4),

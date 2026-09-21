@@ -85,13 +85,25 @@ def _finalize_completed(db, task: AsyncTask, api_def, structured, doc_pages: int
         structured,
         trace_id=task.id[:16].replace("-", ""),
         doc_pages=doc_pages,
-        source_file_hash=task.file_hash,
+        source_file_hash=task.file_hash or task.content_hash or "",
         description=(
             mapper.TRUNCATED_DESC.format(limit=page_limit)
             if page_limit and doc_pages > page_limit
             else mapper.SUCCESS_DESC
         ),
     )
+    # 整份文档一张票据都没识别出来 → 判 FAILED，不当成「成功但 data 全是空壳」。
+    # 这里**不走重试**（走的是成功路径，不是 except 分支）：模型已经明确
+    # 表达了「这些页都不是票据」，重试三次多半还是同一个结论，白烧配额。
+    if (get_settings().FAIL_WHEN_NO_INVOICE_FOUND
+            and mapper.has_no_billing_entity(payload)):
+        tasks.mark_failed(
+            db, db.merge(task), tasks.ERR_NO_INVOICE_FOUND,
+            f"文档中未识别到有效票据（共 {doc_pages} 页，"
+            f"全部判定为非票据内容）",
+        )
+        return
+
     tasks.mark_completed(db, db.merge(task), payload)
 
 
@@ -136,7 +148,10 @@ async def _process_one(task: AsyncTask) -> None:
             del file_bytes  # 出闸前就还回内存，别拖到函数结束
 
         _finalize_completed(db, task, api_def, *extraction)
-        logger.info("异步任务 %s 完成（%d 页）", task.id, extraction[1])
+        if db.merge(task).status == tasks.TaskStatus.FAILED:
+            logger.info("异步任务 %s 判为未识别到票据（%d 页）", task.id, extraction[1])
+        else:
+            logger.info("异步任务 %s 完成（%d 页）", task.id, extraction[1])
 
     except asyncio.CancelledError:
         try:

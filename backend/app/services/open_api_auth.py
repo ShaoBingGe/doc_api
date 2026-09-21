@@ -38,6 +38,11 @@ ERR_TOKEN_EXPIRED = "4005"
 ERR_TEMPLATE_NOT_FOUND = "4006"
 ERR_TEMPLATE_FORBIDDEN = "4007"
 ERR_NO_FILE = "4008"
+#: 整份文档一张票据都没识别出来（全是 docType=other）。归在 400x
+#: 「请求内容有问题」家族下而不是 5000（我方服务故障）—— 文件里没有票据是
+#: 上传内容的事实，不该让对接方来查我们的服务。**暂定值，待与对接方确认**
+#: （2026-08-27）；异步端点的对应码是 async_task_service.ERR_NO_INVOICE_FOUND。
+ERR_NO_INVOICE_FOUND = "4009"
 ERR_PROCESS_FAILED = "5000"
 
 TOKEN_TTL_SEC = 129600  # 36 小时，与线上 expires_in 一致

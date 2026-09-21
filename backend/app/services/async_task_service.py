@@ -30,7 +30,11 @@ from app.core.config import get_settings
 from app.models.async_task import AsyncTask, TaskStatus
 from app.models.open_api_client import OpenApiClient
 from app.services import extraction_cache as xcache
-from app.services.upload_validation import InvalidUpload, validate_upload
+from app.services.upload_validation import (
+    InvalidUpload,
+    effective_ext,
+    validate_upload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +47,18 @@ ERR_UPLOAD_FAILED = "A0700"       # 用户上传文件异常
 ERR_RPC_FAILED = "C0110"          # RPC 服务出错
 ERR_FAIL = "1999"                 # 失败（未归类）
 
+#: 文档里一张票据都没识别出来（全是 docType=other）。
+#:
+#: **这是我方暂定值，尚未与对接方确认**（2026-08-27）。选 A0704 的理由：
+#:   1. 归在 A07xx「用户上传文件异常」家族下 —— 这是**上传内容**的问题
+#:      （文件里没有票据），不是服务故障，用 C0110/1999 会误导对接方去查我方；
+#:   2. 阿里巴巴错误码规范里 A0700 系列正是「用户上传文件异常」，
+#:      A0701 类型不匹配 / A0702 文件太大 / A0703 图片太大，
+#:      A0704 接着往下排，语义与既有编号连续；
+#:   3. 不与当前已用的任何码冲突。
+#: 若对接方希望换别的值，只改这一个常量即可（判定逻辑与它解耦）。
+ERR_NO_INVOICE_FOUND = "A0704"    # 文档中未识别到有效票据
+
 #: A 系 → 同步端点既有码，仅用于 legacyErrcode 字段（内部排查）
 LEGACY_OF = {
     ERR_OK: "0000",
@@ -50,6 +66,7 @@ LEGACY_OF = {
     ERR_MISSING_PARAM: "4008",
     ERR_BATCH_TOO_LARGE: "",
     ERR_UPLOAD_FAILED: "",
+    ERR_NO_INVOICE_FOUND: "4009",
     ERR_RPC_FAILED: "5000",
     ERR_FAIL: "5000",
 }
@@ -180,6 +197,10 @@ def create_task(
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     chash = xcache.content_hash(file_bytes)
+    # 没传 fileHash 时用服务端自算的内容哈希兜底——sourceFileHash 是每条记录的
+    # 可定位标识（paymentScreenshot 直接拿它当流水号），留空会失去唯一键。
+    # 与同步路径同一处理；传了就照回，不覆盖。
+    file_hash = file_hash or chash
 
     # 结果缓存命中：仍然建任务行、仍然发 taskId（对接方的流程不变），
     # 但直接建成 COMPLETED —— 他们第一次轮询就能拿到结果，零模型调用。
@@ -208,8 +229,10 @@ def create_task(
         logger.info("异步任务 %s 直接命中结果缓存，未调用模型", task_id)
         return task
 
-    # 先落盘再建行：反过来的话，建行成功而落盘失败会留下永远处理不了的任务
-    spool = _spool_dir() / f"{task_id}{Path(filename or '').suffix or '.bin'}"
+    # 先落盘再建行：反过来的话，建行成功而落盘失败会留下永远处理不了的任务。
+    # 后缀取**真实内容**而非上传文件名——处理器按后缀推 MIME，后缀错了
+    # 会让模型收到错误的 Content-Type 并回 400（与同步路径同一处理）。
+    spool = _spool_dir() / f"{task_id}{effective_ext(file_bytes, filename or '') or '.bin'}"
     try:
         spool.write_bytes(file_bytes)
     except OSError as exc:

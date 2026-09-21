@@ -65,7 +65,14 @@ _TEXT_LAYER_BLOCK = """
 ━━━━━━ 文本层结束 ━━━━━━
 """
 _RENDER_DPI = 150
-# qwen3-vl-plus 实测 ~34s/页；16 页单次调用可达 ~9 分钟，故超时同步放宽到 10 分钟。
+#: 单页渲染后的像素面积上限。DPI 写死会在**异常大版面**上炸开：实测一份
+#: 1267×2893pt 的长条扫描件（住宿_c5ca8771...）按 150dpi 渲染出 15.5MB PNG，
+#: base64 后请求体约 20MB，DashScope 直接 400；另有 7 份 >10MB 上传极慢。
+#: 按面积（而非长边）设限：普通 A4 150dpi 约 2.2M 像素、不受影响，只有
+#: 病态版面被等比缩小，OCR 可读性仍够。
+_MAX_RENDER_PIXELS = 4_000_000
+# qwen3-vl-plus 实测 ~34s/页；16 页单次调用可达 ~9 分钟，默认超时 10 分钟
+# （现由 config.QWEN_HTTP_TIMEOUT_S 统一管理，此常量仅作 settings 不可用时的兜底）。
 # 注意：前端 OCR_TIMEOUT（api-client.ts）若仍为 5 分钟，长文档在 UI 侧会先超时，
 # 但后端会跑完并落库——开放平台走 HTTP 直连，不受前端超时影响。
 _HTTP_TIMEOUT = 600.0
@@ -78,9 +85,10 @@ class QwenProcessor(DocumentProcessor):
         from app.core.config import get_settings
 
         s = get_settings()
-        self.api_key = s.QWEN_API_KEY
-        if not self.api_key:
-            raise ImportError("QWEN_API_KEY is not configured")
+        # key 不在这里绑死：每次调用向池租一个（见 _chat）。构造时只校验
+        # 「至少配了一个」，这样 ProcessorFactory.create 仍能早失败。
+        if not s.qwen_api_keys:
+            raise ImportError("QWEN_API_KEY / QWEN_API_KEYS is not configured")
         self.base_url = (s.DASHSCOPE_BASE_URL or "").rstrip("/")
         self.vision_model = s.QWEN_MODEL or "qwen-vl-ocr"
         self.text_model = s.QWEN_TEXT_MODEL or "qwen-plus"
@@ -91,13 +99,18 @@ class QwenProcessor(DocumentProcessor):
 
     @staticmethod
     def _is_vision_name(name: str) -> bool:
-        """qwen 系视觉模型命名：含 "vl"（qwen-vl-plus / qwen3-vl-flash）或
-        含 "ocr"（qwen3.5-ocr / qwen-vl-ocr）。曾用「仅 vl」判定，导致
-        qwen3.5-ocr 被误判为文本模型：评测时显式传入被静默回退到
-        QWEN_MODEL（评测结果被偷换），生产时被误加 response_format 而
-        返回空 content。"""
+        """识别 qwen 视觉模型。
+
+        旧规则只认名字里带 `vl` / `ocr` 的型号（如 `qwen3-vl-flash`、
+        `qwen3.5-ocr`），会把新一代通用多模态型号 `qwen3.8-max`、
+        `qwen3.7-plus` 误判成文本模型。后果有两类：
+        1. 显式传入时被静默回退到环境里的 QWEN_MODEL，评测结果被偷换；
+        2. 视觉调用被误加 response_format，DashScope 可能返回空 content。
+        """
         n = (name or "").lower()
-        return "vl" in n or "ocr" in n
+        if "vl" in n or "ocr" in n:
+            return True
+        return n.startswith(("qwen3.8-", "qwen3.7-", "qwen3.6-", "qwen3.5-"))
 
     def _pick_model(self, *, vision: bool) -> str:
         if self._explicit:
@@ -113,7 +126,15 @@ class QwenProcessor(DocumentProcessor):
             for i, page in enumerate(doc):
                 if i >= _MAX_PAGES:
                     break
-                pix = page.get_pixmap(dpi=_RENDER_DPI)
+                # 面积超限时按比例降采样，普通版面走原 DPI 不变（见 _MAX_RENDER_PIXELS）
+                w_px = page.rect.width * _RENDER_DPI / 72.0
+                h_px = page.rect.height * _RENDER_DPI / 72.0
+                dpi = _RENDER_DPI
+                if w_px * h_px > _MAX_RENDER_PIXELS:
+                    dpi = int(_RENDER_DPI * (_MAX_RENDER_PIXELS / (w_px * h_px)) ** 0.5)
+                    logger.info("页面过大（%.0f×%.0f px @%ddpi），降采样到 %ddpi：%s p%d",
+                                w_px, h_px, _RENDER_DPI, dpi, pathlib.Path(path).name, i + 1)
+                pix = page.get_pixmap(dpi=max(dpi, 36))
                 png = pix.tobytes("png")
                 urls.append("data:image/png;base64," + base64.b64encode(png).decode())
         return urls
@@ -149,13 +170,29 @@ class QwenProcessor(DocumentProcessor):
         # 显式声明「输出为 JSON 数组」）。Gemini 链路才有 schema 硬约束。
         if as_json and not self._is_vision_name(model):
             body["response_format"] = {"type": "json_object"}
-        resp = httpx.post(
-            f"{self.base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            json=body,
-            timeout=_HTTP_TIMEOUT,
-        )
-        resp.raise_for_status()
+        # 多账号 key 池：与 gemini 同一套调度（最少在途 + 429 熔断）。
+        # 单 key 配置下池里只有一个成员，行为与旧实现一致。
+        from app.processors.key_pool import get_pool
+
+        # 硬超时统一走 config（QWEN_HTTP_TIMEOUT_S），与 gemini 的
+        # GEMINI_HTTP_TIMEOUT_S 同一套治理；settings 异常时退回模块常量。
+        try:
+            from app.core.config import get_settings as _gs
+            http_timeout = float(_gs().QWEN_HTTP_TIMEOUT_S)
+        except Exception:  # pragma: no cover
+            http_timeout = _HTTP_TIMEOUT
+
+        with get_pool("qwen").lease() as lease:
+            logger.info("Calling Qwen model: %s (key #…%s)", model, lease.key[-6:])
+            resp = httpx.post(
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {lease.key}"},
+                json=body,
+                timeout=http_timeout,
+            )
+            # raise_for_status 必须在 with 内：429 要被池看见才能触发熔断，
+            # 放到块外等于把限流信号吞掉，池永远以为这个账号是健康的。
+            resp.raise_for_status()
         data = resp.json()
         try:
             return data["choices"][0]["message"]["content"] or ""
@@ -174,6 +211,21 @@ class QwenProcessor(DocumentProcessor):
         runtime_config = runtime_config or {}
         as_json = runtime_config.get("response_mime_type", "application/json") != "text/plain"
         suffix = pathlib.Path(file_path).suffix.lower()
+
+        # DashScope 视觉模型不支持 response_schema（见 _chat 的说明），收到只能丢弃。
+        # 模板把字段规则迁进 schema description 后，这等于「切到 qwen 备份就丢掉
+        # 那些规则」——主备两条路按两套规则识别。这里把 description 渲染成文本
+        # 附录补进 instruction：单一事实源仍在 schema，qwen 付这笔 token、
+        # Gemini 走免费的结构化通道。见 processors/schema_text.py。
+        schema = runtime_config.get("response_schema")
+        if schema:
+            from app.processors.schema_text import render_schema_descriptions
+
+            appendix = render_schema_descriptions(schema)
+            if appendix:
+                instruction = instruction + appendix
+                logger.info("qwen: schema description 已渲染为文本附录（%d 字符）",
+                            len(appendix))
 
         # ── text completion (reflection / optimizer) ──
         if suffix == ".txt":

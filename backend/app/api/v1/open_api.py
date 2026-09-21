@@ -235,6 +235,10 @@ async def analyze_document(
     # 15 分钟内直接复用上次结果，省掉整次模型调用。命中时 traceId 与
     # sourceFileHash 会被改写成本次请求的值。
     chash = xcache.content_hash(file_bytes)
+    # 对接方没传 fileHash 时用服务端自算的内容哈希兜底：sourceFileHash 是
+    # 每条记录的可定位标识（paymentScreenshot 类型直接拿它当流水号，
+    # 见国家模板 §1.1.2），留空会让这类记录失去唯一键。传了就照回，不覆盖。
+    file_hash = file_hash or chash
     cached = xcache.lookup(
         db, client_id=client.client_id, template_id=template_id, chash=chash,
         trace_id=trace_id, source_file_hash=file_hash,
@@ -308,6 +312,22 @@ async def analyze_document(
         logger.info(
             "analyze: 文档 %d 页超过上限 %d，仅识别前 %d 页（template=%s trace=%s）",
             doc_pages, page_limit, page_limit, template_id, trace_id,
+        )
+
+    # 一张票据都没识别出来 → 判失败，不返回「errcode=0000 但 data 全是空壳」。
+    # 也**不入缓存**：这是一次没有产出的识别，缓存下来只会让重试也拿不到东西。
+    if get_settings().FAIL_WHEN_NO_INVOICE_FOUND and mapper.has_no_billing_entity(payload):
+        logger.info(
+            "analyze: 文档 %d 页均未识别到票据（template=%s trace=%s）",
+            doc_pages, template_id, trace_id,
+        )
+        return JSONResponse(
+            status_code=200,
+            content=mapper.build_error(
+                auth.ERR_NO_INVOICE_FOUND,
+                f"文档中未识别到有效票据（共 {doc_pages} 页，全部判定为非票据内容）",
+                trace_id=trace_id,
+            ),
         )
 
     # 用量记录 + 结果入缓存（均非致命）。闸前已把请求会话归还连接池，

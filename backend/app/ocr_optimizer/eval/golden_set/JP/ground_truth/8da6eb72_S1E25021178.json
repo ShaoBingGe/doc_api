@@ -1,0 +1,32 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "請求書",
+    "invoiceNumber": "S1E25021178",
+    "invoiceDate": "2025-06-16",
+    "currency": "JPY",
+    "totalAmount": 1893365,
+    "totalTaxAmount": 171959,
+    "billFromName": "SMAサポート株式会社",
+    "billFromTaxIdentificationNumber": "T4011101046489",
+    "billToName": "TVS REGZA株式会社",
+    "page": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16
+    ]
+  }
+]

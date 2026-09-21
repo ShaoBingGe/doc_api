@@ -1,0 +1,16 @@
+[
+  {
+    "docType": "invoice",
+    "nameOfInvoice": "普通发票",
+    "invoiceNumber": "50085210",
+    "invoiceDate": "2025-05-24",
+    "currency": "CNY",
+    "totalAmount": 23,
+    "billFromName": "山东高速青岛公路有限公司",
+    "billFromTaxIdentificationNumber": "913702007940261562",
+    "billToName": "海信日本",
+    "page": [
+      1
+    ]
+  }
+]

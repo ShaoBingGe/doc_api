@@ -1,0 +1,394 @@
+{
+ "IMG_20260821_164515|原图": {
+  "size_px": [
+   3060,
+   4080
+  ],
+  "kb": 2405,
+  "elapsed_s": 9.3,
+  "usage": {
+   "prompt_tokens": 7935,
+   "output_tokens": 1034,
+   "total_tokens": 8969
+  },
+  "fields": {
+   "n": 1,
+   "docType": "receipt",
+   "invoiceNumber": "TT01/26/202",
+   "invoiceDate": "2026-01-31",
+   "totalAmount": 7088.65,
+   "billFromName": "STARKEN AAC SDN. BHD.",
+   "rows": 11,
+   "rowSig": [
+    "A.FARE- MD SAIFUL |750.65",
+    "A.FARE- SUNIL KUMA|489.0",
+    "A.FARE- SUNIL KUMA|691.0",
+    "A.FARE- NAINDRA RA|489.0",
+    "A.FARE- NAINDRA RA|691.0",
+    "A.FARE- BINESH CHE|489.0",
+    "A.FARE- BINESH CHE|837.0",
+    "A.FARE- SIDDHA RAJ|489.0",
+    "A.FARE- SIDDHA RAJ|837.0",
+    "A.FARE- ABISHEK LI|489.0",
+    "A.FARE- ABISHEK LI|837.0"
+   ]
+  },
+  "verdict": "（基准）"
+ },
+ "IMG_20260821_164515|长边2048": {
+  "size_px": [
+   1536,
+   2048
+  ],
+  "kb": 456,
+  "elapsed_s": 12.4,
+  "usage": {
+   "prompt_tokens": 7935,
+   "output_tokens": 769,
+   "total_tokens": 10072
+  },
+  "fields": {
+   "n": 1,
+   "docType": "receipt",
+   "invoiceNumber": "TT01/26/202",
+   "invoiceDate": "2026-01-31",
+   "totalAmount": 7088.65,
+   "billFromName": "STARKEN AAC SDN. BHD.",
+   "rows": 11,
+   "rowSig": [
+    "A.FARE- MD SAIFUL |750.65",
+    "A.FARE- SUNIL KUMA|489.0",
+    "A.FARE- SUNIL KUMA|691.0",
+    "A.FARE- NAINDRA RA|489.0",
+    "A.FARE- NAINDRA RA|691.0",
+    "A.FARE- BINESH CHE|489.0",
+    "A.FARE- BINESH CHE|837.0",
+    "A.FARE- SIDDHA RAJ|489.0",
+    "A.FARE- SIDDHA RAJ|837.0",
+    "A.FARE- ABISHEK LI|489.0",
+    "A.FARE- ABISHEK LI|837.0"
+   ]
+  },
+  "verdict": "✅ 与原图一致"
+ },
+ "IMG_20260821_164515|长边1536": {
+  "size_px": [
+   1152,
+   1536
+  ],
+  "kb": 276,
+  "elapsed_s": 16.9,
+  "usage": {
+   "prompt_tokens": 7935,
+   "output_tokens": 779,
+   "total_tokens": 10313
+  },
+  "fields": {
+   "n": 1,
+   "docType": "receipt",
+   "invoiceNumber": "TT01/26/202",
+   "invoiceDate": "2026-01-31",
+   "totalAmount": 7088.65,
+   "billFromName": "STARKEN AAC SDN. BHD.",
+   "rows": 11,
+   "rowSig": [
+    "A.FARE- MD SAIFUL |750.65",
+    "A.FARE- SUNIL KUMA|489.0",
+    "A.FARE- SUNIL KUMA|691.0",
+    "A.FARE- NAINDRA RA|489.0",
+    "A.FARE- NAINDRA RA|691.0",
+    "A.FARE- BINESH CHE|489.0",
+    "A.FARE- BINESH CHE|837.0",
+    "A.FARE- SIDDHA RAJ|489.0",
+    "A.FARE- SIDDHA RAJ|837.0",
+    "A.FARE- ABISHEK LI|489.0",
+    "A.FARE- ABISHEK LI|837.0"
+   ]
+  },
+  "verdict": "✅ 与原图一致"
+ },
+ "IMG_20260821_164515|长边1152": {
+  "size_px": [
+   864,
+   1152
+  ],
+  "kb": 164,
+  "elapsed_s": 12.3,
+  "usage": {
+   "prompt_tokens": 7935,
+   "output_tokens": 1021,
+   "total_tokens": 8956
+  },
+  "fields": {
+   "n": 1,
+   "docType": "receipt",
+   "invoiceNumber": "TT01/26/202",
+   "invoiceDate": "2026-01-31",
+   "totalAmount": 7088.65,
+   "billFromName": "STARKEN AAC SDN. BHD.",
+   "rows": 11,
+   "rowSig": [
+    "A.FARE- MD SAIFUL |750.65",
+    "A.FARE- SUNIL KUMA|489.0",
+    "A.FARE- SUNIL KUMA|691.0",
+    "A.FARE- NAINDRA RA|489.0",
+    "A.FARE- NAINDRA RA|691.0",
+    "A.FARE- BINESH CHE|489.0",
+    "A.FARE- BINESH CHE|837.0",
+    "A.FARE- SIDDHA RAJ|489.0",
+    "A.FARE- SIDDHA RAJ|837.0",
+    "A.FARE- ABISHEK LI|489.0",
+    "A.FARE- ABISHEK LI|837.0"
+   ]
+  },
+  "verdict": "✅ 与原图一致"
+ },
+ "IMG_20260824_110351|原图": {
+  "size_px": [
+   3060,
+   4080
+  ],
+  "kb": 2275,
+  "elapsed_s": 16.1,
+  "usage": {
+   "prompt_tokens": 7935,
+   "output_tokens": 586,
+   "total_tokens": 9294
+  },
+  "fields": {
+   "n": 1,
+   "docType": "invoice",
+   "invoiceNumber": "TT02/26/142",
+   "invoiceDate": "2026-02-28",
+   "totalAmount": 5247.27,
+   "billFromName": "STARKEN AAC SDN. BHD.",
+   "rows": 9,
+   "rowSig": [
+    "ENTERTAINMENT- E -|2405.4",
+    "ENTERTAINMENT- P -|233.4",
+    "MEAL ALLOWANCE -JA|35.0",
+    "PARKING -JAN26|87.0",
+    "TOLL -JAN26|403.5",
+    "HOTEL (KUCHING) -J|302.24",
+    "FLIGHT TICKET (LOC|602.88",
+    "FLIGHT TICKET (LOC|888.0",
+    "PETROL -JAN26|289.85"
+   ]
+  },
+  "verdict": "（基准）"
+ },
+ "IMG_20260824_110351|长边2048": {
+  "size_px": [
+   1536,
+   2048
+  ],
+  "kb": 453,
+  "elapsed_s": 12.3,
+  "usage": {
+   "prompt_tokens": 7935,
+   "output_tokens": 771,
+   "total_tokens": 9479
+  },
+  "fields": {
+   "n": 1,
+   "docType": "receipt",
+   "invoiceNumber": "TT02/26/142",
+   "invoiceDate": "2026-02-28",
+   "totalAmount": 5247.27,
+   "billFromName": "STARKEN AAC SDN. BHD.",
+   "rows": 9,
+   "rowSig": [
+    "ENTERTAINMENT- E -|2405.4",
+    "ENTERTAINMENT- P -|233.4",
+    "MEAL ALLOWANCE -JA|35.0",
+    "PARKING -JAN26|87.0",
+    "TOLL -JAN26|403.5",
+    "HOTEL (KUCHING) -J|302.24",
+    "FLIGHT TICKET (LOC|602.88",
+    "FLIGHT TICKET (LOC|888.0",
+    "PETROL -JAN26|289.85"
+   ]
+  },
+  "verdict": "❌ 有差异"
+ },
+ "IMG_20260824_110351|长边1536": {
+  "size_px": [
+   1152,
+   1536
+  ],
+  "kb": 272,
+  "elapsed_s": 16.4,
+  "usage": {
+   "prompt_tokens": 7935,
+   "output_tokens": 779,
+   "total_tokens": 8714
+  },
+  "fields": {
+   "n": 1,
+   "docType": "receipt",
+   "invoiceNumber": "TT02/26/142",
+   "invoiceDate": "2026-02-28",
+   "totalAmount": 5247.27,
+   "billFromName": "STARKEN AAC SDN. BHD.",
+   "rows": 9,
+   "rowSig": [
+    "ENTERTAINMENT- E -|2405.4",
+    "ENTERTAINMENT- P -|233.4",
+    "MEAL ALLOWANCE -JA|35.0",
+    "PARKING -JAN26|87.0",
+    "TOLL -JAN26|403.5",
+    "HOTEL (KUCHING) -J|302.24",
+    "FLIGHT TICKET (LOC|602.88",
+    "FLIGHT TICKET (LOC|888.0",
+    "PETROL -JAN26|289.85"
+   ]
+  },
+  "verdict": "❌ 有差异"
+ },
+ "IMG_20260824_110351|长边1152": {
+  "size_px": [
+   864,
+   1152
+  ],
+  "kb": 161,
+  "elapsed_s": 7.0,
+  "usage": {
+   "prompt_tokens": 7935,
+   "output_tokens": 783,
+   "total_tokens": 8718
+  },
+  "fields": {
+   "n": 1,
+   "docType": "receipt",
+   "invoiceNumber": "TT02/26/142",
+   "invoiceDate": "2026-02-28",
+   "totalAmount": 5247.27,
+   "billFromName": "STARKEN AAC SDN. BHD.",
+   "rows": 9,
+   "rowSig": [
+    "ENTERTAINMENT- E -|2405.4",
+    "ENTERTAINMENT- P -|233.4",
+    "MEAL ALLOWANCE -JA|35.0",
+    "PARKING -JAN26|87.0",
+    "TOLL -JAN26|403.5",
+    "HOTEL (KUCHING) -J|302.24",
+    "FLIGHT TICKET (LOC|602.88",
+    "FLIGHT TICKET (LOC|888.0",
+    "PETROL -JAN26|289.85"
+   ]
+  },
+  "verdict": "❌ 有差异"
+ },
+ "IMG_20260821_161157|原图": {
+  "size_px": [
+   3060,
+   4080
+  ],
+  "kb": 2654,
+  "elapsed_s": 11.2,
+  "usage": {
+   "prompt_tokens": 7935,
+   "output_tokens": 458,
+   "total_tokens": 8393
+  },
+  "fields": {
+   "n": 1,
+   "docType": "receipt",
+   "invoiceNumber": "TT01/26/193",
+   "invoiceDate": "2026-01-31",
+   "totalAmount": 443.28,
+   "billFromName": "STARKEN AAC SDN. BHD.",
+   "rows": 3,
+   "rowSig": [
+    "TOLL -NOV25|191.5",
+    "PARKING -NOV25|49.4",
+    "PETROL -NOV25|202.38"
+   ]
+  },
+  "verdict": "（基准）"
+ },
+ "IMG_20260821_161157|长边2048": {
+  "size_px": [
+   1536,
+   2048
+  ],
+  "kb": 482,
+  "elapsed_s": 13.6,
+  "usage": {
+   "prompt_tokens": 7935,
+   "output_tokens": 335,
+   "total_tokens": 9098
+  },
+  "fields": {
+   "n": 1,
+   "docType": "receipt",
+   "invoiceNumber": "TT01/26/193",
+   "invoiceDate": "2026-01-31",
+   "totalAmount": 443.28,
+   "billFromName": "STARKEN AAC SDN. BHD.",
+   "rows": 3,
+   "rowSig": [
+    "TOLL -NOV25|191.5",
+    "PARKING -NOV25|49.4",
+    "PETROL -NOV25|202.38"
+   ]
+  },
+  "verdict": "✅ 与原图一致"
+ },
+ "IMG_20260821_161157|长边1536": {
+  "size_px": [
+   1152,
+   1536
+  ],
+  "kb": 282,
+  "elapsed_s": 10.5,
+  "usage": {
+   "prompt_tokens": 7935,
+   "output_tokens": 430,
+   "total_tokens": 8365
+  },
+  "fields": {
+   "n": 1,
+   "docType": "receipt",
+   "invoiceNumber": "TT01/26/193",
+   "invoiceDate": "2026-01-31",
+   "totalAmount": 443.28,
+   "billFromName": "STARKEN AAC SDN. BHD.",
+   "rows": 3,
+   "rowSig": [
+    "TOLL -NOV25|191.5",
+    "PARKING -NOV25|49.4",
+    "PETROL -NOV25|202.38"
+   ]
+  },
+  "verdict": "✅ 与原图一致"
+ },
+ "IMG_20260821_161157|长边1152": {
+  "size_px": [
+   864,
+   1152
+  ],
+  "kb": 165,
+  "elapsed_s": 7.7,
+  "usage": {
+   "prompt_tokens": 7935,
+   "output_tokens": 417,
+   "total_tokens": 8352
+  },
+  "fields": {
+   "n": 1,
+   "docType": "receipt",
+   "invoiceNumber": "TT01/26/193",
+   "invoiceDate": "2026-01-31",
+   "totalAmount": 443.28,
+   "billFromName": "STARKEN AAC SDN. BHD.",
+   "rows": 3,
+   "rowSig": [
+    "TOLL -NOV25|191.5",
+    "PARKING -NOV25|49.4",
+    "PETROL -NOV25|202.38"
+   ]
+  },
+  "verdict": "✅ 与原图一致"
+ }
+}

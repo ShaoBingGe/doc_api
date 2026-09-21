@@ -81,10 +81,37 @@ def test_rejects_oversized_file():
         validate_upload(_pdf(1), "a.pdf", max_bytes=10)
 
 
-def test_rejects_extension_content_mismatch():
-    """改了后缀的假 jpg —— 线上那两张失败文件的高度可疑成因。"""
-    with pytest.raises(InvalidUpload, match="与扩展名"):
-        validate_upload(_pdf(1), "actually_a_pdf.jpg", max_bytes=BIG)
+def test_accepts_extension_content_mismatch():
+    """后缀写错**不再拒收**（2026-09-02）：手机截图改错后缀是常态，
+    内容本身完全能识别，拒收是错杀。以内容为准放行。"""
+    assert validate_upload(_png(), "actually_a_png.jpg", max_bytes=BIG) == 1
+    assert validate_upload(_pdf(3), "actually_a_pdf.jpg", max_bytes=BIG) == 3
+
+
+def test_rejects_unrecognizable_content():
+    """认不出任何受支持类型才拒——这种字节流下游模型同样读不了。"""
+    with pytest.raises(InvalidUpload, match="无法识别"):
+        validate_upload(b"\x00\x01\x02\x03" * 100, "a.jpg", max_bytes=BIG)
+
+
+def test_sniff_ext_reports_real_type():
+    """落盘要按真实类型命名，否则处理器按后缀推的 MIME 是错的。"""
+    from app.services.upload_validation import effective_ext, sniff_ext
+
+    assert sniff_ext(_png()) == ".png"
+    assert sniff_ext(_pdf(1)) == ".pdf"
+    assert sniff_ext(b"\x00\x01\x02") is None
+    # PNG 内容 + .jpg 文件名 → 落盘必须用 .png
+    assert effective_ext(_png(), "shot.jpg") == ".png"
+    # 认不出时退回原后缀，不臆造
+    assert effective_ext(b"\x00\x01\x02", "x.jpg") == ".jpg"
+
+
+def test_unsupported_extension_still_rejected():
+    """放宽的是「后缀写错」，不是「类型不支持」——docx 与 xlsx 共用 ZIP 魔数，
+    去掉白名单会让 docx 混进来。"""
+    with pytest.raises(InvalidUpload, match="不支持的文件类型"):
+        validate_upload(_xlsx(), "a.docx", max_bytes=BIG)
 
 
 def test_rejects_structurally_broken_file():
@@ -149,6 +176,6 @@ def test_fails_open_when_pymupdf_missing(monkeypatch):
 def test_reason_is_actionable():
     """错误原因要能指导对接方修，不能只说'失败了'。"""
     with pytest.raises(InvalidUpload) as ei:
-        validate_upload(_pdf(1), "x.jpg", max_bytes=BIG)
+        validate_upload(b"\x00\x01\x02\x03" * 100, "x.jpg", max_bytes=BIG)
     reason = ei.value.reason
-    assert ".jpg" in reason and ("后缀" in reason or "损坏" in reason)
+    assert "无法识别" in reason and ("文件头" in reason or "损坏" in reason)

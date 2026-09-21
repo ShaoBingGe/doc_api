@@ -21,6 +21,7 @@ from .conversations import router as conversations_router
 from .country_templates import router as country_templates_router
 from .documents import router as documents_router
 from .extract import router as extract_router
+from .myinvois import router as myinvois_router
 from .reflection_agents import router as reflection_agents_router
 from app.ocr_optimizer.router import router as ocr_optimizer_router
 from .platform_templates import router as platform_templates_router
@@ -42,6 +43,7 @@ v1_router.include_router(conversations_router)
 v1_router.include_router(api_defs_router)
 v1_router.include_router(api_keys_router)
 v1_router.include_router(extract_router)
+v1_router.include_router(myinvois_router)
 v1_router.include_router(ocr_optimizer_router)
 v1_router.include_router(templates_router)
 v1_router.include_router(country_templates_router)
